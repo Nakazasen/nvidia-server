@@ -94,27 +94,29 @@ const models = [
   { name: "Step 3.5 Flash (Không hỗ trợ Agent)", id: "stepfun/step-1.5v-flash" }
 ];
 
-console.clear();
-console.log(`${colors.cyan}${colors.bold}==========================================${colors.reset}`);
-console.log(`${colors.cyan}${colors.bold}       NVIDIA NIM AGENT CLI v1.1          ${colors.reset}`);
-console.log(`${colors.cyan}${colors.bold}==========================================${colors.reset}\n`);
+function showMenu() {
+  console.log(`${colors.cyan}${colors.bold}==========================================${colors.reset}`);
+  console.log(`${colors.cyan}${colors.bold}       NVIDIA NIM AGENT CLI v1.2          ${colors.reset}`);
+  console.log(`${colors.cyan}${colors.bold}==========================================${colors.reset}\n`);
 
-console.log("Danh sách mô hình:");
-models.forEach((m, idx) => console.log(`  ${colors.yellow}[${idx + 1}]${colors.reset} ${m.name}`));
-console.log(`  ${colors.red}[0] Thoát${colors.reset}`);
+  console.log("Danh sách mô hình:");
+  models.forEach((m, idx) => console.log(`  ${colors.yellow}[${idx + 1}]${colors.reset} ${m.name}`));
+  console.log(`  ${colors.red}[0] Thoát${colors.reset}`);
 
-rl.question(`\nChọn mô hình (1-${models.length}) [Mặc định: 1]: `, (choice) => {
-  if (choice === '0') { console.log("Tạm biệt!"); rl.close(); return; }
-  const idx = parseInt(choice) - 1;
-  const selectedModel = models[idx] ? models[idx].id : models[0].id;
-  const modelName = models[idx] ? models[idx].name : models[0].name;
+  rl.question(`\nChọn mô hình (1-${models.length}) [Mặc định: 1]: `, (choice) => {
+    if (choice === '0') { console.log("Tạm biệt!"); rl.close(); return; }
+    const idx = parseInt(choice) - 1;
+    const selectedModel = models[idx] ? models[idx].id : models[0].id;
+    const modelName = models[idx] ? models[idx].name : models[0].name;
 
-  console.log(`\n✅ Agent đã kích hoạt với: ${colors.green}${modelName}${colors.reset}`);
-  console.log(`💡 Gõ 'exit' để thoát.\n`);
+    console.log(`\n✅ Agent đã kích hoạt với: ${colors.green}${modelName}${colors.reset}`);
+    console.log(`💡 Gõ 'menu' để đổi model, 'exit' để thoát.\n`);
 
-  // Bắt đầu vòng lặp Agent với model đã chọn
-  agentLoop(selectedModel);
-});
+    agentLoop(selectedModel);
+  });
+}
+
+showMenu();
 
 // 4. Vòng lặp Agent thực thụ
 async function agentLoop(selectedModel) {
@@ -122,7 +124,13 @@ async function agentLoop(selectedModel) {
 
   const askUser = () => {
     rl.question(`${colors.blue}${colors.bold}Bạn:${colors.reset} `, async (input) => {
-      if (input.toLowerCase() === 'exit') return rl.close();
+      const cmd = input.toLowerCase().trim();
+      if (cmd === 'exit') return rl.close();
+      if (cmd === 'menu' || cmd === 'back') {
+        console.clear();
+        return showMenu(); // Quay lại menu chính
+      }
+      
       messages.push({ role: "user", content: input });
       await runAgent();
     });
