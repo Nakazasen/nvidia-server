@@ -40,6 +40,14 @@ const tools_impl = {
       return fs.readFileSync(filePath, 'utf8');
     } catch (e) { return `Error: ${e.message}`; }
   },
+  read_file_paged: async ({ filePath, start_line = 1, line_count = 100 }) => {
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const lines = content.split('\n');
+      const result = lines.slice(start_line - 1, start_line - 1 + line_count).join('\n');
+      return `[Dòng ${start_line} đến ${start_line + line_count - 1} / Tổng ${lines.length} dòng]\n${result}`;
+    } catch (e) { return `Error: ${e.message}`; }
+  },
   write_file: async ({ filePath, content }) => {
     const answer = await new Promise(resolve => {
       console.log(`\n${colors.yellow}${colors.bold}[BẢO MẬT]${colors.reset} Agent muốn GHI vào file: ${colors.cyan}${filePath}${colors.reset}`);
@@ -69,7 +77,8 @@ const tools_impl = {
 // 3. Khai báo Tools cho AI (JSON Schema)
 const tools_def = [
   { type: "function", function: { name: "list_dir", description: "Liệt kê file và thư mục", parameters: { type: "object", properties: { dirPath: { type: "string" } } } } },
-  { type: "function", function: { name: "read_file", description: "Đọc nội dung file", parameters: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] } } },
+  { type: "function", function: { name: "read_file", description: "Đọc toàn bộ nội dung file (chỉ dùng cho file nhỏ)", parameters: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] } } },
+  { type: "function", function: { name: "read_file_paged", description: "Đọc file theo từng đoạn (dành cho file lớn hoặc khi muốn đọc cụ thể vài dòng)", parameters: { type: "object", properties: { filePath: { type: "string" }, start_line: { type: "integer" }, line_count: { type: "integer" } }, required: ["filePath"] } } },
   { type: "function", function: { name: "write_file", description: "Ghi/Sửa nội dung file", parameters: { type: "object", properties: { filePath: { type: "string" }, content: { type: "string" } }, required: ["filePath", "content"] } } },
   { type: "function", function: { name: "execute_command", description: "Chạy lệnh terminal", parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } } }
 ];
@@ -96,7 +105,7 @@ const models = [
 
 function showMenu() {
   console.log(`${colors.cyan}${colors.bold}==========================================${colors.reset}`);
-  console.log(`${colors.cyan}${colors.bold}       NVIDIA NIM AGENT CLI v1.2          ${colors.reset}`);
+  console.log(`${colors.cyan}${colors.bold}       NVIDIA NIM AGENT CLI v1.7          ${colors.reset}`);
   console.log(`${colors.cyan}${colors.bold}==========================================${colors.reset}\n`);
 
   console.log("Danh sách mô hình:");
@@ -137,14 +146,19 @@ async function agentLoop(selectedModel) {
   };
 
   async function runAgent() {
+    let retryCount = 0;
+    const maxRetries = 3;
+
     while (true) {
-      process.stdout.write(`${colors.yellow}Đang suy nghĩ...${colors.reset}`);
+      process.stdout.write(`${colors.yellow}🔍 AI đang phân tích dữ liệu...${colors.reset}`);
       try {
         const response = await openai.chat.completions.create({ 
           model: selectedModel, 
           messages, 
           tools: tools_def 
         });
+        
+        retryCount = 0; // Reset nếu thành công
         const choice = response.choices[0];
         messages.push(choice.message);
 
@@ -158,8 +172,7 @@ async function agentLoop(selectedModel) {
             console.log(`\n${colors.yellow}🚀 Agent đang thực thi:${colors.reset} ${colors.bold}${funcName}${colors.reset}`);
             
             const result = await tools_impl[funcName](args);
-            console.log(`${colors.green}✔ Kết quả:${colors.reset} ${result.substring(0, 100)}${result.length > 100 ? "..." : ""}`);
-            console.log(`${colors.blue}🔄 Đang báo cáo kết quả cho AI...${colors.reset}`);
+            console.log(`${colors.green}✔ Kết quả:${colors.reset} ${result.substring(0, 500)}${result.length > 500 ? "... (Đã gửi toàn bộ dữ liệu cho AI)" : ""}`);
             
             messages.push({ role: "tool", tool_call_id: toolCall.id, content: result });
           }
@@ -170,6 +183,15 @@ async function agentLoop(selectedModel) {
       } catch (error) {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
+
+        if (error.status === 429 && retryCount < maxRetries) {
+          retryCount++;
+          const waitTime = Math.pow(2, retryCount) * 1000;
+          console.log(`\n${colors.red}⚠️ Rate Limit (429). Thử lại sau ${waitTime/1000}s... (Lần ${retryCount}/${maxRetries})${colors.reset}`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue; 
+        }
+
         console.log(`${colors.red}Lỗi:${colors.reset} ${error.message}\n`);
         break;
       }
