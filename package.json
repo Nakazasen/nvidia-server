@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node tools/nvidia-server.mjs",
-    "cli": "node tools/nvidia-cli.mjs"
+    "cli": "node tools/nvidia-cli.mjs",
+    "agent": "node tools/nvidia-cli-agent.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.1",
