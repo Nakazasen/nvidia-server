@@ -3,303 +3,345 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NVIDIA DeepSeek Playground</title>
+    <title>NVIDIA NIM Agent IDE</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary: #76b900;
             --bg: #0b0e14;
-            --card-bg: rgba(255, 255, 255, 0.05);
-            --text: #e0e0e0;
-            --border: rgba(255, 255, 255, 0.1);
+            --glass: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
         }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Outfit', sans-serif; }
+        body { background: var(--bg); color: #fff; height: 100vh; overflow: hidden; display: flex; }
+        
+        /* Layout */
+        .sidebar { width: 300px; background: rgba(0,0,0,0.3); border-right: 1px solid var(--glass-border); display: flex; flex-direction: column; padding: 20px; }
+        .main { flex: 1; display: flex; flex-direction: column; position: relative; }
+        .plan-bar { width: 320px; background: rgba(0,0,0,0.3); border-left: 1px solid var(--glass-border); padding: 20px; }
 
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background-color: var(--bg);
-            color: var(--text);
-            margin: 0;
-            display: flex;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        .sidebar {
-            width: 300px;
-            background: rgba(0, 0, 0, 0.3);
-            border-right: 1px solid var(--border);
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .main {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            position: relative;
-        }
-
-        .header {
-            padding: 20px 40px;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(0, 0, 0, 0.2);
-        }
-
-        .header h1 {
-            font-size: 1.2rem;
-            margin: 0;
-            color: var(--primary);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .chat-container {
-            flex: 1;
-            overflow-y: auto;
-            padding: 40px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
+        /* Components */
+        h2 { font-size: 1.2rem; margin-bottom: 20px; color: var(--primary); display: flex; align-items: center; gap: 10px; }
+        .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        /* Fix lỗi tràn khung cho tin nhắn */
         .message {
-            max-width: 80%;
-            padding: 15px 20px;
-            border-radius: 12px;
+            max-width: 85%;
+            padding: 12px 18px;
+            border-radius: 15px;
+            margin-bottom: 15px;
+            font-size: 0.95rem;
             line-height: 1.5;
-            position: relative;
-            animation: fadeIn 0.3s ease;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            backdrop-filter: blur(5px);
+            word-break: break-word; /* Tự động xuống dòng */
+            overflow-wrap: break-word;
         }
 
         .user-message {
             align-self: flex-end;
             background: var(--primary);
-            color: black;
-            font-weight: 500;
+            color: #000;
+            border-bottom-right-radius: 2px;
+            box-shadow: 0 4px 15px rgba(118, 185, 0, 0.3);
         }
+        .assistant-message { align-self: flex-start; background: var(--glass); border: 1px solid var(--glass-border); border-bottom-left-radius: 2px; }
+        
+        .input-area { padding: 20px; background: var(--glass); border-top: 1px solid var(--glass-border); display: flex; gap: 10px; align-items: center; }
+        input[type="text"] { flex: 1; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); padding: 12px 20px; border-radius: 25px; color: #fff; outline: none; transition: 0.3s; }
+        input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 10px rgba(118, 185, 0, 0.2); }
+        
+        .btn-icon { background: var(--glass); border: 1px solid var(--glass-border); width: 45px; height: 45px; border-radius: 50%; color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.3s; }
+        .btn-icon:hover { background: var(--primary); color: #000; transform: scale(1.1); }
 
-        .bot-message {
-            align-self: flex-start;
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            backdrop-filter: blur(10px);
-        }
+        /* Plan Steps */
+        .step { background: var(--glass); padding: 10px; border-radius: 8px; margin-bottom: 10px; border-left: 3px solid var(--primary); font-size: 0.85rem; opacity: 0.7; }
+        .step.active { opacity: 1; background: rgba(118, 185, 0, 0.1); }
 
-        .input-area {
-            padding: 30px 40px;
-            background: linear-gradient(to top, var(--bg) 80%, transparent);
-        }
+        /* Modal */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(5px); }
+        .modal-overlay.active { display: flex; }
+        .modal { background: #1a1d23; padding: 30px; border-radius: 20px; border: 1px solid var(--glass-border); width: 400px; text-align: center; }
+        .modal h3 { margin-bottom: 15px; color: var(--primary); }
+        .modal p { margin-bottom: 25px; font-size: 0.9rem; color: #ccc; }
+        .modal-btns { display: flex; gap: 10px; justify-content: center; }
+        .btn { padding: 10px 25px; border-radius: 10px; cursor: pointer; border: none; font-weight: 600; }
+        .btn-primary { background: var(--primary); color: #000; }
+        .btn-secondary { background: #333; color: #fff; }
 
-        .input-wrapper {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 15px;
-            display: flex;
-            align-items: center;
-            padding: 5px 15px;
-            transition: border-color 0.3s;
-        }
-
-        .input-wrapper:focus-within {
-            border-color: var(--primary);
-        }
-
-        textarea {
-            flex: 1;
-            background: transparent;
-            border: none;
-            color: white;
-            padding: 15px;
-            font-size: 1rem;
-            resize: none;
-            outline: none;
-            height: 24px;
-            max-height: 200px;
-        }
-
-        .send-btn {
-            background: var(--primary);
-            border: none;
-            width: 40px;
-            height: 40px;
-            border-radius: 10px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.2s;
-        }
-
-        .send-btn:hover {
-            transform: scale(1.05);
-        }
-
-        .settings-item {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        label {
-            font-size: 0.8rem;
-            opacity: 0.7;
-        }
-
-        select, input {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            color: white;
-            padding: 10px;
-            border-radius: 8px;
-            outline: none;
-        }
-
-        option, optgroup {
-            background-color: #1a1e26;
-            color: white;
-        }
-
-        pre {
-            background: rgba(0,0,0,0.5);
-            padding: 15px;
-            border-radius: 8px;
-            overflow-x: auto;
-        }
+        /* Media Preview */
+        #media-preview { position: absolute; bottom: 90px; left: 20px; display: flex; gap: 10px; }
+        .media-item { width: 60px; height: 60px; border-radius: 8px; border: 2px solid var(--primary); object-fit: cover; }
     </style>
 </head>
 <body>
     <div class="sidebar">
-        <div style="font-weight: bold; font-size: 1.1rem; margin-bottom: 10px;">Cấu hình NVIDIA</div>
-        <div class="settings-item">
-            <label>Model</label>
-            <select id="model-select">
-                <optgroup label="DeepSeek">
-                    <option value="deepseek-ai/deepseek-v4-pro">DeepSeek V4 Pro</option>
-                    <option value="deepseek-ai/deepseek-v4-flash">DeepSeek V4 Flash</option>
-                    <option value="deepseek-ai/deepseek-v3.2">DeepSeek V3.2</option>
-                </optgroup>
-                <optgroup label="NVIDIA Nemotron">
-                    <option value="nvidia/nemotron-3-super-120b-a12b">Nemotron 3 Super 120B</option>
-                    <option value="nvidia/nemotron-3-nano-30b-a3b">Nemotron 3 Nano 30B</option>
-                    <option value="nvidia/ising-calibration-1-35b-a3b">Ising Calibration 35B</option>
-                </optgroup>
-                <optgroup label="Google & Meta">
-                    <option value="google/gemma-4-31b-it">Gemma 4 31B IT</option>
-                    <option value="meta/llama-3.1-405b-instruct">Llama 3.1 405B</option>
-                </optgroup>
-                <optgroup label="Mistral & Qwen">
-                    <option value="mistralai/mistral-small-4-119b-2603">Mistral Small 4</option>
-                    <option value="mistralai/devstral-2-123b-instruct-2512">Devstral 2 123B</option>
-                    <option value="qwen/qwen3.5-122b-a10b">Qwen 3.5 122B</option>
-                    <option value="qwen/qwen3.5-397b-a17b">Qwen 3.5 397B</option>
-                </optgroup>
-                <optgroup label="Kimi & Others">
-                    <option value="moonshotai/kimi-k2.5">Kimi K2.5</option>
-                    <option value="moonshotai/kimi-k2-thinking">Kimi K2 Thinking</option>
-                    <option value="z-ai/glm-5.1">GLM 5.1</option>
-                    <option value="z-ai/glm-4.7">GLM 4.7</option>
-                    <option value="minimaxai/minimax-m2.7">MiniMax M2.7</option>
-                    <option value="stepfun-ai/step-3.5-flash">Step 3.5 Flash</option>
-                </optgroup>
-            </select>
-        </div>
-        <div class="settings-item">
-            <label>API Key</label>
-            <input type="password" id="api-key" value="nvapi-YOUR_KEY_HERE">
-        </div>
-        <div style="margin-top: auto; font-size: 0.8rem; opacity: 0.5;">
-            Được thiết kế cho Antigravity IDE
+        <h2>⚙️ Cấu hình</h2>
+        <label style="font-size: 0.8rem; opacity: 0.6;">Mô hình NIM:</label>
+        <select id="model-select" style="width:100%; background:#000; color:#fff; border:1px solid #333; padding:8px; border-radius:5px; margin-top:5px; margin-bottom: 20px;">
+            <option>⏳ Đang tải mô hình từ NVIDIA...</option>
+        </select>
+
+        <div style="margin-top: 20px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid var(--glass-border);">
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 0.9rem;">
+                <input type="checkbox" id="auto-accept" style="width: 18px; height: 18px; accent-color: var(--primary);">
+                <span>Auto-Accept (Tự động duyệt)</span>
+            </label>
+            <p style="font-size: 0.7rem; opacity: 0.5; margin-top: 8px;">Bật để Agent tự chạy lệnh và ghi file không cần hỏi.</p>
         </div>
     </div>
 
     <div class="main">
-        <div class="header">
-            <h1><span>🟢</span> NVIDIA NIM Playground</h1>
-            <div style="font-size: 0.9rem; opacity: 0.7;">Limit: 40 req/min</div>
-        </div>
-
-        <div class="chat-container" id="chat-container">
-            <div class="message bot-message">
-                Xin chào! Tôi là DeepSeek chạy trên hạ tầng NVIDIA. Tôi có thể giúp gì cho bạn hôm nay?
-            </div>
-        </div>
-
+        <div class="chat-container" id="chat-box"></div>
+        <div id="media-preview"></div>
         <div class="input-area">
-            <div class="input-wrapper">
-                <textarea id="user-input" placeholder="Nhập câu hỏi tại đây... (Shift + Enter để xuống dòng)"></textarea>
-                <button class="send-btn" id="send-btn">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                </button>
-            </div>
-            <div style="text-align: center; font-size: 0.7rem; margin-top: 10px; opacity: 0.5;">
-                Nhấn Ctrl + Enter để gửi. Câu trả lời sẽ được agent xử lý nếu trình duyệt bị chặn CORS.
+            <input type="file" id="file-input" hidden multiple>
+            <button class="btn-icon" onclick="document.getElementById('file-input').click()">➕</button>
+            <input type="text" id="user-input" placeholder="Nhập yêu cầu hoặc đính kèm Media...">
+            <button class="btn-icon" onclick="sendMessage()">🚀</button>
+        </div>
+    </div>
+
+    <div class="plan-bar">
+        <h2>📋 Kế hoạch (Plan)</h2>
+        <div id="plan-steps"></div>
+    </div>
+
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal">
+            <h3>🛡️ Xác nhận hành động</h3>
+            <p id="modal-desc"></p>
+            <div class="modal-btns">
+                <button class="btn btn-secondary" id="btn-deny">Từ chối</button>
+                <button class="btn btn-primary" id="btn-allow">Cho phép</button>
             </div>
         </div>
     </div>
 
-    <script>
-        const chatContainer = document.getElementById('chat-container');
-        const userInput = document.getElementById('user-input');
-        const sendBtn = document.getElementById('send-btn');
-        const modelSelect = document.getElementById('model-select');
-        const apiKeyInput = document.getElementById('api-key');
+    <!-- Mentions Suggestions -->
+    <div id="mentions-box" class="mentions-box"></div>
 
-        function addMessage(text, isUser) {
-            const msg = document.createElement('div');
-            msg.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
-            msg.innerText = text;
-            chatContainer.appendChild(msg);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-            return msg;
+    <style>
+        .mentions-box {
+            position: absolute;
+            background: #1a1d23;
+            border: 1px solid var(--primary);
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+            z-index: 1000;
+            width: 250px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.5);
         }
+        .mention-item {
+            padding: 8px 15px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .mention-item:hover {
+            background: var(--primary);
+            color: #000;
+        }
+    </style>
 
-        async function sendMessage() {
-            const text = userInput.value.trim();
-            if (!text) return;
+    <script>
+        const chatBox = document.getElementById('chat-box');
+        const userInput = document.getElementById('user-input');
+        const planSteps = document.getElementById('plan-steps');
+        const mediaPreview = document.getElementById('media-preview');
+        const fileInput = document.getElementById('file-input');
+        const modelSelect = document.getElementById('model-select');
+        const mentionsBox = document.getElementById('mentions-box');
+        
+        let messageHistory = [];
+        let attachedMedia = [];
+        let allFiles = [];
 
-            userInput.value = '';
-            addMessage(text, true);
-
-            const botMsg = addMessage('Đang suy nghĩ...', false);
-
+        // --- Fetch Models Dynamically ---
+        async function fetchModels() {
             try {
-                // Gọi qua local proxy để tránh lỗi CORS
-                const response = await fetch('http://localhost:3000/api/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        model: modelSelect.value,
-                        prompt: text
-                    })
-                });
-
-                const data = await response.json();
-                botMsg.innerText = data.choices[0].message.content;
-            } catch (error) {
-                botMsg.innerHTML = `<span style="color: #ff4444;">Lỗi: Không thể kết nối với Local Server.</span><br><br>Hãy đảm bảo bạn đã chạy lệnh này trong terminal:<br><code>node c:\\Users\\Admin\\.gemini\\antigravity\\scripts\\nvidia-server.mjs</code>`;
-                console.error(error);
+                const res = await fetch('/api/models');
+                const data = await res.json();
+                if (data.data) {
+                    modelSelect.innerHTML = data.data
+                        .sort((a, b) => a.id.localeCompare(b.id))
+                        .map(m => `<option value="${m.id}">${m.id}</option>`)
+                        .join('');
+                    
+                    // Chọn mặc định DeepSeek nếu có
+                    const ds = data.data.find(m => m.id.includes('deepseek-v4-flash'));
+                    if (ds) modelSelect.value = ds.id;
+                }
+            } catch (e) {
+                modelSelect.innerHTML = '<option>Lỗi: Không thể tải danh sách mô hình</option>';
             }
         }
+        fetchModels();
 
-        sendBtn.addEventListener('click', sendMessage);
+        // --- Fetch Files for Mentions ---
+        async function refreshFiles() {
+            const res = await fetch('/api/list_dir', { method: 'POST', body: JSON.stringify({ path: '.' }) });
+            const data = await res.json();
+            allFiles = JSON.parse(data.result);
+        }
+        refreshFiles();
+
+        // --- Mentions Logic ---
+        userInput.oninput = (e) => {
+            const val = e.target.value;
+            const lastAt = val.lastIndexOf('@');
+            
+            if (lastAt !== -1 && (lastAt === 0 || val[lastAt - 1] === ' ')) {
+                const query = val.substring(lastAt + 1).toLowerCase();
+                const filtered = allFiles.filter(f => f.toLowerCase().includes(query));
+                
+                if (filtered.length > 0) {
+                    mentionsBox.innerHTML = filtered.map(f => `<div class="mention-item" onclick="selectMention('${f}')">${f}</div>`).join('');
+                    mentionsBox.style.display = 'block';
+                    
+                    // Position box
+                    const rect = userInput.getBoundingClientRect();
+                    mentionsBox.style.bottom = (window.innerHeight - rect.top + 5) + 'px';
+                    mentionsBox.style.left = rect.left + 'px';
+                } else {
+                    mentionsBox.style.display = 'none';
+                }
+            } else {
+                mentionsBox.style.display = 'none';
+            }
+        };
+
+        function selectMention(filename) {
+            const val = userInput.value;
+            const lastAt = val.lastIndexOf('@');
+            userInput.value = val.substring(0, lastAt) + '@' + filename + ' ';
+            mentionsBox.style.display = 'none';
+            userInput.focus();
+        }
+
+        // --- Media Handling ---
+        fileInput.onchange = (e) => {
+            Array.from(e.target.files).forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    attachedMedia.push({ type: file.type, data: ev.target.result, name: file.name });
+                    const img = document.createElement('img');
+                    img.src = ev.target.result;
+                    img.className = 'media-item';
+                    mediaPreview.appendChild(img);
+                };
+                reader.readAsDataURL(file);
+            });
+        };
+
+        const tools_def = [
+            { type: "function", function: { name: "update_plan", description: "Cập nhật các bước kế hoạch", parameters: { type: "object", properties: { steps: { type: "array", items: { type: "string" } } } } } },
+            { type: "function", function: { name: "list_dir", description: "Liệt kê file", parameters: { type: "object", properties: { path: { type: "string" } } } } },
+            { type: "function", function: { name: "read_file", description: "Đọc file", parameters: { type: "object", properties: { path: { type: "string" } } } } },
+            { type: "function", function: { name: "write_file", description: "Ghi file", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } } } } },
+            { type: "function", function: { name: "execute_command", description: "Chạy lệnh", parameters: { type: "object", properties: { command: { type: "string" } } } } }
+        ];
+
+        function addMessage(role, text) {
+            const div = document.createElement('div');
+            div.className = `message ${role}-message`;
+            div.innerText = text;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
         userInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();
             }
         });
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text && attachedMedia.length === 0) return;
+
+            let content = text || "Phân tích file đính kèm";
+            if (attachedMedia.length > 0) {
+                content = [ { type: "text", text: content } ];
+                attachedMedia.forEach(m => {
+                    if (m.type.startsWith('image/')) content.push({ type: "image_url", image_url: { url: m.data } });
+                });
+            }
+
+            addMessage('user', text || "Đã gửi Media");
+            messageHistory.push({ role: 'user', content: content });
+            userInput.value = ''; attachedMedia = []; mediaPreview.innerHTML = '';
+            mentionsBox.style.display = 'none';
+            
+            // Xóa kế hoạch cũ
+            planSteps.innerHTML = '<div style="opacity:0.5; padding:20px; text-align:center;">Đang lập kế hoạch...</div>';
+            
+            await runAgentLoop();
+        }
+
+        async function runAgentLoop() {
+            const loading = document.createElement('div');
+            loading.className = 'message assistant-message';
+            loading.innerText = '🔍 Agent đang suy nghĩ...';
+            chatBox.appendChild(loading);
+
+            // Chèn System Prompt để bắt Agent phải lập kế hoạch
+            const messagesWithSystem = [
+                { role: 'system', content: 'Bạn là một Agent thông minh. Trước khi thực hiện các tác vụ phức tạp, bạn PHẢI gọi công cụ update_plan để hiển thị các bước thực hiện cho người dùng.' },
+                ...messageHistory
+            ];
+
+            while (true) {
+                const res = await fetch('/proxy/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: modelSelect.value, messages: messagesWithSystem, tools: tools_def })
+                });
+                const data = await res.json();
+                const message = data.choices[0].message;
+                messageHistory.push(message);
+
+                if (message.tool_calls) {
+                    for (const call of message.tool_calls) {
+                        const name = call.function.name;
+                        const args = JSON.parse(call.function.arguments);
+                        loading.innerText = `⚙️ Thực thi: ${name}...`;
+                        
+                        let result = "";
+                        if (name === 'update_plan') {
+                            planSteps.innerHTML = args.steps.map(s => `<div class="step active">${s}</div>`).join('');
+                            result = "Plan updated.";
+                        } else {
+                            // Kiểm tra chế độ Auto-Accept
+                            const isAuto = document.getElementById('auto-accept').checked;
+                            const approved = isAuto || (await askPermission(name, args));
+                            
+                            if (approved) {
+                                const toolRes = await fetch(`/api/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
+                                const toolData = await toolRes.json();
+                                result = toolData.result;
+                            } else result = "User denied.";
+                        }
+                        messageHistory.push({ role: 'tool', tool_call_id: call.id, content: result });
+                    }
+                } else {
+                    loading.remove();
+                    addMessage('assistant', message.content);
+                    break;
+                }
+            }
+        }
+
+        function askPermission(name, args) {
+            return new Promise(resolve => {
+                const modal = document.getElementById('modal-overlay');
+                document.getElementById('modal-desc').innerText = `${name}: ${JSON.stringify(args)}`;
+                modal.classList.add('active');
+                document.getElementById('btn-allow').onclick = () => { modal.classList.remove('active'); resolve(true); };
+                document.getElementById('btn-deny').onclick = () => { modal.classList.remove('active'); resolve(false); };
+            });
+        }
     </script>
 </body>
 </html>

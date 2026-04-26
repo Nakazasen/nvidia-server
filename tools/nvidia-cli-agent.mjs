@@ -1,15 +1,17 @@
-import fs from 'fs';
-import readline from 'readline';
 import OpenAI from "openai";
-import { exec } from 'child_process';
+import readline from "readline";
+import { exec } from "child_process";
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
-// 1. Tự động nạp API Key từ .env
+// --- 1. Cấu hình & Khởi tạo ---
 if (fs.existsSync('./.env')) {
-  const env = fs.readFileSync('./.env', 'utf8');
-  env.split('\n').forEach(line => {
-    const [key, value] = line.split('=');
-    if (key && value) process.env[key.trim()] = value.trim();
-  });
+    const env = fs.readFileSync('./.env', 'utf8');
+    env.split('\n').forEach(line => {
+        const [key, value] = line.split('=');
+        if (key && value) process.env[key.trim()] = value.trim();
+    });
 }
 
 const openai = new OpenAI({
@@ -17,187 +19,129 @@ const openai = new OpenAI({
   baseURL: "https://integrate.api.nvidia.com/v1",
 });
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const colors = { cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m", bold: "\x1b[1m", reset: "\x1b[0m" };
 
-const colors = {
-  reset: "\x1b[0m", green: "\x1b[32m", blue: "\x1b[36m",
-  yellow: "\x1b[33m", red: "\x1b[31m", cyan: "\x1b[36m", bold: "\x1b[1m"
-};
-
-// 2. Định nghĩa các "Đôi tay" (Tools Implementation)
-const tools_impl = {
-  list_dir: async ({ dirPath }) => {
-    try {
-      const files = fs.readdirSync(dirPath || '.');
-      return JSON.stringify(files, null, 2);
-    } catch (e) { return `Error: ${e.message}`; }
+// --- 2. Định nghĩa các Tools (Công cụ) ---
+const tools_logic = {
+  update_plan: (args) => {
+    console.log(`\n${colors.cyan}${colors.bold}📋 KẾ HOẠCH HÀNH ĐỘNG:${colors.reset}`);
+    args.steps.forEach((step, i) => console.log(`${colors.cyan}  ${i + 1}. [ ] ${step}${colors.reset}`));
+    return "Plan updated visually.";
   },
-  read_file: async ({ filePath }) => {
-    try {
-      return fs.readFileSync(filePath, 'utf8');
-    } catch (e) { return `Error: ${e.message}`; }
+  list_dir: (args) => JSON.stringify(fs.readdirSync(args.dirPath || '.'), null, 2),
+  read_file: (args) => fs.readFileSync(args.filePath, 'utf8'),
+  read_file_paged: (args) => {
+    const content = fs.readFileSync(args.filePath, 'utf8').split('\n');
+    const start = args.start_line || 1;
+    const count = args.line_count || 500;
+    return content.slice(start - 1, start - 1 + count).join('\n');
   },
-  read_file_paged: async ({ filePath, start_line = 1, line_count = 100 }) => {
-    try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const lines = content.split('\n');
-      const result = lines.slice(start_line - 1, start_line - 1 + line_count).join('\n');
-      return `[Dòng ${start_line} đến ${start_line + line_count - 1} / Tổng ${lines.length} dòng]\n${result}`;
-    } catch (e) { return `Error: ${e.message}`; }
+  write_file: async (args) => {
+    if (!autoAccept) {
+      const answer = await new Promise(resolve => {
+        rl.question(`${colors.yellow}[BẢO MẬT] Agent muốn GHI vào file: ${args.filePath}\nBạn có đồng ý không? (y/n): ${colors.reset}`, resolve);
+      });
+      if (answer.toLowerCase() !== 'y') return "User denied file write.";
+    }
+    fs.writeFileSync(args.filePath, args.content);
+    return "File written successfully.";
   },
-  write_file: async ({ filePath, content }) => {
-    const answer = await new Promise(resolve => {
-      console.log(`\n${colors.yellow}${colors.bold}[BẢO MẬT]${colors.reset} Agent muốn GHI vào file: ${colors.cyan}${filePath}${colors.reset}`);
-      rl.question(`Bạn có đồng ý không? (y/n): `, resolve);
-    });
-    if (answer.toLowerCase() !== 'y') return "User denied file write.";
-    try {
-      fs.writeFileSync(filePath, content);
-      return "Success: File written.";
-    } catch (e) { return `Error: ${e.message}`; }
-  },
-  execute_command: async ({ command }) => {
-    const answer = await new Promise(resolve => {
-      console.log(`\n${colors.yellow}${colors.bold}[BẢO MẬT]${colors.reset} Agent muốn CHẠY lệnh: ${colors.cyan}${command}${colors.reset}`);
-      rl.question(`Bạn có đồng ý không? (y/n): `, resolve);
-    });
-    if (answer.toLowerCase() !== 'y') return "User denied command execution.";
+  execute_command: async (args) => {
+    if (!autoAccept) {
+      const answer = await new Promise(resolve => {
+        rl.question(`${colors.yellow}[BẢO MẬT] Agent muốn CHẠY lệnh: ${args.command}\nBạn có đồng ý không? (y/n): ${colors.reset}`, resolve);
+      });
+      if (answer.toLowerCase() !== 'y') return "User denied command execution.";
+    }
     return new Promise(resolve => {
-      exec(command, (error, stdout, stderr) => {
+      exec(args.command, (error, stdout, stderr) => {
         if (error) resolve(`Error: ${error.message}\n${stderr}`);
-        else resolve(stdout || "Command executed successfully (no output).");
+        else resolve(stdout || "Success");
       });
     });
   }
 };
 
-// 3. Khai báo Tools cho AI (JSON Schema)
 const tools_def = [
-  { type: "function", function: { name: "list_dir", description: "Liệt kê file và thư mục", parameters: { type: "object", properties: { dirPath: { type: "string" } } } } },
-  { type: "function", function: { name: "read_file", description: "Đọc toàn bộ nội dung file (chỉ dùng cho file nhỏ)", parameters: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] } } },
-  { type: "function", function: { name: "read_file_paged", description: "Đọc file theo từng đoạn (dành cho file lớn hoặc khi muốn đọc cụ thể vài dòng)", parameters: { type: "object", properties: { filePath: { type: "string" }, start_line: { type: "integer" }, line_count: { type: "integer" } }, required: ["filePath"] } } },
-  { type: "function", function: { name: "write_file", description: "Ghi/Sửa nội dung file", parameters: { type: "object", properties: { filePath: { type: "string" }, content: { type: "string" } }, required: ["filePath", "content"] } } },
-  { type: "function", function: { name: "execute_command", description: "Chạy lệnh terminal", parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } } }
+  { type: "function", function: { name: "update_plan", description: "Cập nhật kế hoạch", parameters: { type: "object", properties: { steps: { type: "array", items: { type: "string" } } } } } },
+  { type: "function", function: { name: "list_dir", description: "Liệt kê file", parameters: { type: "object", properties: { dirPath: { type: "string" } } } } },
+  { type: "function", function: { name: "read_file", description: "Đọc file nhỏ", parameters: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] } } },
+  { type: "function", function: { name: "read_file_paged", description: "Đọc file lớn", parameters: { type: "object", properties: { filePath: { type: "string" }, start_line: { type: "integer" }, line_count: { type: "integer" } }, required: ["filePath"] } } },
+  { type: "function", function: { name: "write_file", description: "Ghi file", parameters: { type: "object", properties: { filePath: { type: "string" }, content: { type: "string" } }, required: ["filePath", "content"] } } },
+  { type: "function", function: { name: "execute_command", description: "Chạy lệnh", parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } } }
 ];
 
-const models = [
-  { name: "DeepSeek V4 Pro (Khuyên dùng - IQ cao)", id: "deepseek-ai/deepseek-v4-pro" },
-  { name: "DeepSeek V4 Flash (Khuyên dùng - Nhanh)", id: "deepseek-ai/deepseek-v4-flash" },
-  { name: "DeepSeek V3.2", id: "deepseek-ai/deepseek-v3.2" },
-  { name: "Llama 3.1 405B (Meta - Siêu mạnh)", id: "meta/llama-3.1-405b-instruct" },
-  { name: "Nemotron 3 Super 120B (NVIDIA - Chuẩn)", id: "nvidia/nemotron-3-super-120b-a12b" },
-  { name: "Nemotron 3 Nano 30B", id: "nvidia/nemotron-3-nano-30b" },
-  { name: "Qwen 3.5 397B", id: "qwen/qwen3.5-397b-a17b" },
-  { name: "Qwen 3.5 122B", id: "qwen/qwen3.5-122b-a20b" },
-  { name: "Kimi K2.5 (Moonshot)", id: "moonshotai/kimi-k2.5" },
-  { name: "Kimi K2 Thinking", id: "moonshotai/kimi-k2-thinking" },
-  { name: "GLM 5.1 (Zhipu)", id: "z-ai/glm-5.1" },
-  { name: "GLM 4.7", id: "z-ai/glm-4.7" },
-  { name: "Mistral Small 4", id: "mistralai/mistral-small-2409" },
-  { name: "Devstral 2 123B", id: "mistralai/mistral-large-2407" },
-  { name: "Gemma 4 31B IT", id: "google/gemma-2-27b-it" },
-  { name: "MiniMax M2.7", id: "minimax/minimax-01" },
-  { name: "Step 3.5 Flash (Không hỗ trợ Agent)", id: "stepfun/step-1.5v-flash" }
-];
+let models = [];
+
+async function fetchModels() {
+  process.stdout.write(`${colors.yellow}⏳ Đang nạp danh sách mô hình từ NVIDIA...${colors.reset}\r`);
+  try {
+    const response = await openai.models.list();
+    models = response.data.sort((a, b) => a.id.localeCompare(b.id)).map(m => ({ name: m.id, id: m.id }));
+    readline.clearLine(process.stdout, 0);
+    readline.cursorTo(process.stdout, 0);
+  } catch (e) {
+    models = [{ name: "DeepSeek V4 Flash (Fallback)", id: "deepseek-ai/deepseek-v4-flash" }];
+  }
+}
+
+let autoAccept = false;
 
 function showMenu() {
+  console.log(`\n${colors.cyan}${colors.bold}==========================================${colors.reset}`);
+  console.log(`${colors.cyan}${colors.bold}       NVIDIA NIM AGENT CLI v1.10          ${colors.reset}`);
   console.log(`${colors.cyan}${colors.bold}==========================================${colors.reset}`);
-  console.log(`${colors.cyan}${colors.bold}       NVIDIA NIM AGENT CLI v1.7          ${colors.reset}`);
-  console.log(`${colors.cyan}${colors.bold}==========================================${colors.reset}\n`);
-
   console.log("Danh sách mô hình:");
-  models.forEach((m, idx) => console.log(`  ${colors.yellow}[${idx + 1}]${colors.reset} ${m.name}`));
-  console.log(`  ${colors.red}[0] Thoát${colors.reset}`);
-
+  models.forEach((m, i) => console.log(`  [${i + 1}] ${m.name}`));
   rl.question(`\nChọn mô hình (1-${models.length}) [Mặc định: 1]: `, (choice) => {
-    if (choice === '0') { console.log("Tạm biệt!"); rl.close(); return; }
-    const idx = parseInt(choice) - 1;
-    const selectedModel = models[idx] ? models[idx].id : models[0].id;
-    const modelName = models[idx] ? models[idx].name : models[0].name;
-
-    console.log(`\n✅ Agent đã kích hoạt với: ${colors.green}${modelName}${colors.reset}`);
-    console.log(`💡 Gõ 'menu' để đổi model, 'exit' để thoát.\n`);
-
-    agentLoop(selectedModel);
+    const idx = parseInt(choice) - 1 || 0;
+    rl.question(`Bật chế độ Tự động duyệt (Auto-Accept)? (y/n): `, (aa) => {
+      autoAccept = aa.toLowerCase() === 'y';
+      agentLoop(models[idx].id);
+    });
   });
 }
 
-showMenu();
-
-// 4. Vòng lặp Agent thực thụ
 async function agentLoop(selectedModel) {
-  let messages = [{ role: "system", content: "You are a powerful AI Agent. You can see local files and execute commands to solve tasks. Use your tools whenever needed." }];
-
-  const askUser = () => {
-    rl.question(`${colors.blue}${colors.bold}Bạn:${colors.reset} `, async (input) => {
-      const cmd = input.toLowerCase().trim();
-      if (cmd === 'exit') return rl.close();
-      if (cmd === 'menu' || cmd === 'back') {
-        console.clear();
-        return showMenu(); // Quay lại menu chính
-      }
+  console.log(`\n${colors.green}✅ Agent kích hoạt: ${selectedModel}${colors.reset}`);
+  const loop = () => {
+    rl.question(`\n${colors.bold}Bạn:${colors.reset} `, async (input) => {
+      if (input.toLowerCase() === 'exit') process.exit();
+      if (input.toLowerCase() === 'menu') return showMenu();
       
-      messages.push({ role: "user", content: input });
-      await runAgent();
+      try {
+        // System Prompt ép AI lập kế hoạch
+        const systemMsg = { role: 'system', content: 'Bạn là một Agent thông minh. Trước khi thực hiện các tác vụ phức tạp, bạn PHẢI gọi công cụ update_plan để hiển thị các bước thực hiện cho người dùng.' };
+        
+        let response = await openai.chat.completions.create({
+          model: selectedModel,
+          messages: [systemMsg, { role: "user", content: input }],
+          tools: tools_def
+        });
+
+        let msg = response.choices[0].message;
+        while (msg.tool_calls) {
+          const results = [];
+          for (const tc of msg.tool_calls) {
+            console.log(`${colors.yellow}🚀 Thực thi: ${tc.function.name}${colors.reset}`);
+            const res = await tools_logic[tc.function.name](JSON.parse(tc.function.arguments));
+            results.push({ tool_call_id: tc.id, role: "tool", name: tc.function.name, content: res });
+          }
+          response = await openai.chat.completions.create({
+            model: selectedModel,
+            messages: [systemMsg, { role: "user", content: input }, msg, ...results],
+            tools: tools_def
+          });
+          msg = response.choices[0].message;
+        }
+        console.log(`\n${colors.bold}Agent:${colors.reset} ${msg.content}`);
+        loop();
+      } catch (e) { console.log(`${colors.red}Lỗi: ${e.message}${colors.reset}`); loop(); }
     });
   };
-
-  async function runAgent() {
-    let retryCount = 0;
-    const maxRetries = 3;
-
-    while (true) {
-      process.stdout.write(`${colors.yellow}🔍 AI đang phân tích dữ liệu...${colors.reset}`);
-      try {
-        const response = await openai.chat.completions.create({ 
-          model: selectedModel, 
-          messages, 
-          tools: tools_def 
-        });
-        
-        retryCount = 0; // Reset nếu thành công
-        const choice = response.choices[0];
-        messages.push(choice.message);
-
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-
-        if (choice.message.tool_calls) {
-          for (const toolCall of choice.message.tool_calls) {
-            const funcName = toolCall.function.name;
-            const args = JSON.parse(toolCall.function.arguments);
-            console.log(`\n${colors.yellow}🚀 Agent đang thực thi:${colors.reset} ${colors.bold}${funcName}${colors.reset}`);
-            
-            const result = await tools_impl[funcName](args);
-            console.log(`${colors.green}✔ Kết quả:${colors.reset} ${result.substring(0, 500)}${result.length > 500 ? "... (Đã gửi toàn bộ dữ liệu cho AI)" : ""}`);
-            
-            messages.push({ role: "tool", tool_call_id: toolCall.id, content: result });
-          }
-        } else {
-          console.log(`${colors.green}${colors.bold}NVIDIA:${colors.reset} ${choice.message.content}\n`);
-          break;
-        }
-      } catch (error) {
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-
-        if (error.status === 429 && retryCount < maxRetries) {
-          retryCount++;
-          const waitTime = Math.pow(2, retryCount) * 1000;
-          console.log(`\n${colors.red}⚠️ Rate Limit (429). Thử lại sau ${waitTime/1000}s... (Lần ${retryCount}/${maxRetries})${colors.reset}`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-          continue; 
-        }
-
-        console.log(`${colors.red}Lỗi:${colors.reset} ${error.message}\n`);
-        break;
-      }
-    }
-    askUser();
-  }
-
-  askUser();
+  loop();
 }
+
+async function start() { await fetchModels(); showMenu(); }
+start();
