@@ -1,0 +1,15 @@
+{
+  "name": "nvidia-nim-mcp-workspace",
+  "version": "1.0.0",
+  "description": "NVIDIA NIM MCP Server and Tools",
+  "main": "tools/nvidia_mcp.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "node tools/nvidia-server.mjs",
+    "cli": "node tools/nvidia-cli.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "openai": "^4.0.0"
+  }
+}

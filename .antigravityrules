@@ -1,0 +1,10 @@
+# Antigravity Agent Rules for NVIDIA Project
+
+## MANDATORY BEHAVIOR:
+- Whenever the user uses the tag `@nvidia`, `@mcp:nvidia-nim`, or explicitly mentions "NVIDIA", "DeepSeek", or any model from the NVIDIA NIM platform:
+    1. THE AGENT MUST CALL the `mcp_nvidia-nim_ask_nvidia` tool.
+    2. THE AGENT IS FORBIDDEN from answering using its internal knowledge (Gemini) as a substitute for the tool call.
+    3. Transparency is the highest priority. Always show the tool execution log.
+
+## RATIONALE:
+The user wants to verify the MCP integration and utilize their specific NVIDIA API credits. Any attempt to "optimize" by skipping the tool call is considered a breach of trust.
