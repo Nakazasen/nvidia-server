@@ -7,10 +7,33 @@
   "scripts": {
     "start": "node tools/nvidia-server.mjs",
     "cli": "node tools/nvidia-cli.mjs",
-    "agent": "node tools/nvidia-cli-agent.mjs"
+    "agent": "node tools/nvidia-cli-agent.mjs",
+    "agent:audit": "node tools/agent-capability-harness.mjs",
+    "desktop": "electron electron-main.js",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.nvidia.nim.agent",
+    "productName": "NVIDIA NIM Agent IDE",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "portable"
+    }
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.1",
-    "openai": "^4.0.0"
+    "boxen": "^8.0.1",
+    "chalk": "^5.6.2",
+    "diff": "^9.0.0",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
+    "openai": "^4.0.0",
+    "ora": "^9.4.0"
+  },
+  "devDependencies": {
+    "electron": "^41.3.0",
+    "electron-builder": "^26.8.1"
   }
 }
