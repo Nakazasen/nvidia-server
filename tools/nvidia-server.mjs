@@ -18,6 +18,7 @@ const EXEC_TIMEOUT_MS = 120000;
 const HOST = process.env.HOST || process.env.NVIDIA_SERVER_HOST || '127.0.0.1';
 const STATE_DIR = path.join(APP_DIR, '.nvidia-agent');
 const TRUST_FILE = path.join(STATE_DIR, 'trusted-workspaces.json');
+const PROFILE_FILE = path.join(STATE_DIR, 'profile.json');
 const READ_ONLY_TOOLS = new Set(['project_indexer', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
 const DESTRUCTIVE_TOOLS = new Set(['write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job']);
 
@@ -147,6 +148,38 @@ function setWorkspaceTrust(workspace = currentWorkspace, trusted = true) {
 
 function getWorkspaceTrustStatus(workspace = currentWorkspace) {
     return workspaceCore.getWorkspaceTrustStatus(workspace);
+}
+
+function sanitizeProfile(input = {}) {
+    const uiMode = input.uiMode === 'ide' ? 'ide' : 'enterprise';
+    const trustedWorkspace = input.trustedWorkspace === true;
+    const fallbackPanels = uiMode === 'ide'
+        ? ['chat', 'tools', 'explorer', 'terminal', 'extensions', 'diff']
+        : ['chat', 'tools'];
+    const allowedPanels = uiMode === 'ide'
+        ? new Set(['chat', 'tools', 'explorer', 'terminal', 'extensions', 'diff', 'jobs', 'search', 'composer'])
+        : new Set(['chat', 'tools']);
+    const requestedPanels = Array.isArray(input.enabledPanels)
+        ? [...new Set(input.enabledPanels.filter(item => typeof item === 'string' && allowedPanels.has(item)))]
+        : fallbackPanels;
+    const enabledPanels = requestedPanels.length > 0 ? requestedPanels : fallbackPanels;
+    return { uiMode, trustedWorkspace, enabledPanels };
+}
+
+function loadProfile() {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(PROFILE_FILE, 'utf8'));
+        return sanitizeProfile(parsed);
+    } catch {
+        return sanitizeProfile({ uiMode: 'enterprise', trustedWorkspace: false });
+    }
+}
+
+function saveProfile(profile) {
+    const clean = sanitizeProfile(profile);
+    fs.mkdirSync(path.dirname(PROFILE_FILE), { recursive: true });
+    fs.writeFileSync(PROFILE_FILE, JSON.stringify(clean, null, 2));
+    return clean;
 }
 
 function makeUnifiedDiff(relPath, oldText, newText) {
@@ -467,14 +500,12 @@ async function buildTerminalContext(jobId = null) {
         }
         const jobs = workspaceCore.commandJobStatusTool({});
         if (jobs.length === 0) return "--- TERMINAL CONTEXT ---\nNo recent or running command jobs.\n";
-        
+
         const summary = jobs.map(j => `- Job ${j.id}: [${j.status}] ${j.command} (Exit: ${j.exitCode ?? 'N/A'}, Started: ${j.startedAt})`).join('\n');
-        
         const blocks = jobs.slice(-3).map(job => {
             const detail = workspaceCore.commandJobStatusTool({ id: job.id });
             return `[Job ${job.id}] Status: ${job.status}, Exit: ${job.exitCode ?? 'N/A'}\nCommand: ${job.command}\nStdout:\n${truncate(detail.stdout, 5000)}\n${detail.stderr ? `Stderr:\n${truncate(detail.stderr, 2000)}\n` : ''}`;
         });
-        
         return `--- TERMINAL CONTEXT ---\nSummary:\n${summary}\n\nRecent Details:\n${blocks.join('\n---\n')}\n`;
     } catch (e) {
         return `--- TERMINAL CONTEXT ERROR ---\n${e.message}\n`;
@@ -1576,6 +1607,7 @@ const server = http.createServer(async (req, res) => {
             if (req.url === '/api/files_flat') return sendJSON(res, 200, { files: workspaceCore.getFilesFlat(currentWorkspace) });
             if (req.url === '/api/workspace') return sendJSON(res, 200, { path: currentWorkspace });
             if (req.url === '/api/trust') return sendJSON(res, 200, getWorkspaceTrustStatus());
+            if (req.url === '/api/profile') return sendJSON(res, 200, loadProfile());
             if (req.url === '/api/pending_edits') return sendJSON(res, 200, { edits: workspaceCore.listPendingEditsTool() });
             if (req.url === '/api/command_jobs') return sendJSON(res, 200, { jobs: workspaceCore.commandJobStatusTool({}) });
             if (req.url === '/api/tools') return sendJSON(res, 200, { tools: getAgentTools() });
@@ -1624,6 +1656,14 @@ const server = http.createServer(async (req, res) => {
         if (req.url === '/api/trust') {
             const body = await getBody(req);
             return sendJSON(res, 200, setWorkspaceTrust(currentWorkspace, body.trusted === true));
+        }
+
+        if (req.url === '/api/profile') {
+            const body = await getBody(req);
+            if (body.uiMode !== 'enterprise' && body.uiMode !== 'ide') {
+                return sendJSON(res, 400, { error: 'Invalid uiMode. Use enterprise or ide.' });
+            }
+            return sendJSON(res, 200, saveProfile(body));
         }
 
         if (req.url === '/api/apply_pending_edit') {

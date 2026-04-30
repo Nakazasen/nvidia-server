@@ -801,6 +801,49 @@
             font-size: 0.8rem;
         }
 
+        .mode-toggle-btn {
+            background: rgba(var(--primary-rgb), 0.12);
+            border: 1px solid rgba(var(--primary-rgb), 0.35);
+            color: #d7ffc2;
+            padding: 5px 10px;
+            border-radius: 999px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+        }
+
+        .mode-toggle-btn:hover {
+            border-color: var(--primary);
+            color: #fff;
+        }
+
+        .mode-chip {
+            font-size: 0.72rem;
+            opacity: 0.75;
+            letter-spacing: 0.4px;
+        }
+
+        body.mode-enterprise .activity-bar,
+        body.mode-enterprise #sidebar-explorer,
+        body.mode-enterprise #sidebar-tasks,
+        body.mode-enterprise #sidebar-extensions,
+        body.mode-enterprise #right-panel,
+        body.mode-enterprise #bottom-panel,
+        body.mode-enterprise #code-viewer,
+        body.mode-enterprise #extension-detail,
+        body.mode-enterprise #debug-console,
+        body.mode-enterprise #pinned-context,
+        body.mode-enterprise #slash-menu,
+        body.mode-enterprise #selection-badge {
+            display: none !important;
+        }
+
+        body.mode-enterprise .pending-edit-card,
+        body.mode-enterprise .mode-ide-only {
+            display: none !important;
+        }
+
         /* Task Timeline Styles */
         .timeline-item {
             display: flex;
@@ -1622,7 +1665,7 @@
                 </div>
             </div>
 
-            <label
+            <label class="mode-ide-only"
                 style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.85rem; margin-top: 15px;">
                 <input type="checkbox" id="auto-accept"> <span>Auto-Accept</span>
             </label>
@@ -1681,12 +1724,14 @@
 
         <div id="chat-view" style="display: flex; flex-direction: column; flex: 1; height: 100%; min-height: 0;">
             <div class="header">
-                <button class="toggle-btn" onclick="toggleSidebar()">☰ Menu</button>
+                <button class="toggle-btn mode-ide-only" onclick="toggleSidebar()">☰ Menu</button>
                 <div style="display: flex; gap: 15px; align-items: center;">
                     <div style="font-weight: bold; color: var(--primary); font-size: 0.9rem;">NVIDIA NIM IDE</div>
-                    <button class="btn-small" onclick="toggleBottomPanel()">💻 Terminal & Search</button>
+                    <span id="ui-mode-chip" class="mode-chip">Mode: enterprise</span>
+                    <button id="mode-toggle-btn" class="mode-toggle-btn" onclick="toggleUIMode()">Switch to IDE Mode</button>
+                    <button class="btn-small mode-ide-only" onclick="toggleBottomPanel()">💻 Terminal & Search</button>
                 </div>
-                <button class="toggle-btn" onclick="togglePlan()">📋 Kế hoạch</button>
+                <button class="toggle-btn mode-ide-only" onclick="togglePlan()">📋 Kế hoạch</button>
             </div>
             <div id="chat-box" class="chat-container"></div>
 
@@ -1810,6 +1855,14 @@
                     </select>
                 </div>
                 <div style="margin-bottom:15px;">
+                    <label style="font-size:0.75rem; opacity:0.6; display:block; margin-bottom:5px;">UI MODE</label>
+                    <select id="setting-ui-mode"
+                        style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                        <option value="enterprise">Enterprise</option>
+                        <option value="ide">IDE</option>
+                    </select>
+                </div>
+                <div style="margin-bottom:15px;">
                     <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; cursor:pointer;">
                         <input type="checkbox" id="setting-trust-workspace"> Trust this workspace for file edits and commands
                     </label>
@@ -1863,6 +1916,9 @@
         let editingMessageIndex = null;
         let currentAgentController = null;
         let isAgentRunning = false;
+        const UI_MODE_STORAGE_KEY = 'nvidia.uiMode';
+        const IDE_ONLY_TABS = new Set(['explorer', 'tasks', 'extensions', 'terminal', 'jobs', 'search']);
+        let uiMode = 'enterprise';
 
         function logDebug(msg) {
             const div = document.createElement('div');
@@ -1875,6 +1931,95 @@
         function tryParseJson(value) {
             if (typeof value !== 'string') return value;
             try { return JSON.parse(value); } catch { return null; }
+        }
+
+        function isIdeMode() {
+            return uiMode === 'ide';
+        }
+
+        function getRequestedModeFromUrl() {
+            try {
+                const mode = new URLSearchParams(window.location.search).get('mode');
+                return mode === 'ide' || mode === 'enterprise' ? mode : null;
+            } catch {
+                return null;
+            }
+        }
+
+        async function loadProfileMode() {
+            try {
+                const res = await fetch('/api/profile');
+                if (!res.ok) return null;
+                const profile = await res.json();
+                return profile?.uiMode === 'ide' || profile?.uiMode === 'enterprise' ? profile.uiMode : null;
+            } catch {
+                return null;
+            }
+        }
+
+        async function saveProfileMode(mode) {
+            try {
+                await fetch('/api/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ uiMode: mode, trustedWorkspace: false })
+                });
+            } catch {
+                // Fallback to localStorage only if backend profile API is unavailable.
+            }
+        }
+
+        async function setUIMode(mode, { persist = true } = {}) {
+            const nextMode = mode === 'ide' ? 'ide' : 'enterprise';
+            uiMode = nextMode;
+            const body = document.body;
+            body.classList.toggle('mode-enterprise', nextMode === 'enterprise');
+            body.classList.toggle('mode-ide', nextMode === 'ide');
+
+            const chip = document.getElementById('ui-mode-chip');
+            if (chip) chip.innerText = `Mode: ${nextMode}`;
+            const toggleBtn = document.getElementById('mode-toggle-btn');
+            if (toggleBtn) toggleBtn.innerText = nextMode === 'enterprise' ? 'Switch to IDE Mode' : 'Switch to Enterprise Mode';
+            const settingSelect = document.getElementById('setting-ui-mode');
+            if (settingSelect) settingSelect.value = nextMode;
+
+            if (nextMode === 'enterprise') {
+                closeSlashMenu();
+                attachedContexts = [];
+                pinnedContext.innerHTML = '';
+                if (autoAcceptCheck) autoAcceptCheck.checked = false;
+                document.getElementById('bottom-panel')?.classList.remove('active');
+                document.getElementById('right-panel')?.classList.remove('open');
+                document.getElementById('code-viewer')?.classList.remove('active');
+                document.getElementById('extension-detail')?.classList.remove('active');
+                switchSidebarTab('explorer');
+            } else {
+                switchSidebarTab('explorer');
+            }
+
+            if (persist) {
+                localStorage.setItem(UI_MODE_STORAGE_KEY, nextMode);
+                await saveProfileMode(nextMode);
+            }
+            logDebug(`UI mode: ${nextMode}`);
+        }
+
+        async function initializeUIMode() {
+            const urlMode = getRequestedModeFromUrl();
+            const profileMode = await loadProfileMode();
+            const storedMode = localStorage.getItem(UI_MODE_STORAGE_KEY);
+            const resolved = urlMode || profileMode || (storedMode === 'ide' || storedMode === 'enterprise' ? storedMode : null) || 'enterprise';
+            await setUIMode(resolved, { persist: true });
+        }
+
+        async function toggleUIMode() {
+            await setUIMode(isIdeMode() ? 'enterprise' : 'ide', { persist: true });
+        }
+
+        function guardIdeOnlyAction(actionLabel) {
+            if (isIdeMode()) return true;
+            logDebug(`${actionLabel} is only available in IDE mode.`);
+            return false;
         }
 
         async function refreshTrustStatus() {
@@ -1935,6 +2080,7 @@
         }
 
         async function openDiffViewer(id) {
+            if (!guardIdeOnlyAction('Diff viewer')) return;
             try {
                 const res = await fetch('/api/pending_edits', {
                     method: 'POST',
@@ -1978,6 +2124,7 @@
         }
 
         async function clearPendingEdits() {
+            if (!guardIdeOnlyAction('Clear pending edits')) return;
             if (!confirm('Clear all pending edits? This will discard all proposed changes.')) return;
             try {
                 const res = await fetch('/api/pending_edits', {
@@ -2002,6 +2149,7 @@
         }
 
         async function revertLastEdit() {
+            if (!guardIdeOnlyAction('Revert pending edit')) return;
             try {
                 const res = await fetch('/api/pending_edits', {
                     method: 'POST',
@@ -2055,6 +2203,7 @@
         }
 
         async function applyPendingEdit(id) {
+            if (!guardIdeOnlyAction('Apply pending edit')) return;
             const hunkInputs = [...document.querySelectorAll(`.pending-hunk-${id}`)];
             const hunkIds = hunkInputs.length ? hunkInputs.filter(input => input.checked).map(input => input.value) : undefined;
             
@@ -2431,17 +2580,18 @@
             mediaPreview.style.display = 'none';
             saveSessions();
 
+            const activeContexts = isIdeMode() ? attachedContexts : [];
             const contextPayload = {
-                contextFiles: attachedContexts.filter(c => c.type === 'file'),
-                contextFolders: attachedContexts.filter(c => c.type === 'folder'),
-                contextGit: attachedContexts.some(c => c.type === 'git'),
-                contextTerminal: attachedContexts.some(c => c.type === 'terminal'),
-                contextTerminalJobs: attachedContexts.filter(c => c.type === 'terminal' && c.id).map(c => c.id),
-                contextProblems: attachedContexts.some(c => c.type === 'problems'),
+                contextFiles: activeContexts.filter(c => c.type === 'file'),
+                contextFolders: activeContexts.filter(c => c.type === 'folder'),
+                contextGit: activeContexts.some(c => c.type === 'git'),
+                contextTerminal: activeContexts.some(c => c.type === 'terminal'),
+                contextTerminalJobs: activeContexts.filter(c => c.type === 'terminal' && c.id).map(c => c.id),
+                contextProblems: activeContexts.some(c => c.type === 'problems'),
                 selection: null
             };
             let selectionData = null;
-            const wantsSelectionContext = attachedContexts.some(c => c.type === 'selection');
+            const wantsSelectionContext = activeContexts.some(c => c.type === 'selection');
             if (editor && wantsSelectionContext) {
                 const selection = editor.getSelection();
                 const selectedText = editor.getModel().getValueInRange(selection);
@@ -2491,7 +2641,7 @@
                             contextTerminalJobs: contextPayload.contextTerminalJobs || [],
                             contextProblems: contextPayload.contextProblems === true,
                             selection: contextPayload.selection || null,
-                            autoAccept: autoAcceptCheck.checked
+                            autoAccept: isIdeMode() && autoAcceptCheck.checked
                         })
                     });
                     const data = await res.json();
@@ -2528,7 +2678,9 @@
                                 result = "Plan updated.";
                             } else {
                                 const readOnlyTools = new Set(['project_indexer', 'semantic_index', 'git_context', 'list_dir', 'read_file', 'read_file_paged', 'search', 'search_files', 'pending_edits', 'command_job_status']);
-                                if (readOnlyTools.has(name) || autoAcceptCheck.checked || await askPermission(name, args)) {
+                                if (!readOnlyTools.has(name) && !isIdeMode()) {
+                                    result = JSON.stringify({ ok: false, denied: true, error: `${name} is only available in IDE mode.` });
+                                } else if (readOnlyTools.has(name) || (isIdeMode() && autoAcceptCheck.checked) || await askPermission(name, args)) {
                                     const tr = await fetch(`/api/${name}`, {
                                         method: 'POST',
                                         headers: {
@@ -2623,12 +2775,16 @@
             // Ensure settings container exists
             let settingsCont = document.getElementById('settings-container');
             if (settingsCont) settingsCont.style.display = 'block';
+            const modeInput = document.getElementById('setting-ui-mode');
+            if (modeInput) modeInput.value = uiMode;
 
             modal.classList.add('active');
 
-            document.getElementById('btn-allow').onclick = () => {
+            document.getElementById('btn-allow').onclick = async () => {
                 modal.classList.remove('active');
                 if (settingsCont) settingsCont.style.display = 'none';
+                await setWorkspaceTrustFromSettings();
+                if (modeInput) await setUIMode(modeInput.value, { persist: true });
                 logDebug("Đã lưu cài đặt mới.");
             };
             document.getElementById('btn-deny').onclick = () => {
@@ -2925,6 +3081,10 @@
         }
 
         function switchSidebarTab(tab) {
+            if (!isIdeMode() && IDE_ONLY_TABS.has(tab)) {
+                document.querySelectorAll('.sidebar').forEach(s => s.style.display = 'none');
+                return;
+            }
             document.querySelectorAll('.activity-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.sidebar').forEach(s => s.style.display = 'none');
 
@@ -3039,6 +3199,10 @@
         ];
 
         userInput.addEventListener('input', (e) => {
+            if (!isIdeMode()) {
+                closeSlashMenu();
+                return;
+            }
             const val = userInput.value;
             const cursor = userInput.selectionStart;
             const textBefore = val.substring(0, cursor);
@@ -3124,6 +3288,10 @@
         }
 
         async function handleMenuSelection(c) {
+            if (!isIdeMode()) {
+                closeSlashMenu();
+                return;
+            }
             if (menuType === 'command') {
                 selectCommand(c);
             } else if (menuType === 'context') {
@@ -3187,15 +3355,18 @@
 
         // --- HÀM CHO BOTTOM PANEL ---
         function toggleBottomPanel() {
+            if (!guardIdeOnlyAction('Terminal panel')) return;
             document.getElementById('bottom-panel').classList.toggle('active');
         }
 
         // --- HÀM CHO BOTTOM PANEL ---
         function toggleBottomPanel() {
+            if (!guardIdeOnlyAction('Terminal panel')) return;
             document.getElementById('bottom-panel').classList.toggle('active');
         }
 
         function switchTab(tab) {
+            if (!isIdeMode()) return;
             const tabs = document.querySelectorAll('.panel-tab');
             tabs.forEach(t => t.classList.remove('active'));
             document.getElementById('terminal-view').style.display = 'none';
@@ -3215,6 +3386,7 @@
         let jobPollers = new Map(); // jobId -> intervalId
 
         async function runManualCommand() {
+            if (!guardIdeOnlyAction('Terminal command')) return;
             const input = document.getElementById('terminal-input');
             const cmd = input.value.trim();
             if (!cmd) return;
@@ -3240,6 +3412,7 @@
         }
 
         async function refreshJobManager() {
+            if (!isIdeMode()) return;
             try {
                 const res = await fetch('/api/command_job_status', {
                     method: 'POST',
@@ -3283,6 +3456,7 @@
         }
 
         async function viewJobOutput(id) {
+            if (!guardIdeOnlyAction('Job output view')) return;
             activeJobId = id;
             switchTab('terminal');
             document.getElementById('active-job-id').innerText = `Job: ${id}`;
@@ -3359,6 +3533,7 @@
         }
 
         async function cancelJob(id) {
+            if (!guardIdeOnlyAction('Job cancel')) return;
             try {
                 await fetch('/api/cancel_command_job', {
                     method: 'POST',
@@ -3375,6 +3550,7 @@
         }
 
         async function rerunJob(id) {
+            if (!guardIdeOnlyAction('Job rerun')) return;
             try {
                 const res = await fetch('/api/command_job_status', {
                     method: 'POST',
@@ -3402,6 +3578,7 @@
         }
 
         function attachJobToChat(id) {
+            if (!guardIdeOnlyAction('Job attach')) return;
             pinContext({ type: 'terminal', id: id, relPath: `Job ${id}` });
             logDebug(`Đã đính kèm kết quả Job ${id} vào context.`);
         }
@@ -3504,9 +3681,11 @@
 
         // --- 4. Toggle UI ---
         function toggleSidebar() {
+            if (!guardIdeOnlyAction('Sidebar')) return;
             document.querySelector('.sidebar').classList.toggle('open');
         }
         function togglePlan() {
+            if (!guardIdeOnlyAction('Plan panel')) return;
             document.getElementById('right-panel').classList.toggle('open');
         }
 
@@ -4053,6 +4232,7 @@
             try {
                 await loadWorkspaceInfo();
                 await refreshTrustStatus();
+                await initializeUIMode();
                 await loadWorkflows();
                 await loadFileExplorer();
                 await refreshModelStatus();
@@ -4078,6 +4258,13 @@
         document.addEventListener('click', (e) => {
             if (!document.getElementById('smart-model-selector').contains(e.target)) {
                 document.getElementById('model-dropdown-list').classList.remove('active');
+            }
+        });
+
+        document.addEventListener('keydown', async (event) => {
+            if (event.ctrlKey && event.altKey && event.shiftKey && (event.key === 'I' || event.key === 'i')) {
+                event.preventDefault();
+                await toggleUIMode();
             }
         });
 
@@ -4131,6 +4318,7 @@
         }
 
         async function applyFileChange(path, btn) {
+            if (!guardIdeOnlyAction('Apply file change')) return;
             const newContent = btn.dataset.newContent;
             if (!newContent) return;
 
@@ -4166,6 +4354,7 @@
             }
         }
         async function applyAllComposerChanges(btn) {
+            if (!guardIdeOnlyAction('Apply composer changes')) return;
             const container = btn.closest('.composer-container');
             const subButtons = container.querySelectorAll('.diff-header button');
 
