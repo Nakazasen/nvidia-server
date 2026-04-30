@@ -118,6 +118,41 @@ Dự án đã có nền tảng agent khá tốt:
 - Chưa có route/layout state riêng cho từng persona.
 - Chưa có onboarding và settings rõ ràng.
 
+## Triết Lý Kiến Trúc (Architecture Philosophy)
+
+Dự án định vị là một **Hệ điều hành Nhận thức cho Doanh nghiệp (Cognitive OS for Enterprise)** với kiến trúc 4 lớp tách biệt:
+
+```text
+Model Providers: NVIDIA NIM / Gemini / local model / OpenAI
+        ↓
+NVIDIA Agent Runtime: UI, CLI, MCP, IDE, terminal, tools, self-code loop
+        ↓
+ABW Constitutional Layer: governance, grounded memory, continuation gate, audit
+        ↓
+Enterprise Reality Layer: SOP, QA, manuals, ERP/MES/QMS, production logs
+```
+
+**Các nguyên tắc thiết kế cốt lõi:**
+
+- **Provider Agnostic:** "NVIDIA" trong tên gọi hiện tại đóng vai trò branding và provider mặc định. Hệ thống được thiết kế trừu tượng hóa để có thể vận hành trơn tru với bất kỳ LLM nào. Linh hồn của hệ thống nằm ở Agent Runtime và ABW Governance.
+- **Active Agent Runtime:** Đây không chỉ là "tay chân". Lớp này bao gồm UI, môi trường hành động (editor, terminal), các file tools và vòng lặp tự thực thi. Nó là vỏ sản phẩm có năng lực nhận thức và hành động.
+- **Constitutional Governance:** ABW đóng vai trò là "Hiến pháp nhận thức và hành vi". Nó đứng ngang hàng về quyền kiểm soát để đảm bảo trí nhớ được kiểm chứng, quy tắc hành động an toàn, kiểm tra thực tại và cơ chế chống tự phá vỡ (continuation gate) khi agent tiến hóa.
+- **Kiến trúc Cầu nối (Bridge Architecture):** Không merge source code cơ học giữa hai hệ thống. Agent Runtime gọi ABW thông qua Bridge Adapter (CLI/FastAPI) nhằm giữ nguyên vẹn triết lý quản trị của ABW, không biến ABW thành một app framework làm loãng mục đích cốt lõi.
+- **Bảo mật Dữ liệu Doanh nghiệp:** Không đẩy toàn bộ `.brain` hay `raw/` lên Git. Chỉ version hóa schema, policy, decision log đã sanitized và wiki được duyệt.
+
+## Chiến Lược Phát Triển Hai Repo NVIDIA Và ABW
+
+Hiện tại `D:\Sandbox\Nvidia` và `D:\Sandbox\skill-Anti-brain-wiki_note` phải tiếp tục tồn tại như hai hệ độc lập nhưng phát triển theo một tư tưởng chung.
+
+- `D:\Sandbox\Nvidia` là **product shell và active agent runtime**: Desktop UI, CLI, MCP, Monaco IDE, terminal/job manager, extension host, pending diff, command tools, model provider abstraction và self-code loop.
+- `D:\Sandbox\skill-Anti-brain-wiki_note` là **canonical ABW governance engine**: `.brain`, `raw/processed/wiki`, grounded query, bootstrap reasoning, continuation gate, audit/eval, locked decisions, unsafe zones, rollback contract và no-fake-success policy.
+- Không copy source cơ học từ repo này sang repo kia khi chưa có contract rõ ràng. NVIDIA chỉ tích hợp ABW qua bridge adapter trước: CLI bridge tối thiểu, sau đó mới cân nhắc FastAPI/local service nếu UI cần realtime state.
+- Không biến ABW thành app framework của NVIDIA. ABW giữ vai trò constitutional layer độc lập để tránh làm loãng ưu thế cốt lõi: quản trị tri thức, kiểm chứng thực tại và kiểm soát hành động.
+- Không để NVIDIA phụ thuộc sống còn vào provider miễn phí. NIM/Gemini/OpenAI/local model phải là provider có thể thay thế; phần bền vững của hệ nằm ở runtime, governance, knowledge pipeline và audit trail.
+- Hai repo cần có một **nhật ký hợp nhất** trong báo cáo/roadmap để tránh bỏ sót: việc nào thuộc NVIDIA runtime, việc nào thuộc ABW engine, việc nào thuộc bridge, việc nào thuộc enterprise deployment.
+
+Chiến lược đúng trong giai đoạn hiện tại là **hợp nhất tư tưởng và contract, chưa hợp nhất source**. Khi ABW có README/roadmap đầy đủ và NVIDIA có bridge chạy ổn định, mới đánh giá có nên monorepo, submodule, package dependency hay tiếp tục multi-repo.
+
 ## Chiến Lược Hai Giao Diện
 
 Sau này nên tách ứng dụng thành hai lớp giao diện, dùng chung backend agent core.
@@ -409,6 +444,9 @@ Dự án có thể coi là đạt mốc UX AI coding agent IDE khi:
 - Diff review là bắt buộc trước khi ghi file thật.
 - Context engine phải tiết kiệm token và có bằng chứng file/line.
 - Enterprise mode không được lộ các tính năng nguy hiểm như terminal/write file nếu chưa unlock IDE mode.
+- ABW bridge không được bypass Continuation Kernel khi task có ghi file, chạy lệnh nguy hiểm, thay đổi quyết định đã khóa hoặc cập nhật tri thức đã duyệt.
+- `.nvidia-agent` và `.brain` không được nhập nhằng: app runtime state thuộc `.nvidia-agent`; governed project cognitive state thuộc `.brain`.
+- `raw/` chứa dữ liệu doanh nghiệp nhạy cảm phải được policy hóa trước khi version hoặc sync.
 
 ## Lệnh Kiểm Tra Hiện Tại
 

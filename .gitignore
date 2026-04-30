@@ -1,5 +1,10 @@
 node_modules/
 .env
 .brain/
+.nvidia-agent/*
+!.nvidia-agent/reports/
+.nvidia-agent/reports/*
+!.nvidia-agent/reports/audit-nvidia-abw-fusion-2026-04-30.md
+dist/
 .DS_Store
 *.log
