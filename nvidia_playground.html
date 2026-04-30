@@ -898,6 +898,13 @@
             align-items: center;
             gap: 6px;
             border: 1px solid rgba(var(--primary-rgb), 0.3);
+            margin-right: 5px;
+            margin-bottom: 5px;
+            animation: fadeIn 0.2s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .pill .remove {
@@ -983,6 +990,14 @@
             display: flex;
             flex-direction: column;
             gap: 4px;
+        }
+        .slash-item.disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        .slash-item.disabled .cmd {
+            text-decoration: line-through;
         }
 
         /* Media Preview */
@@ -1692,9 +1707,11 @@
         const pinnedContext = document.getElementById('pinned-context');
         const sendStopBtn = document.getElementById('send-stop-btn');
 
+        let attachedContexts = []; // Danh sách context đang ghim
         let allFiles = []; // Danh sách file cho @ mention
+        let allFolders = []; // Danh sách folder cho @ mention
         let isAtMenu = false; // Đang hiện menu @
-        let pinnedFiles = []; // Danh sách file đang ghim
+        let menuType = 'command'; // 'command', 'context', 'file', 'folder'
         let editor = null; // Monaco Editor instance
         let currentEditingPath = "";
         let editingMessageIndex = null;
@@ -2268,9 +2285,17 @@
             mediaPreview.style.display = 'none';
             saveSessions();
 
-            const contextFiles = [...pinnedFiles];
+            const contextPayload = {
+                contextFiles: attachedContexts.filter(c => c.type === 'file'),
+                contextFolders: attachedContexts.filter(c => c.type === 'folder'),
+                contextGit: attachedContexts.some(c => c.type === 'git'),
+                contextTerminal: attachedContexts.some(c => c.type === 'terminal'),
+                contextProblems: attachedContexts.some(c => c.type === 'problems'),
+                selection: null
+            };
             let selectionData = null;
-            if (editor) {
+            const wantsSelectionContext = attachedContexts.some(c => c.type === 'selection');
+            if (editor && wantsSelectionContext) {
                 const selection = editor.getSelection();
                 const selectedText = editor.getModel().getValueInRange(selection);
                 if (selectedText.trim()) {
@@ -2280,13 +2305,14 @@
                     };
                 }
             }
+            contextPayload.selection = selectionData;
 
             // Auto-Orchestration
             const chosenModel = getOptimalModel(text);
-            await runAgentLoop(contextFiles, selectionData, chosenModel);
+            await runAgentLoop(contextPayload, chosenModel);
         }
 
-        async function runAgentLoop(contextFiles = [], selectionData = null, forcedModel = null) {
+        async function runAgentLoop(contextPayload = {}, forcedModel = null) {
             const s = sessions[currentSessionId];
             const loading = addMessage('assistant', "Agent đang suy nghĩ...");
             currentAgentController = new AbortController();
@@ -2311,8 +2337,12 @@
                             model: modelId,
                             messages: history,
                             tools: tools_def,
-                            contextFiles: contextFiles,
-                            selection: selectionData,
+                            contextFiles: contextPayload.contextFiles || [],
+                            contextFolders: contextPayload.contextFolders || [],
+                            contextGit: contextPayload.contextGit === true,
+                            contextTerminal: contextPayload.contextTerminal === true,
+                            contextProblems: contextPayload.contextProblems === true,
+                            selection: contextPayload.selection || null,
                             autoAccept: autoAcceptCheck.checked
                         })
                     });
@@ -2846,6 +2876,20 @@
             });
         }
 
+        const contextTypes = [
+            { type: 'file', cmd: '@file', desc: 'Attach a file' },
+            { type: 'folder', cmd: '@folder', desc: 'Attach a folder' },
+            { type: 'git', cmd: '@git', desc: 'Attach git diff/status' },
+            { type: 'terminal', cmd: '@terminal', desc: 'Attach terminal output' },
+            { type: 'selection', cmd: '@selection', desc: 'Attach editor selection' },
+            { type: 'problems', cmd: '@problems', desc: 'Attach problems/diagnostics' },
+            { type: 'abw', cmd: '@abw', desc: 'Reserved placeholder (disabled)', disabled: true },
+            { type: 'wiki', cmd: '@wiki', desc: 'Reserved placeholder (disabled)', disabled: true },
+            { type: 'gaps', cmd: '@gaps', desc: 'Reserved placeholder (disabled)', disabled: true },
+            { type: 'route', cmd: '@route', desc: 'Reserved placeholder (disabled)', disabled: true },
+            { type: 'decision', cmd: '@decision', desc: 'Reserved placeholder (disabled)', disabled: true }
+        ];
+
         userInput.addEventListener('input', (e) => {
             const val = userInput.value;
             const cursor = userInput.selectionStart;
@@ -2853,12 +2897,13 @@
 
             // Detect /
             if (textBefore.endsWith('/')) {
-                isAtMenu = false;
+                menuType = 'command';
                 showSlashMenu(availableCommands);
             } else if (textBefore.includes('/')) {
                 const parts = textBefore.split(' ');
                 const lastPart = parts[parts.length - 1];
                 if (lastPart.startsWith('/')) {
+                    menuType = 'command';
                     const query = lastPart.substring(1).toLowerCase();
                     filteredCommands = availableCommands.filter(c => c.cmd.toLowerCase().includes(query));
                     showSlashMenu(filteredCommands);
@@ -2868,15 +2913,23 @@
             }
             // Detect @
             else if (textBefore.endsWith('@')) {
-                isAtMenu = true;
-                loadFilesForMention().then(() => showSlashMenu(allFiles, true));
+                menuType = 'context';
+                showSlashMenu(contextTypes);
             } else if (textBefore.includes('@')) {
                 const parts = textBefore.split(' ');
                 const lastPart = parts[parts.length - 1];
                 if (lastPart.startsWith('@')) {
                     const query = lastPart.substring(1).toLowerCase();
-                    const filtered = allFiles.filter(f => f.relPath.toLowerCase().includes(query));
-                    showSlashMenu(filtered, true);
+                    if (menuType === 'file') {
+                        const filtered = allFiles.filter(f => f.relPath.toLowerCase().includes(query));
+                        showSlashMenu(filtered);
+                    } else if (menuType === 'folder') {
+                        const filtered = allFolders.filter(f => f.relPath.toLowerCase().includes(query));
+                        showSlashMenu(filtered);
+                    } else {
+                        const filtered = contextTypes.filter(c => c.cmd.toLowerCase().includes(query));
+                        showSlashMenu(filtered);
+                    }
                 } else {
                     closeSlashMenu();
                 }
@@ -2886,27 +2939,35 @@
             }
         });
 
-        async function loadFilesForMention() {
+        async function loadFoldersForMention() {
             try {
                 const res = await fetch('/api/files_flat');
                 const data = await res.json();
-                allFiles = data.files.map(f => ({ cmd: `@${f.relPath}`, desc: f.name, path: f.path, relPath: f.relPath }));
-            } catch (e) { logDebug("Lỗi load files cho mention: " + e.message); }
+                const folders = new Set();
+                data.files.forEach(f => {
+                    const parts = f.relPath.split(/[\\/]/);
+                    if (parts.length > 1) {
+                        parts.pop(); // remove filename
+                        folders.add(parts.join('/'));
+                    }
+                });
+                allFolders = Array.from(folders).map(d => ({ cmd: `@${d}`, desc: 'Folder', relPath: d }));
+            } catch (e) { logDebug("Lỗi load folders cho mention: " + e.message); }
         }
 
-        function showSlashMenu(commands, isFileMenu = false) {
+        function showSlashMenu(commands) {
             filteredCommands = commands;
             if (commands.length === 0) { closeSlashMenu(); return; }
             slashMenu.innerHTML = '';
             commands.forEach((c, idx) => {
                 const div = document.createElement('div');
-                div.className = 'slash-item';
+                div.className = 'slash-item' + (c.disabled ? ' disabled' : '');
                 div.innerHTML = `<span class="cmd">${c.cmd}</span><span class="desc">${c.desc}</span>`;
                 div.onclick = () => {
-                    if (isFileMenu) pinFile({ path: c.path, relPath: c.relPath });
-                    else selectCommand(c);
+                    if (c.disabled) return;
+                    handleMenuSelection(c);
                 };
-                div.onmouseover = () => { selectedCommandIndex = idx; updateSlashSelection(); };
+                div.onmouseover = () => { if (!c.disabled) { selectedCommandIndex = idx; updateSlashSelection(); } };
                 slashMenu.appendChild(div);
             });
             selectedCommandIndex = 0;
@@ -2914,32 +2975,66 @@
             slashMenu.classList.add('active');
         }
 
-        function pinFile(fileObj) {
-            if (!pinnedFiles.find(f => f.path === fileObj.path)) {
-                pinnedFiles.push(fileObj);
-                renderPinnedFiles();
+        async function handleMenuSelection(c) {
+            if (menuType === 'command') {
+                selectCommand(c);
+            } else if (menuType === 'context') {
+                if (c.type === 'file') {
+                    menuType = 'file';
+                    await loadFilesForMention();
+                    showSlashMenu(allFiles);
+                } else if (c.type === 'folder') {
+                    menuType = 'folder';
+                    await loadFoldersForMention();
+                    showSlashMenu(allFolders);
+                } else {
+                    pinContext({ type: c.type, relPath: c.cmd });
+                }
+            } else if (menuType === 'file') {
+                pinContext({ type: 'file', path: c.path, relPath: c.relPath });
+            } else if (menuType === 'folder') {
+                pinContext({ type: 'folder', relPath: c.relPath });
+            }
+        }
+
+        function pinContext(ctx) {
+            const exists = attachedContexts.find(c => c.type === ctx.type && c.relPath === ctx.relPath);
+            if (!exists) {
+                attachedContexts.push(ctx);
+                renderAttachedContexts();
             }
             // Xóa phần @... trong input
             const val = userInput.value;
-            const parts = val.split(' ');
+            const cursor = userInput.selectionStart;
+            const textBefore = val.substring(0, cursor);
+            const textAfter = val.substring(cursor);
+            const parts = textBefore.split(' ');
             parts.pop();
-            userInput.value = parts.join(' ') + (parts.length > 0 ? ' ' : '');
+            userInput.value = parts.join(' ') + (parts.length > 0 ? ' ' : '') + textAfter;
             userInput.focus();
             closeSlashMenu();
         }
 
-        function renderPinnedFiles() {
-            pinnedContext.innerHTML = pinnedFiles.map((f, i) => `
+        function renderAttachedContexts() {
+            const icons = {
+                file: '📄',
+                folder: '📁',
+                git: '🌿',
+                terminal: '💻',
+                selection: '✂️',
+                problems: '⚠️'
+            };
+            pinnedContext.innerHTML = attachedContexts.map((c, i) => `
                 <div class="pill">
-                    <span>📄 ${f.relPath}</span>
-                    <span class="remove" onclick="unpinFile(${i})">✕</span>
+                    <span>${icons[c.type] || '📎'} ${c.relPath}</span>
+                    <span class="remove" onclick="unpinContext(${i})">✕</span>
                 </div>
             `).join('');
         }
 
-        function unpinFile(index) {
-            pinnedFiles.splice(index, 1);
-            renderPinnedFiles();
+        function unpinContext(index) {
+            attachedContexts.splice(index, 1);
+            renderAttachedContexts();
         }
 
         // --- HÀM CHO BOTTOM PANEL ---
@@ -3071,8 +3166,8 @@
                     e.preventDefault();
                     if (selectedCommandIndex >= 0 && filteredCommands.length > 0) {
                         const c = filteredCommands[selectedCommandIndex];
-                        if (isAtMenu) pinFile({ path: c.path, relPath: c.relPath });
-                        else selectCommand(c);
+                        if (c.disabled) return;
+                        handleMenuSelection(c);
                     }
                 } else if (e.key === 'Escape') {
                     closeSlashMenu();

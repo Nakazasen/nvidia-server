@@ -450,6 +450,48 @@ Use this as authoritative local file content; do not ask the user to paste these
 ${blocks.join('\n')}`;
 }
 
+async function buildGitContext() {
+    try {
+        const ctx = await workspaceCore.gitContextTool({ includeDiff: true, includeLog: true });
+        return `--- GIT CONTEXT ---\nBranch/Status:\n${ctx.status.stdout}\n\nDiff Stat:\n${ctx.diffStat.stdout}\n\nRecent Log:\n${ctx.log.stdout}\n\nFull Diff:\n${ctx.diff.stdout}\n`;
+    } catch (e) {
+        return `--- GIT CONTEXT ERROR ---\n${e.message}\n`;
+    }
+}
+
+async function buildTerminalContext() {
+    try {
+        const jobs = workspaceCore.commandJobStatusTool({});
+        if (jobs.length === 0) return "--- TERMINAL CONTEXT ---\nNo recent or running command jobs.\n";
+        const blocks = jobs.map(job => {
+            const detail = workspaceCore.commandJobStatusTool({ id: job.id });
+            return `Job ${job.id} [${job.status}]: ${job.command}\nOutput:\n${detail.stdout}\n${detail.stderr ? `Errors:\n${detail.stderr}\n` : ''}`;
+        });
+        return `--- TERMINAL CONTEXT ---\n${blocks.join('\n---\n')}\n`;
+    } catch (e) {
+        return `--- TERMINAL CONTEXT ERROR ---\n${e.message}\n`;
+    }
+}
+
+function buildProblemsContext() {
+    // Sprint 2: Placeholder/Mock diagnostics
+    return `--- PROBLEMS CONTEXT ---\nNo critical diagnostics detected in the current workspace. (Placeholder)\n`;
+}
+
+async function buildFolderContext(folders) {
+    const blocks = [];
+    for (const folder of folders) {
+        try {
+            const list = workspaceCore.listDirTool({ dirPath: folder.relPath, maxDepth: 2 });
+            const tree = (items) => items.map(it => `${it.type === 'dir' ? '+' : '-'} ${it.relPath}`).join('\n');
+            blocks.push(`--- FOLDER CONTEXT: ${folder.relPath} ---\n${tree(list)}\n`);
+        } catch (e) {
+            blocks.push(`--- FOLDER CONTEXT ERROR: ${folder.relPath} ---\n${e.message}\n`);
+        }
+    }
+    return blocks.join('\n');
+}
+
 function searchFiles({ query, path: searchPath = '.', limit = 100 }) {
     if (!query) throw new Error('query is required');
     const root = resolveWorkspacePath(searchPath);
@@ -1081,7 +1123,7 @@ function isFileWriteIntent(text = '') {
     return writeTokens.some(token => lower.includes(token)) || asksForMarkdownArtifact;
 }
 
-function prepareMessages(data) {
+async function prepareMessages(data) {
     const messages = normalizeMessages(data.messages || []);
     const lastUser = [...messages].reverse().find(m => m.role === 'user');
 
@@ -1098,11 +1140,33 @@ function prepareMessages(data) {
         }
     }
 
+    // Attached Context (Context Picker)
     if (data.contextFiles?.length) {
         const context = buildWorkspaceContext(data.contextFiles);
         if (context) messages.unshift({ role: 'system', content: context });
     }
 
+    if (data.contextFolders?.length) {
+        const context = await buildFolderContext(data.contextFolders);
+        if (context) messages.unshift({ role: 'system', content: context });
+    }
+
+    if (data.contextGit) {
+        const context = await buildGitContext();
+        messages.unshift({ role: 'system', content: context });
+    }
+
+    if (data.contextTerminal) {
+        const context = await buildTerminalContext();
+        messages.unshift({ role: 'system', content: context });
+    }
+
+    if (data.contextProblems) {
+        const context = buildProblemsContext();
+        messages.unshift({ role: 'system', content: context });
+    }
+
+    // Auto-context
     const userText = messages.filter(m => m.role === 'user').map(m => m.content).join('\n');
     const mentionedFiles = findMentionedWorkspaceFiles(userText);
     const autoContext = buildWorkspaceContext(mentionedFiles);
@@ -1112,9 +1176,10 @@ function prepareMessages(data) {
     }
 
     if (data.selection?.text) {
+        const selectionText = truncate(redactSecrets(String(data.selection.text)), 12000);
         messages.unshift({
             role: 'system',
-            content: `The user selected code in ${data.selection.file || 'the editor'}:\n\n\`\`\`\n${data.selection.text}\n\`\`\``
+            content: `The user selected code in ${data.selection.file || 'the editor'}:\n\n\`\`\`\n${selectionText}\n\`\`\``
         });
     }
 
@@ -1229,7 +1294,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
     const model = data.model && data.model !== 'auto' ? data.model : DEFAULT_MODEL;
     const maxIterations = Math.max(1, Math.min(Number(data.max_iterations || data.maxIterations) || DEFAULT_MAX_ITERATIONS, 20));
     const tools = getAgentTools();
-    const messages = prepareMessages(data);
+    const messages = await prepareMessages(data);
     const lastUserText = getLastUserText(messages);
     const requiresFileWrite = isFileWriteIntent(lastUserText);
     if (requiresFileWrite) {

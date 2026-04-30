@@ -468,12 +468,12 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 1: Agent Composer Va Diff UX",
+  "last_completed_sprint": "Sprint 2: Context Picker",
   "last_implementer": "Gemini 3 Flash",
   "last_auditor": "Codex",
-  "last_audit_result": "Codex fixed critical pending edit discard/revert and hunk-apply bugs; npm run agent:audit passed 25/25",
-  "next_sprint": "Sprint 2: Context Picker",
-  "next_prompt_instruction": "Ask Gemini 3 Flash to start from README.md Sprint 2 only, then send results back to Codex for audit/fix",
+  "last_audit_result": "Codex fixed Sprint 2 context payload scope bug and placeholder coverage; node --check (server, cli, extension-host, core) passed; inline script parse check passed; npm run agent:audit passed 25/25; /proxy/chat context payload smoke returned HTTP 200.",
+  "next_sprint": "Sprint 3: Terminal/Job Manager UX",
+  "next_prompt_instruction": "Ask Gemini 3 Flash to start from README.md Sprint 3 only, keep Sprint 1/2 behavior intact, then send results back to Codex for audit/fix",
   "status_marker_version": 1
 }
 ```
