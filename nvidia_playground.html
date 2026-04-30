@@ -1427,6 +1427,139 @@
             font-family: monospace;
             outline: none;
         }
+
+        /* Job Manager Styles */
+        .job-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 10px;
+        }
+
+        .job-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: 0.2s;
+        }
+
+        .job-card:hover {
+            border-color: rgba(var(--primary-rgb), 0.3);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .job-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .job-id {
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #888;
+        }
+
+        .job-status {
+            font-size: 0.7rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .status-running { background: rgba(33, 150, 243, 0.2); color: #2196f3; }
+        .status-completed { background: rgba(118, 185, 0, 0.2); color: var(--primary); }
+        .status-failed { background: rgba(244, 67, 54, 0.2); color: #f44336; }
+        .status-cancelled { background: rgba(158, 158, 158, 0.2); color: #9e9e9e; }
+
+        .job-command {
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: #ccc;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 6px;
+            border-radius: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .job-meta {
+            display: flex;
+            gap: 15px;
+            font-size: 0.7rem;
+            color: #666;
+        }
+
+        .job-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 5px;
+        }
+
+        .job-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            color: #ccc;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .job-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: #666;
+            color: #fff;
+        }
+
+        .job-btn.primary:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .job-btn.danger:hover {
+            border-color: #ff4444;
+            color: #ff4444;
+        }
+
+        .terminal-output-container {
+            flex: 1;
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+            background: #050505;
+        }
+
+        .terminal-line {
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-break: break-all;
+            padding: 0 10px;
+        }
+
+        .terminal-line.stderr {
+            color: #ff5555;
+        }
+
+        .terminal-status-bar {
+            background: #111;
+            padding: 4px 15px;
+            font-size: 0.75rem;
+            color: #888;
+            border-bottom: 1px solid #222;
+            display: flex;
+            justify-content: space-between;
+        }
     </style>
 </head>
 
@@ -1590,30 +1723,43 @@
 
         <div id="bottom-panel" class="bottom-panel">
             <div class="panel-tabs">
-                <div class="panel-tab active" onclick="switchTab('terminal')">💻 Terminal</div>
-                <div class="panel-tab" onclick="switchTab('search')">🔍 Global Search</div>
+                <div class="panel-tab active" id="tab-terminal" onclick="switchTab('terminal')">💻 Terminal</div>
+                <div class="panel-tab" id="tab-jobs" onclick="switchTab('jobs')">⚙️ Jobs</div>
+                <div class="panel-tab" id="tab-search" onclick="switchTab('search')">🔍 Search</div>
                 <div style="margin-left: auto; padding: 8px 15px; cursor: pointer; opacity: 0.5;"
                     onclick="toggleBottomPanel()">✕</div>
             </div>
-            <div id="terminal-content" class="panel-content">
-                <div id="terminal-output" style="white-space: pre-wrap; color: #ccc;">Sẵn sàng...</div>
+            
+            <div id="terminal-view" class="panel-content" style="padding: 0; display: flex; flex-direction: column;">
+                <div class="terminal-status-bar">
+                    <span id="active-job-id">No active job</span>
+                    <span id="active-job-status"></span>
+                </div>
+                <div id="terminal-output-container" class="terminal-output-container">
+                    <div id="terminal-output" style="padding: 10px; color: #ccc;">Sẵn sàng...</div>
+                </div>
                 <div class="terminal-input-row">
-                    <span style="color: var(--primary);">$</span>
-                    <input type="text" id="terminal-input" class="terminal-input" placeholder="Nhập lệnh..."
-                        onkeydown="if(event.key==='Enter') runTerminalCommand()">
+                    <span style="color: var(--primary);">❯</span>
+                    <input type="text" id="terminal-input" class="terminal-input" placeholder="Nhập lệnh và Enter..." onkeydown="if(event.key==='Enter') runManualCommand()">
                 </div>
             </div>
-            <div id="search-content" class="panel-content" style="display: none;">
-                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+
+            <div id="jobs-view" class="panel-content" style="display:none;">
+                <div id="job-manager-list" class="job-list">
+                    <div style="opacity: 0.3; text-align: center; padding: 20px;">No jobs found. Start a command to see it here.</div>
+                </div>
+            </div>
+
+            <div id="search-view" class="panel-content" style="display:none;">
+                <div style="display: flex; gap: 10px; margin-bottom: 15px; padding: 10px;">
                     <input type="text" id="global-search-input"
                         style="flex:1; background:#111; border:1px solid #333; color:#fff; padding:5px 10px; border-radius:4px;"
-                        placeholder="Tìm nội dung trong toàn bộ project..."
+                        placeholder="Tìm nội dung trong project..."
                         onkeydown="if(event.key==='Enter') runGlobalSearch()">
-                    <button class="btn-small" onclick="runGlobalSearch()">Tìm kiếm</button>
+                    <button class="btn-small" onclick="runGlobalSearch()">Tìm</button>
                 </div>
-                <div id="search-results-list" class="search-results">
-                    <div style="opacity: 0.3; text-align: center; padding: 20px;">Nhập từ khóa và nhấn Enter để tìm
-                        kiếm.</div>
+                <div id="search-results-list" class="search-results" style="padding: 0 10px;">
+                    <div style="opacity: 0.3; text-align: center; padding: 20px;">Nhập từ khóa và nhấn Enter.</div>
                 </div>
             </div>
         </div>
@@ -2290,6 +2436,7 @@
                 contextFolders: attachedContexts.filter(c => c.type === 'folder'),
                 contextGit: attachedContexts.some(c => c.type === 'git'),
                 contextTerminal: attachedContexts.some(c => c.type === 'terminal'),
+                contextTerminalJobs: attachedContexts.filter(c => c.type === 'terminal' && c.id).map(c => c.id),
                 contextProblems: attachedContexts.some(c => c.type === 'problems'),
                 selection: null
             };
@@ -2341,6 +2488,7 @@
                             contextFolders: contextPayload.contextFolders || [],
                             contextGit: contextPayload.contextGit === true,
                             contextTerminal: contextPayload.contextTerminal === true,
+                            contextTerminalJobs: contextPayload.contextTerminalJobs || [],
                             contextProblems: contextPayload.contextProblems === true,
                             selection: contextPayload.selection || null,
                             autoAccept: autoAcceptCheck.checked
@@ -3042,82 +3190,220 @@
             document.getElementById('bottom-panel').classList.toggle('active');
         }
 
+        // --- HÀM CHO BOTTOM PANEL ---
+        function toggleBottomPanel() {
+            document.getElementById('bottom-panel').classList.toggle('active');
+        }
+
         function switchTab(tab) {
             const tabs = document.querySelectorAll('.panel-tab');
             tabs.forEach(t => t.classList.remove('active'));
-            document.getElementById('terminal-content').style.display = 'none';
-            document.getElementById('search-content').style.display = 'none';
+            document.getElementById('terminal-view').style.display = 'none';
+            document.getElementById('jobs-view').style.display = 'none';
+            document.getElementById('search-view').style.display = 'none';
 
-            if (tab === 'terminal') {
-                tabs[0].classList.add('active');
-                document.getElementById('terminal-content').style.display = 'block';
-            } else {
-                tabs[1].classList.add('active');
-                document.getElementById('search-content').style.display = 'block';
-            }
+            const activeTab = document.getElementById(`tab-${tab}`);
+            if (activeTab) activeTab.classList.add('active');
+            
+            const view = document.getElementById(`${tab}-view`);
+            if (view) view.style.display = (tab === 'terminal' || tab === 'search') ? 'flex' : 'block';
+            
+            if (tab === 'jobs') refreshJobManager();
         }
 
-        document.addEventListener('change', (event) => {
-            if (event.target && event.target.id === 'setting-trust-workspace') {
-                setWorkspaceTrustFromSettings();
-            }
-        });
+        let activeJobId = null;
+        let jobPollers = new Map(); // jobId -> intervalId
 
-        async function runTerminalCommand() {
+        async function runManualCommand() {
             const input = document.getElementById('terminal-input');
-            const output = document.getElementById('terminal-output');
             const cmd = input.value.trim();
             if (!cmd) return;
-
-            output.innerHTML += `\n<span style="color:var(--primary)">$ ${cmd}</span>\n`;
             input.value = '';
-
+            
             try {
                 const res = await fetch('/api/start_command_job', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
-                    body: JSON.stringify({ command: cmd, timeoutMs: 3600000 })
+                    body: JSON.stringify({ command: cmd })
                 });
                 const data = await res.json();
                 const job = data.result || data.job;
-                if (!job?.id) {
-                    output.innerHTML += escapeHtml(JSON.stringify(data.error || data, null, 2)) + '\n';
+                if (job?.id) {
+                    viewJobOutput(job.id);
+                    refreshJobManager();
+                } else {
+                    logDebug("Lỗi khởi chạy lệnh: " + JSON.stringify(data.error || data));
+                }
+            } catch (e) {
+                logDebug("Lỗi kết nối: " + e.message);
+            }
+        }
+
+        async function refreshJobManager() {
+            try {
+                const res = await fetch('/api/command_job_status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await res.json();
+                const jobs = data.result || [];
+                const list = document.getElementById('job-manager-list');
+                
+                if (jobs.length === 0) {
+                    list.innerHTML = '<div style="opacity: 0.3; text-align: center; padding: 20px;">No jobs found.</div>';
                     return;
                 }
-                output.innerHTML += `<button class="btn-small" onclick="cancelTerminalJob('${job.id}')">Cancel ${job.id}</button>\n`;
-                pollTerminalJob(job.id);
+
+                list.innerHTML = jobs.reverse().map(job => `
+                    <div class="job-card" id="job-card-${job.id}">
+                        <div class="job-card-header">
+                            <span class="job-id">ID: ${job.id}</span>
+                            <span class="job-status status-${job.status}">${job.status}</span>
+                        </div>
+                        <div class="job-command" title="${escapeHtml(job.command)}">${escapeHtml(job.command)}</div>
+                        <div class="job-meta">
+                            <span>Start: ${new Date(job.startedAt).toLocaleTimeString()}</span>
+                            ${job.finishedAt ? `<span>End: ${new Date(job.finishedAt).toLocaleTimeString()}</span>` : ''}
+                            ${job.exitCode !== null ? `<span>Exit: ${job.exitCode}</span>` : ''}
+                        </div>
+                        <div class="job-actions">
+                            <button class="job-btn primary" onclick="viewJobOutput('${job.id}')">👁️ View Output</button>
+                            ${job.status === 'running' ? 
+                                `<button class="job-btn danger" onclick="cancelJob('${job.id}')">⏹️ Cancel</button>` : 
+                                `<button class="job-btn" onclick="rerunJob('${job.id}')">🔄 Rerun</button>`
+                            }
+                            <button class="job-btn" onclick="attachJobToChat('${job.id}')">📎 Attach</button>
+                        </div>
+                    </div>
+                `).join('');
             } catch (e) {
-                output.innerHTML += `<span style="color:#ff5555">Error: ${e.message}</span>\n`;
+                console.error("Failed to refresh job manager:", e);
             }
         }
 
-        async function pollTerminalJob(id) {
-            const output = document.getElementById('terminal-output');
-            const seenKey = `terminal-job-${id}-seen`;
-            let lastLen = Number(sessionStorage.getItem(seenKey) || 0);
-            const res = await fetch('/api/command_job_status', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id })
-            });
-            const data = await res.json();
-            const job = data.result || data;
-            const text = `${job.stdout || ''}${job.stderr ? `\n${job.stderr}` : ''}`;
-            if (text.length > lastLen) {
-                output.innerHTML += escapeHtml(text.slice(lastLen));
-                sessionStorage.setItem(seenKey, String(text.length));
-            }
-            document.getElementById('terminal-content').scrollTop = document.getElementById('terminal-content').scrollHeight;
-            if (job.status === 'running') setTimeout(() => pollTerminalJob(id), 1000);
-            else output.innerHTML += `\n[${id}] ${job.status} exit=${job.exitCode ?? ''}\n`;
+        async function viewJobOutput(id) {
+            activeJobId = id;
+            switchTab('terminal');
+            document.getElementById('active-job-id').innerText = `Job: ${id}`;
+            const outputCont = document.getElementById('terminal-output');
+            outputCont.innerHTML = ''; // Clear for full reload or incremental? 
+            // For Sprint 3, let's do a full reload of the specific job first, then poll.
+            
+            // Clear any existing pollers for this view
+            stopAllPollers();
+            startPollingJob(id);
         }
 
-        async function cancelTerminalJob(id) {
-            await fetch('/api/cancel_command_job', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
-                body: JSON.stringify({ id })
-            });
+        function stopAllPollers() {
+            for (const [id, interval] of jobPollers) {
+                clearInterval(interval);
+            }
+            jobPollers.clear();
+        }
+
+        function startPollingJob(id) {
+            if (jobPollers.has(id)) return;
+            
+            const outputCont = document.getElementById('terminal-output');
+            const statusLabel = document.getElementById('active-job-status');
+            let stdoutOffset = 0;
+            let stderrOffset = 0;
+
+            const poll = async () => {
+                try {
+                    const res = await fetch('/api/command_job_status', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id, stdoutOffset, stderrOffset })
+                    });
+                    const data = await res.json();
+                    const job = data.result || data;
+                    
+                    if (job.stdout) {
+                        const div = document.createElement('div');
+                        div.className = 'terminal-line';
+                        div.innerText = job.stdout;
+                        outputCont.appendChild(div);
+                        stdoutOffset = typeof job.stdoutNextOffset === 'number' ? job.stdoutNextOffset : job.stdoutLength;
+                    }
+                    if (job.stderr) {
+                        const div = document.createElement('div');
+                        div.className = 'terminal-line stderr';
+                        div.innerText = job.stderr;
+                        outputCont.appendChild(div);
+                        stderrOffset = typeof job.stderrNextOffset === 'number' ? job.stderrNextOffset : job.stderrLength;
+                    }
+
+                    statusLabel.innerText = job.status.toUpperCase();
+                    statusLabel.className = `job-status status-${job.status}`;
+                    
+                    const container = document.getElementById('terminal-output-container');
+                    container.scrollTop = container.scrollHeight;
+
+                    if (job.status !== 'running') {
+                        clearInterval(jobPollers.get(id));
+                        jobPollers.delete(id);
+                        refreshJobManager();
+                    }
+                } catch (e) {
+                    console.error("Poll error:", e);
+                    clearInterval(jobPollers.get(id));
+                    jobPollers.delete(id);
+                }
+            };
+
+            poll(); // Initial poll
+            const interval = setInterval(poll, 1000);
+            jobPollers.set(id, interval);
+        }
+
+        async function cancelJob(id) {
+            try {
+                await fetch('/api/cancel_command_job', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ id })
+                });
+                refreshJobManager();
+                if (activeJobId === id) {
+                    document.getElementById('active-job-status').innerText = 'CANCELLED';
+                }
+            } catch (e) {
+                logDebug("Lỗi dừng job: " + e.message);
+            }
+        }
+
+        async function rerunJob(id) {
+            try {
+                const res = await fetch('/api/command_job_status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                });
+                const data = await res.json();
+                const job = data.result || data;
+                if (job.command) {
+                    const runRes = await fetch('/api/start_command_job', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                        body: JSON.stringify({ command: job.command })
+                    });
+                    const runData = await runRes.json();
+                    const newJob = runData.result || runData.job;
+                    if (newJob?.id) {
+                        viewJobOutput(newJob.id);
+                        refreshJobManager();
+                    }
+                }
+            } catch (e) {
+                logDebug("Lỗi chạy lại: " + e.message);
+            }
+        }
+
+        function attachJobToChat(id) {
+            pinContext({ type: 'terminal', id: id, relPath: `Job ${id}` });
+            logDebug(`Đã đính kèm kết quả Job ${id} vào context.`);
         }
 
         async function runGlobalSearch() {

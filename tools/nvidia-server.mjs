@@ -459,15 +459,23 @@ async function buildGitContext() {
     }
 }
 
-async function buildTerminalContext() {
+async function buildTerminalContext(jobId = null) {
     try {
+        if (jobId) {
+            const detail = workspaceCore.commandJobStatusTool({ id: jobId });
+            return `--- TERMINAL JOB ${jobId} ---\nStatus: ${detail.status}, Exit: ${detail.exitCode ?? 'N/A'}\nCommand: ${detail.command}\nStdout:\n${truncate(detail.stdout, 20000)}\n${detail.stderr ? `Stderr:\n${truncate(detail.stderr, 10000)}\n` : ''}`;
+        }
         const jobs = workspaceCore.commandJobStatusTool({});
         if (jobs.length === 0) return "--- TERMINAL CONTEXT ---\nNo recent or running command jobs.\n";
-        const blocks = jobs.map(job => {
+        
+        const summary = jobs.map(j => `- Job ${j.id}: [${j.status}] ${j.command} (Exit: ${j.exitCode ?? 'N/A'}, Started: ${j.startedAt})`).join('\n');
+        
+        const blocks = jobs.slice(-3).map(job => {
             const detail = workspaceCore.commandJobStatusTool({ id: job.id });
-            return `Job ${job.id} [${job.status}]: ${job.command}\nOutput:\n${detail.stdout}\n${detail.stderr ? `Errors:\n${detail.stderr}\n` : ''}`;
+            return `[Job ${job.id}] Status: ${job.status}, Exit: ${job.exitCode ?? 'N/A'}\nCommand: ${job.command}\nStdout:\n${truncate(detail.stdout, 5000)}\n${detail.stderr ? `Stderr:\n${truncate(detail.stderr, 2000)}\n` : ''}`;
         });
-        return `--- TERMINAL CONTEXT ---\n${blocks.join('\n---\n')}\n`;
+        
+        return `--- TERMINAL CONTEXT ---\nSummary:\n${summary}\n\nRecent Details:\n${blocks.join('\n---\n')}\n`;
     } catch (e) {
         return `--- TERMINAL CONTEXT ERROR ---\n${e.message}\n`;
     }
@@ -1159,6 +1167,13 @@ async function prepareMessages(data) {
     if (data.contextTerminal) {
         const context = await buildTerminalContext();
         messages.unshift({ role: 'system', content: context });
+    }
+
+    if (data.contextTerminalJobs?.length) {
+        for (const jobId of data.contextTerminalJobs) {
+            const context = await buildTerminalContext(jobId);
+            if (context) messages.unshift({ role: 'system', content: context });
+        }
     }
 
     if (data.contextProblems) {

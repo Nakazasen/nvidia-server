@@ -380,9 +380,7 @@ export function createWorkspaceCore({
     if (!command || typeof command !== 'string') throw new Error('command is required');
     const id = `job_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const job = { id, command, cwd: currentWorkspace, status: 'running', startedAt: new Date().toISOString(), stdout: '', stderr: '', exitCode: null, signal: null, error: null };
-    const child = exec(command, { cwd: currentWorkspace, timeout: Math.min(Math.max(Number(timeoutMs) || execTimeoutMs, 1000), 3600000), maxBuffer: 50 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
-      job.stdout += stdout || '';
-      job.stderr += stderr || '';
+    const child = exec(command, { cwd: currentWorkspace, timeout: Math.min(Math.max(Number(timeoutMs) || execTimeoutMs, 1000), 3600000), maxBuffer: 50 * 1024 * 1024, windowsHide: true }, err => {
       job.exitCode = err?.code ?? 0;
       job.signal = err?.signal || null;
       job.error = err ? err.message : null;
@@ -397,13 +395,29 @@ export function createWorkspaceCore({
     return { ok: true, id, status: job.status, command, cwd: currentWorkspace };
   }
 
-  function commandJobStatusTool({ id } = {}) {
+  function commandJobStatusTool({ id, stdoutOffset = 0, stderrOffset = 0 } = {}) {
+    const maxChunkChars = 80000;
     if (id) {
       const job = commandJobs.get(id);
       if (!job) throw new Error(`Command job not found: ${id}`);
-      return { ...job, child: undefined, stdout: truncate(redactSecrets(job.stdout), 80000), stderr: truncate(redactSecrets(job.stderr), 80000) };
+      const safeStdoutOffset = Math.max(0, Math.min(Number(stdoutOffset) || 0, job.stdout.length));
+      const safeStderrOffset = Math.max(0, Math.min(Number(stderrOffset) || 0, job.stderr.length));
+      const stdoutSlice = job.stdout.slice(safeStdoutOffset);
+      const stderrSlice = job.stderr.slice(safeStderrOffset);
+      const stdoutRawChunk = stdoutSlice.slice(0, maxChunkChars);
+      const stderrRawChunk = stderrSlice.slice(0, maxChunkChars);
+      return {
+        ...job,
+        child: undefined,
+        stdout: redactSecrets(stdoutRawChunk),
+        stderr: redactSecrets(stderrRawChunk),
+        stdoutNextOffset: safeStdoutOffset + stdoutRawChunk.length,
+        stderrNextOffset: safeStderrOffset + stderrRawChunk.length,
+        stdoutLength: job.stdout.length,
+        stderrLength: job.stderr.length
+      };
     }
-    return Array.from(commandJobs.values()).map(job => ({ id: job.id, command: job.command, cwd: job.cwd, status: job.status, startedAt: job.startedAt, finishedAt: job.finishedAt, exitCode: job.exitCode, signal: job.signal }));
+    return Array.from(commandJobs.values()).map(job => ({ id: job.id, command: job.command, cwd: job.cwd, status: job.status, startedAt: job.startedAt, finishedAt: job.finishedAt, exitCode: job.exitCode, signal: job.signal, stdoutLength: job.stdout.length, stderrLength: job.stderr.length }));
   }
 
   function cancelCommandJobTool({ id }) {
