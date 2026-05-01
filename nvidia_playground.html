@@ -1255,6 +1255,60 @@
             position: relative;
         }
 
+        .editor-tabs {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+            overflow-x: auto;
+            background: #12161d;
+            border-bottom: 1px solid var(--glass-border);
+            padding: 6px 10px;
+        }
+
+        .editor-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid #2a2f3a;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            color: #c5c9d3;
+            background: #1a1f28;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .editor-tab.active {
+            border-color: var(--primary);
+            color: var(--primary);
+            background: rgba(var(--primary-rgb), 0.12);
+        }
+
+        .editor-tab.dirty .tab-name::after {
+            content: " *";
+            color: #ffcc66;
+        }
+
+        .editor-tab .tab-close {
+            border: none;
+            background: transparent;
+            color: #9aa3b3;
+            cursor: pointer;
+            font-size: 0.8rem;
+            padding: 0;
+        }
+
+        .editor-tab .tab-close:hover {
+            color: #ff7777;
+        }
+
+        .recent-files {
+            max-height: 160px;
+            overflow-y: auto;
+            margin-bottom: 16px;
+        }
+
         /* Monaco needs flex-1 and hidden */
         @keyframes slideUp {
             from {
@@ -1635,6 +1689,11 @@
             <div style="opacity: 0.3; text-align: center; padding: 10px;">Loading files...</div>
         </div>
 
+        <div class="sidebar-section-title">Recent Files</div>
+        <div id="recent-files-list" class="recent-files">
+            <div style="opacity: 0.3; text-align: center; padding: 10px;">No recent files.</div>
+        </div>
+
         <div class="sidebar-section-title">Sessions</div>
         <button onclick="createNewSession()"
             style="width:100%; padding:10px; background:rgba(var(--primary-rgb), 0.1); color:var(--primary); border:1px solid var(--primary); border-radius:8px; cursor:pointer; font-weight:bold; margin-bottom:15px; font-size: 0.8rem;">+
@@ -1748,9 +1807,15 @@
                 <div class="code-header">
                     <div id="code-filename" style="color: var(--primary); font-weight: bold; font-family: monospace;">
                         filename.js</div>
-                    <button class="toggle-btn" onclick="closeCodeViewer()">Close</button>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button class="btn-small mode-ide-only" onclick="saveActiveEditorTab()">Save</button>
+                        <button class="btn-small mode-ide-only" onclick="saveAllEditorTabs()">Save All</button>
+                        <button class="toggle-btn" onclick="closeCodeViewer()">Close</button>
+                    </div>
                 </div>
+                <div id="editor-tabs" class="editor-tabs mode-ide-only"></div>
                 <div id="code-body" class="code-content"></div>
+                <div id="diff-body" class="code-content" style="display:none;"></div>
             </div>
 
             <div id="selection-badge"
@@ -1922,6 +1987,10 @@
         let menuType = 'command'; // 'command', 'context', 'file', 'folder'
         let editor = null; // Monaco Editor instance
         let currentEditingPath = "";
+        let editorTabs = [];
+        let activeEditorTabPath = null;
+        let isSwitchingEditorModel = false;
+        const RECENT_FILES_STORAGE_KEY = 'nvidia.recentFiles.v1';
         let editingMessageIndex = null;
         let currentAgentController = null;
         let isAgentRunning = false;
@@ -2102,14 +2171,17 @@
                 if (!edit) return;
 
                 // Load Monaco Diff Editor
-                const container = document.getElementById('code-body');
+                const editorContainer = document.getElementById('code-body');
+                const diffContainerHost = document.getElementById('diff-body');
                 const header = document.getElementById('code-filename');
                 header.innerText = `Diff: ${edit.relPath}`;
-                
-                container.innerHTML = '';
+
+                editorContainer.style.display = 'none';
+                diffContainerHost.style.display = 'block';
+                diffContainerHost.innerHTML = '';
                 const diffContainer = document.createElement('div');
                 diffContainer.style.height = '100%';
-                container.appendChild(diffContainer);
+                diffContainerHost.appendChild(diffContainer);
                 
                 document.getElementById('code-viewer').classList.add('active');
 
@@ -2605,8 +2677,9 @@
                 const selection = editor.getSelection();
                 const selectedText = editor.getModel().getValueInRange(selection);
                 if (selectedText.trim()) {
+                    const activeTab = getActiveEditorTab();
                     selectionData = {
-                        file: currentEditingPath.split(/[\\/]/).pop(),
+                        file: basename(activeTab?.path || currentEditingPath || 'active-buffer'),
                         text: selectedText
                     };
                 }
@@ -3351,7 +3424,9 @@
                 if (c.type === 'file') {
                     menuType = 'file';
                     await loadFilesForMention();
-                    showSlashMenu(allFiles);
+                    const active = getActiveEditorTab();
+                    const activeItem = active ? [{ cmd: `@${active.name}`, desc: `Active tab (${active.path})`, path: active.path, relPath: active.path }] : [];
+                    showSlashMenu([...activeItem, ...allFiles]);
                 } else if (c.type === 'folder') {
                     menuType = 'folder';
                     await loadFoldersForMention();
@@ -3774,40 +3849,222 @@
             });
         }
 
-        async function openCodeViewer(path, name) {
-            try {
-                currentEditingPath = path;
-                document.getElementById('code-filename').innerText = name;
-                document.getElementById('code-viewer').classList.add('active');
+        function basename(filePath) {
+            return String(filePath || '').split(/[\\/]/).pop() || filePath || 'untitled';
+        }
 
+        function loadRecentFiles() {
+            try {
+                const raw = localStorage.getItem(RECENT_FILES_STORAGE_KEY);
+                const list = JSON.parse(raw || '[]');
+                return Array.isArray(list) ? list.filter(item => typeof item === 'string' && item.trim()) : [];
+            } catch {
+                return [];
+            }
+        }
+
+        function saveRecentFiles(files) {
+            const unique = [...new Set((files || []).filter(Boolean))].slice(0, 30);
+            localStorage.setItem(RECENT_FILES_STORAGE_KEY, JSON.stringify(unique));
+            renderRecentFiles();
+        }
+
+        function trackRecentFile(filePath) {
+            const next = [filePath, ...loadRecentFiles().filter(item => item !== filePath)];
+            saveRecentFiles(next);
+        }
+
+        function renderRecentFiles() {
+            const container = document.getElementById('recent-files-list');
+            if (!container) return;
+            const files = loadRecentFiles();
+            if (!files.length) {
+                container.innerHTML = '<div style="opacity: 0.3; text-align: center; padding: 10px;">No recent files.</div>';
+                return;
+            }
+            container.innerHTML = files.map(filePath => `
+                <div class="file-item file" data-path="${escapeHtml(filePath)}" data-name="${escapeHtml(basename(filePath))}" onclick="openRecentFile(this.dataset.path, this.dataset.name)">
+                    <span class="icon">FILE</span>
+                    <span style="overflow:hidden; text-overflow:ellipsis;">${escapeHtml(filePath)}</span>
+                </div>
+            `).join('');
+        }
+
+        async function openRecentFile(filePath, name) {
+            await openCodeViewer(filePath, name || basename(filePath));
+        }
+
+        function renderEditorTabs() {
+            const tabs = document.getElementById('editor-tabs');
+            if (!tabs) return;
+            if (!editorTabs.length) {
+                tabs.innerHTML = '<div style="opacity:0.45; font-size:0.75rem; padding:2px 4px;">No open files</div>';
+                return;
+            }
+            tabs.innerHTML = editorTabs.map(tab => `
+                <div class="editor-tab ${tab.path === activeEditorTabPath ? 'active' : ''} ${tab.isDirty ? 'dirty' : ''}" data-path="${escapeHtml(tab.path)}" onclick="activateEditorTab(this.dataset.path)">
+                    <span class="tab-name">${escapeHtml(tab.name)}</span>
+                    <button class="tab-close" data-path="${escapeHtml(tab.path)}" onclick="event.stopPropagation(); closeEditorTab(this.dataset.path)">x</button>
+                </div>
+            `).join('');
+        }
+
+        async function ensureEditorReady(initialValue, language) {
+            if (editor) return editor;
+            await new Promise(resolve => {
+                require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } });
+                require(['vs/editor/editor.main'], function () {
+                    editor = monaco.editor.create(document.getElementById('code-body'), {
+                        value: initialValue || '',
+                        language: language || 'plaintext',
+                        theme: 'vs-dark',
+                        automaticLayout: true,
+                        fontSize: 14,
+                        minimap: { enabled: false }
+                    });
+                    setupAIAutocomplete();
+                    editor.onDidChangeModelContent(() => {
+                        if (isSwitchingEditorModel) return;
+                        markActiveTabDirtyState();
+                    });
+                    resolve();
+                });
+            });
+            return editor;
+        }
+
+        function getActiveEditorTab() {
+            return editorTabs.find(tab => tab.path === activeEditorTabPath) || null;
+        }
+
+        function markActiveTabDirtyState() {
+            const tab = getActiveEditorTab();
+            if (!tab || !editor || !editor.getModel()) return;
+            tab.isDirty = editor.getValue() !== tab.originalContent;
+            renderEditorTabs();
+        }
+
+        async function activateEditorTab(filePath) {
+            const tab = editorTabs.find(item => item.path === filePath);
+            if (!tab) return;
+            activeEditorTabPath = tab.path;
+            currentEditingPath = tab.path;
+            document.getElementById('code-filename').innerText = tab.name;
+            document.getElementById('code-viewer').classList.add('active');
+            document.getElementById('code-body').style.display = 'block';
+            document.getElementById('diff-body').style.display = 'none';
+            await ensureEditorReady(tab.originalContent, getMonacoLanguage(tab.name));
+            isSwitchingEditorModel = true;
+            editor.setValue(tab.isDirty ? tab.workingContent : tab.originalContent);
+            monaco.editor.setModelLanguage(editor.getModel(), getMonacoLanguage(tab.name));
+            isSwitchingEditorModel = false;
+            renderEditorTabs();
+        }
+
+        async function openCodeViewer(path, name) {
+            if (!guardIdeOnlyAction('File editor')) return;
+            try {
+                const existing = editorTabs.find(tab => tab.path === path);
+                if (existing) {
+                    await activateEditorTab(path);
+                    trackRecentFile(path);
+                    return;
+                }
                 const res = await fetch('/api/read_file', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: path })
+                    body: JSON.stringify({ path })
                 });
                 const data = await res.json();
-
-                if (!editor) {
-                    require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } });
-                    require(['vs/editor/editor.main'], function () {
-                        editor = monaco.editor.create(document.getElementById('code-body'), {
-                            value: data.result,
-                            language: getMonacoLanguage(name),
-                            theme: 'vs-dark',
-                            automaticLayout: true,
-                            fontSize: 14,
-                            minimap: { enabled: false }
-                        });
-
-                        // Thm AI Autocomplete
-                        setupAIAutocomplete();
-                    });
-                } else {
-                    editor.setValue(data.result);
-                    monaco.editor.setModelLanguage(editor.getModel(), getMonacoLanguage(name));
-                }
+                if (!res.ok || data.error) throw new Error(data.error || 'Failed to open file');
+                const content = String(data.result || '');
+                editorTabs.push({
+                    path,
+                    name: name || basename(path),
+                    originalContent: content,
+                    workingContent: content,
+                    isDirty: false
+                });
+                await activateEditorTab(path);
+                trackRecentFile(path);
             } catch (e) {
-                logDebug("L mfile: " + e.message);
+                logDebug("Open file failed: " + e.message);
+            }
+        }
+
+        async function closeEditorTab(filePath) {
+            const tab = editorTabs.find(item => item.path === filePath);
+            if (!tab) return;
+            if (tab.isDirty) {
+                const confirmed = confirm(`Close dirty tab ${tab.name} without saving?`);
+                if (!confirmed) return;
+            }
+            editorTabs = editorTabs.filter(item => item.path !== filePath);
+            if (activeEditorTabPath === filePath) {
+                if (editorTabs.length) {
+                    await activateEditorTab(editorTabs[editorTabs.length - 1].path);
+                } else {
+                    activeEditorTabPath = null;
+                    currentEditingPath = "";
+                    document.getElementById('code-filename').innerText = 'filename.js';
+                    if (editor) {
+                        isSwitchingEditorModel = true;
+                        editor.setValue('');
+                        isSwitchingEditorModel = false;
+                    }
+                    renderEditorTabs();
+                    closeCodeViewer();
+                }
+            } else {
+                renderEditorTabs();
+            }
+        }
+
+        async function saveActiveEditorTab() {
+            if (!guardIdeOnlyAction('Save file')) return;
+            const tab = getActiveEditorTab();
+            if (!tab || !editor) return;
+            await saveEditorTab(tab);
+        }
+
+        async function saveAllEditorTabs() {
+            if (!guardIdeOnlyAction('Save all files')) return;
+            const dirtyTabs = editorTabs.filter(tab => tab.isDirty);
+            if (!dirtyTabs.length) {
+                logDebug('No dirty tabs to save.');
+                return;
+            }
+            for (const tab of dirtyTabs) {
+                await saveEditorTab(tab);
+            }
+        }
+
+        async function saveEditorTab(tab) {
+            if (!tab || !editor) return;
+            try {
+                const trustRes = await fetch('/api/trust');
+                const trustData = await trustRes.json();
+                if (!trustData?.trusted) {
+                    alert('Save blocked: workspace is not trusted.');
+                    return;
+                }
+                const content = tab.path === activeEditorTabPath ? editor.getValue() : tab.workingContent;
+                const res = await fetch('/api/write_file', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ path: tab.path, content })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) throw new Error(data.error || 'Save failed');
+                tab.originalContent = content;
+                tab.workingContent = content;
+                tab.isDirty = false;
+                renderEditorTabs();
+                logDebug(`Save queued as pending edit: ${tab.path}`);
+                if (data.result?.pendingEdit) renderPendingEdit(data.result.pendingEdit);
+                refreshPendingEdits();
+            } catch (e) {
+                alert(`Save failed for ${tab.name}: ${e.message}`);
             }
         }
 
@@ -3831,6 +4088,10 @@
             });
 
             editor.onDidChangeModelContent(() => {
+                const activeTab = getActiveEditorTab();
+                if (activeTab && !isSwitchingEditorModel) {
+                    activeTab.workingContent = editor.getValue();
+                }
                 if (timer) clearTimeout(timer);
                 timer = setTimeout(async () => {
                     const model = editor.getModel();
@@ -3881,6 +4142,8 @@
 
         function closeCodeViewer() {
             document.getElementById('code-viewer').classList.remove('active');
+            document.getElementById('code-body').style.display = 'block';
+            document.getElementById('diff-body').style.display = 'none';
         }
 
         async function loadWorkspaceInfo() {
@@ -3892,8 +4155,12 @@
         }
 
         async function changeWorkspace() {
+            if (editorTabs.some(tab => tab.isDirty)) {
+                const proceed = confirm('You have dirty tabs. Switching workspace will close them. Continue?');
+                if (!proceed) return;
+            }
             const current = document.getElementById('current-workspace-path').innerText;
-            const newPath = await customPrompt("Nhp g dn Workspace m:", current);
+            const newPath = await customPrompt("Enter new workspace path:", current);
             if (!newPath) return;
 
             try {
@@ -3904,15 +4171,21 @@
                 });
                 const data = await res.json();
                 if (data.status === "success") {
-                    logDebug(" chuy sang Workspace m: " + data.path);
+                    logDebug("Switched workspace: " + data.path);
+                    editorTabs = [];
+                    activeEditorTabPath = null;
+                    currentEditingPath = "";
+                    renderEditorTabs();
+                    closeCodeViewer();
                     await loadWorkspaceInfo();
                     await loadFileExplorer();
+                    renderRecentFiles();
                     await loadWorkflows();
                 } else {
-                    alert("L: " + data.error);
+                    alert("Workspace switch failed: " + data.error);
                 }
             } catch (e) {
-                alert("Khng thkt n t Server: " + e.message);
+                alert("Unable to connect to server: " + e.message);
             }
         }
 
@@ -4255,6 +4528,8 @@
         window.onload = async () => {
             logDebug("Initializing system...");
             try {
+                renderEditorTabs();
+                renderRecentFiles();
                 await loadWorkspaceInfo();
                 await refreshTrustStatus();
                 await initializeUIMode();
@@ -4292,10 +4567,26 @@
                 await toggleUIMode();
                 return;
             }
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+                event.preventDefault();
+                if (!isIdeMode()) return;
+                if (event.shiftKey) {
+                    await saveAllEditorTabs();
+                } else {
+                    await saveActiveEditorTab();
+                }
+                return;
+            }
             if (event.ctrlKey && event.shiftKey && (event.key === 'P' || event.key === 'p')) {
                 event.preventDefault();
                 openCommandPalette();
             }
+        });
+
+        window.addEventListener('beforeunload', (event) => {
+            if (!editorTabs.some(tab => tab.isDirty)) return;
+            event.preventDefault();
+            event.returnValue = '';
         });
 
         // --- DIFF VIEW HELPERS ---

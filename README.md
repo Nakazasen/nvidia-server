@@ -472,12 +472,12 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 5: Extension UX Tối Thiểu",
+  "last_completed_sprint": "Sprint 6: Monaco Workbench / Multi-tab Editor",
   "last_implementer": "Gemini 3 Flash",
   "last_auditor": "Codex",
-  "last_audit_result": "Codex fixed extension activation crash (subscriptions scope), removed duplicate toggleBottomPanel, added IDE guard in showExtensionDetail, completed hard mojibake cleanup pass in nvidia_playground.html (final blocker patterns 0), re-verified local fixture install/activate/run/disable/uninstall flow, node syntax checks passed, inline script parse passed, and npm run agent:audit passed 25/25.",
-  "next_sprint": "Sprint 6: Monaco Workbench / Multi-tab Editor",
-  "next_prompt_instruction": "Ask Gemini 3 Flash to start from README.md Sprint 6 only, keep Sprint 1/2/3/4/5 behavior intact, then send results back to Codex for audit/fix",
+  "last_audit_result": "Codex audited Sprint 6 and verified multi-tab editor behavior (no duplicate tab for same path), per-tab dirty state, Save/Save All pending-edit flow via /api/write_file with explicit X-Agent-Approved and trust checks, recent files path-only localStorage, enterprise-mode IDE guards for open/save actions, Sprint 1/2/3/4/5 static regression checks, mojibake scan patterns all zero, inline HTML parse pass, node --check pass (server/cli/extension-host/core), npm run agent:audit pass 25/25, and safe temp file save/apply smoke pass. Limitation: no full browser E2E visual validation.",
+  "next_sprint": "Sprint 7: Semantic Index Cache / Context Engine",
+  "next_prompt_instruction": "Ask Gemini 3 Flash to start from README.md Sprint 7 only, keep Sprint 1/2/3/4/5/6 behavior intact, then send results back to Codex for audit/fix",
   "status_marker_version": 1
 }
 ```
