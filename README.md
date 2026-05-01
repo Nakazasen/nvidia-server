@@ -474,12 +474,12 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 9: Browser E2E Smoke Harness",
-  "last_implementer": "DeepSeek-v4-pro via Cline",
+  "last_completed_sprint": "Sprint 10: Settings / Provider Manager / API Key UI",
+  "last_implementer": "GPT-5 Codex",
   "last_auditor": "Codex",
-  "last_audit_result": "Sprint 9 audited/fixed by Codex: real browser smoke now runs via playwright-core with local Chrome, opens live UI, executes JS, verifies mode toggle + context picker + Terminal/Jobs + Problems + editor/extensions/index surfaces, captures screenshot/JSON/log under .nvidia-agent/reports, and exits 0 only when mode=real-browser. HTTP fallback is informational and non-passing.",
-  "next_sprint": "Sprint 10: Settings / Provider Manager / API Key UI",
-  "next_prompt_instruction": "Ask DeepSeek-v4-pro via Cline to implement Sprint 10 only, then return to Codex for audit/fix.",
+  "last_audit_result": "Sprint 10 audited/fixed by Codex: provider/settings mutation is IDE-only + X-Agent-Approved guarded server-side, GET/POST/test/clear responses redact API keys, large payloads and invalid provider ids are rejected, /proxy/chat keeps working with runtime-settings precedence and nvidia fallback warning, real-browser smoke passes with Settings checks.",
+  "next_sprint": "Sprint 11: Inline Edit kiểu Cursor",
+  "next_prompt_instruction": "Ask builder model to implement Sprint 11 only, then return to Codex for audit/fix.",
   "status_marker_version": 2
 }
 ```

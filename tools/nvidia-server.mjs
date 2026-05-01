@@ -19,6 +19,7 @@ const HOST = process.env.HOST || process.env.NVIDIA_SERVER_HOST || '127.0.0.1';
 const STATE_DIR = path.join(APP_DIR, '.nvidia-agent');
 const TRUST_FILE = path.join(STATE_DIR, 'trusted-workspaces.json');
 const PROFILE_FILE = path.join(STATE_DIR, 'profile.json');
+const PROVIDERS_FILE = path.join(STATE_DIR, 'providers.json');
 const READ_ONLY_TOOLS = new Set(['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
 const DESTRUCTIVE_TOOLS = new Set(['write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job']);
 
@@ -414,6 +415,208 @@ function saveProfile(profile) {
     return clean;
 }
 
+const KNOWN_PROVIDER_DEFAULTS = {
+    nvidia: { label: 'NVIDIA NIM', type: 'nvidia', baseUrl: process.env.NVIDIA_BASE_URL || NIM_BASE_URL, defaultModel: process.env.NVIDIA_DEFAULT_MODEL || DEFAULT_MODEL },
+    openai: { label: 'OpenAI', type: 'openai', baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1', defaultModel: process.env.OPENAI_DEFAULT_MODEL || 'gpt-4.1-mini' },
+    anthropic: { label: 'Anthropic', type: 'anthropic', baseUrl: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1', defaultModel: process.env.ANTHROPIC_DEFAULT_MODEL || 'claude-3-5-sonnet-latest' },
+    gemini: { label: 'Google Gemini', type: 'gemini', baseUrl: process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta', defaultModel: process.env.GEMINI_DEFAULT_MODEL || 'gemini-1.5-pro' },
+    deepseek: { label: 'DeepSeek', type: 'deepseek', baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1', defaultModel: process.env.DEEPSEEK_DEFAULT_MODEL || 'deepseek-chat' },
+    openrouter: { label: 'OpenRouter', type: 'openrouter', baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1', defaultModel: process.env.OPENROUTER_DEFAULT_MODEL || 'openai/gpt-4o-mini' },
+    local: { label: 'Local Endpoint', type: 'local', baseUrl: process.env.LOCAL_LLM_BASE_URL || 'http://127.0.0.1:11434/v1', defaultModel: process.env.LOCAL_LLM_MODEL || '' }
+};
+
+const PROVIDER_ENV_KEYS = {
+    nvidia: { apiKey: 'NVIDIA_API_KEY', baseUrl: 'NVIDIA_BASE_URL', defaultModel: 'NVIDIA_DEFAULT_MODEL' },
+    openai: { apiKey: 'OPENAI_API_KEY', baseUrl: 'OPENAI_BASE_URL', defaultModel: 'OPENAI_DEFAULT_MODEL' },
+    anthropic: { apiKey: 'ANTHROPIC_API_KEY', baseUrl: 'ANTHROPIC_BASE_URL', defaultModel: 'ANTHROPIC_DEFAULT_MODEL' },
+    gemini: { apiKey: 'GEMINI_API_KEY', baseUrl: 'GEMINI_BASE_URL', defaultModel: 'GEMINI_DEFAULT_MODEL' },
+    deepseek: { apiKey: 'DEEPSEEK_API_KEY', baseUrl: 'DEEPSEEK_BASE_URL', defaultModel: 'DEEPSEEK_DEFAULT_MODEL' },
+    openrouter: { apiKey: 'OPENROUTER_API_KEY', baseUrl: 'OPENROUTER_BASE_URL', defaultModel: 'OPENROUTER_DEFAULT_MODEL' },
+    local: { apiKey: 'LOCAL_LLM_API_KEY', baseUrl: 'LOCAL_LLM_BASE_URL', defaultModel: 'LOCAL_LLM_MODEL' }
+};
+
+const PROVIDER_ID_RE = /^[a-z0-9][a-z0-9_-]{1,39}$/;
+const MAX_PROVIDER_LABEL = 80;
+const MAX_PROVIDER_TYPE = 40;
+const MAX_PROVIDER_BASE_URL = 300;
+const MAX_PROVIDER_MODEL = 120;
+const MAX_PROVIDER_MESSAGE = 300;
+const MAX_PROVIDER_RECORDS = 40;
+
+function nowIso() {
+    return new Date().toISOString();
+}
+
+function maskApiKey(raw = '') {
+    const token = String(raw || '').trim();
+    if (!token) return '';
+    if (token.length <= 6) return '***';
+    return `${token.slice(0, 3)}...${token.slice(-4)}`;
+}
+
+function normalizeProviderId(value) {
+    const clean = String(value || '').trim().toLowerCase();
+    if (!PROVIDER_ID_RE.test(clean)) throw new Error('Invalid provider id. Use lowercase letters, numbers, underscore, hyphen.');
+    return clean;
+}
+
+function readStringField(value, maxLen, fieldName) {
+    const text = String(value ?? '').trim();
+    if (text.length > maxLen) {
+        throw new Error(`${fieldName} is too long. Max ${maxLen} characters.`);
+    }
+    return text;
+}
+
+function normalizeProviderRecord(input = {}, previous = null) {
+    const id = normalizeProviderId(input.id || previous?.id);
+    const defaults = KNOWN_PROVIDER_DEFAULTS[id] || {};
+    const label = readStringField(input.label ?? previous?.label ?? defaults.label ?? id, MAX_PROVIDER_LABEL, 'label');
+    const type = readStringField(input.type ?? previous?.type ?? defaults.type ?? id, MAX_PROVIDER_TYPE, 'type').toLowerCase();
+    const baseUrl = readStringField(input.baseUrl ?? previous?.baseUrl ?? defaults.baseUrl ?? '', MAX_PROVIDER_BASE_URL, 'baseUrl');
+    const defaultModel = readStringField(input.defaultModel ?? previous?.defaultModel ?? defaults.defaultModel ?? '', MAX_PROVIDER_MODEL, 'defaultModel');
+    const enabled = input.enabled === undefined ? (previous?.enabled !== false) : input.enabled === true;
+    const lastTestStatus = String(input.lastTestStatus ?? previous?.lastTestStatus ?? 'untested').trim().toLowerCase();
+    const lastTestAt = input.lastTestAt ? String(input.lastTestAt) : (previous?.lastTestAt || null);
+    const lastTestMessage = readStringField(input.lastTestMessage ?? previous?.lastTestMessage ?? '', MAX_PROVIDER_MESSAGE, 'lastTestMessage');
+    const keyRaw = input.apiKey !== undefined ? String(input.apiKey || '').trim() : (previous?.apiKey || '');
+    if (keyRaw.length > 400) throw new Error('apiKey is too long. Max 400 characters.');
+    const apiKey = keyRaw ? keyRaw : '';
+    return {
+        id,
+        label: label || id,
+        type: type || id,
+        baseUrl,
+        defaultModel,
+        enabled,
+        lastTestStatus: ['ok', 'failed', 'untested'].includes(lastTestStatus) ? lastTestStatus : 'untested',
+        lastTestAt,
+        lastTestMessage,
+        apiKey
+    };
+}
+
+function buildDefaultProviderState() {
+    const nvidia = normalizeProviderRecord({
+        id: 'nvidia',
+        label: KNOWN_PROVIDER_DEFAULTS.nvidia.label,
+        type: 'nvidia',
+        baseUrl: KNOWN_PROVIDER_DEFAULTS.nvidia.baseUrl,
+        defaultModel: KNOWN_PROVIDER_DEFAULTS.nvidia.defaultModel,
+        enabled: true
+    });
+    return {
+        version: 1,
+        updatedAt: nowIso(),
+        defaultProviderId: 'nvidia',
+        providers: [nvidia]
+    };
+}
+
+function loadProviderState() {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(PROVIDERS_FILE, 'utf8'));
+        const list = Array.isArray(parsed.providers) ? parsed.providers.slice(0, MAX_PROVIDER_RECORDS).map(item => normalizeProviderRecord(item)) : [];
+        const dedup = new Map(list.map(item => [item.id, item]));
+        if (!dedup.has('nvidia')) dedup.set('nvidia', normalizeProviderRecord({ id: 'nvidia', enabled: true }));
+        const providers = Array.from(dedup.values());
+        const defaultProviderId = providers.some(p => p.id === parsed.defaultProviderId) ? parsed.defaultProviderId : 'nvidia';
+        return {
+            version: 1,
+            updatedAt: parsed.updatedAt || nowIso(),
+            defaultProviderId,
+            providers
+        };
+    } catch {
+        return buildDefaultProviderState();
+    }
+}
+
+function saveProviderState(state) {
+    const next = {
+        version: 1,
+        updatedAt: nowIso(),
+        defaultProviderId: state.defaultProviderId,
+        providers: state.providers.slice(0, MAX_PROVIDER_RECORDS).map(item => normalizeProviderRecord(item))
+    };
+    if (!next.providers.some(p => p.id === next.defaultProviderId)) next.defaultProviderId = 'nvidia';
+    fs.mkdirSync(path.dirname(PROVIDERS_FILE), { recursive: true });
+    fs.writeFileSync(PROVIDERS_FILE, JSON.stringify(next, null, 2));
+    return next;
+}
+
+function getProviderEnvValue(providerId, field) {
+    const envMap = PROVIDER_ENV_KEYS[providerId] || {};
+    const envKey = envMap[field];
+    return envKey ? (process.env[envKey] || '') : '';
+}
+
+function providerToClientRecord(provider) {
+    const envApiKey = getProviderEnvValue(provider.id, 'apiKey');
+    const hasStoredApiKey = !!provider.apiKey;
+    const hasEnvApiKey = !!envApiKey;
+    const effectiveBaseUrl = provider.baseUrl || getProviderEnvValue(provider.id, 'baseUrl') || '';
+    const effectiveModel = provider.defaultModel || getProviderEnvValue(provider.id, 'defaultModel') || '';
+    return {
+        id: provider.id,
+        label: provider.label,
+        type: provider.type,
+        baseUrl: effectiveBaseUrl,
+        defaultModel: effectiveModel,
+        enabled: provider.enabled !== false,
+        apiKeyRef: hasStoredApiKey ? 'stored' : (hasEnvApiKey ? 'env' : null),
+        hasApiKey: hasStoredApiKey || hasEnvApiKey,
+        apiKeyPreview: hasStoredApiKey ? maskApiKey(provider.apiKey) : (hasEnvApiKey ? `${provider.id}-env` : ''),
+        lastTestStatus: provider.lastTestStatus || 'untested',
+        lastTestAt: provider.lastTestAt || null,
+        warning: provider.lastTestStatus === 'failed' ? (provider.lastTestMessage || 'Last test failed') : '',
+        message: provider.lastTestMessage || ''
+    };
+}
+
+function getSettingsPayload() {
+    const state = loadProviderState();
+    const settings = {
+        defaultProviderId: state.defaultProviderId,
+        providerPrecedence: 'runtime-settings-then-env-fallback',
+        sprint: '10',
+        secretStorage: 'local plaintext under .nvidia-agent/providers.json'
+    };
+    return {
+        ok: true,
+        settings,
+        providers: state.providers.map(providerToClientRecord),
+        warnings: ['Provider/API key storage is local plaintext runtime state; encryption is not implemented in Sprint 10.']
+    };
+}
+
+function ensureIdeMutationAllowed(req) {
+    if (req.headers['x-agent-approved'] !== 'true') {
+        throw new Error('This mutation endpoint requires X-Agent-Approved=true.');
+    }
+    const profile = loadProfile();
+    if (profile.uiMode !== 'ide') {
+        throw new Error('Provider/settings mutation is IDE-mode only.');
+    }
+}
+
+function resolveProviderForChat(requestedModel = '') {
+    const state = loadProviderState();
+    const preferred = state.providers.find(p => p.id === state.defaultProviderId && p.enabled !== false) || state.providers.find(p => p.id === 'nvidia');
+    const nvidia = state.providers.find(p => p.id === 'nvidia') || normalizeProviderRecord({ id: 'nvidia', enabled: true });
+    const warnings = [];
+    let active = preferred || nvidia;
+    if (active.id !== 'nvidia') {
+        warnings.push(`Provider ${active.id} is not implemented for /proxy/chat yet. Falling back to nvidia.`);
+        active = nvidia;
+    }
+    const apiKey = active.apiKey || getProviderEnvValue('nvidia', 'apiKey') || process.env.NVIDIA_API_KEY || '';
+    const baseUrl = active.baseUrl || getProviderEnvValue('nvidia', 'baseUrl') || NIM_BASE_URL;
+    const defaultModel = active.defaultModel || getProviderEnvValue('nvidia', 'defaultModel') || DEFAULT_MODEL;
+    const model = requestedModel && requestedModel !== 'auto' ? requestedModel : defaultModel;
+    return { provider: active, apiKey, baseUrl, model, warnings };
+}
+
 function makeUnifiedDiff(relPath, oldText, newText) {
     const oldLines = String(oldText || '').split(/\r?\n/);
     const newLines = String(newText || '').split(/\r?\n/);
@@ -545,7 +748,8 @@ async function fetchNim(pathOrUrl, options = {}, label = 'NVIDIA API') {
     if (status.enabled && status.nearLimit) {
         console.warn(`[RATE] Warning: NVIDIA API usage ${status.usedLastMinute}/${status.rpmLimit} RPM after ${label}.`);
     }
-    const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${NIM_BASE_URL}${pathOrUrl}`;
+    const baseUrl = options.baseUrl || NIM_BASE_URL;
+    const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${baseUrl}${pathOrUrl}`;
     const response = await fetch(url, options);
     if (response.status === 429) {
         const retryAfter = Number(response.headers.get('retry-after') || 0);
@@ -1522,15 +1726,18 @@ async function prepareMessages(data) {
     return messages;
 }
 
-async function callNimChat(payload, signal) {
+async function callNimChat(payload, signal, providerConfig = {}) {
+    const apiKey = providerConfig.apiKey || process.env.NVIDIA_API_KEY || '';
+    const baseUrl = providerConfig.baseUrl || NIM_BASE_URL;
     const response = await fetchNim('/chat/completions', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.NVIDIA_API_KEY || ''}`
+            'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify(payload),
-        signal
+        signal,
+        baseUrl
     }, 'chat.completions');
 
     const text = await response.text();
@@ -1557,15 +1764,18 @@ function writeSse(res, event, data) {
     }
 }
 
-async function callNimChatStream(payload, onEvent, signal) {
+async function callNimChatStream(payload, onEvent, signal, providerConfig = {}) {
+    const apiKey = providerConfig.apiKey || process.env.NVIDIA_API_KEY || '';
+    const baseUrl = providerConfig.baseUrl || NIM_BASE_URL;
     const response = await fetchNim('/chat/completions', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.NVIDIA_API_KEY || ''}`
+            'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({ ...payload, stream: true }),
-        signal
+        signal,
+        baseUrl
     }, 'chat.completions.stream');
 
     if (!response.ok) {
@@ -1626,10 +1836,17 @@ async function callNimChatStream(payload, onEvent, signal) {
 async function runAutonomousAgent(data, callbacks = {}) {
     const signal = callbacks.signal;
     const allowDestructive = data.autoAccept === true || data.auto_accept === true || data.allowDestructive === true;
-    const model = data.model && data.model !== 'auto' ? data.model : DEFAULT_MODEL;
+    const providerResolved = resolveProviderForChat(data.model);
+    const model = data.model && data.model !== 'auto' ? data.model : providerResolved.model;
     const maxIterations = Math.max(1, Math.min(Number(data.max_iterations || data.maxIterations) || DEFAULT_MAX_ITERATIONS, 20));
     const tools = getAgentTools();
     const messages = await prepareMessages(data);
+    if (providerResolved.warnings?.length) {
+        messages.unshift({
+            role: 'system',
+            content: `Provider warning: ${providerResolved.warnings.join(' ')}`
+        });
+    }
     const lastUserText = getLastUserText(messages);
     const requiresFileWrite = isFileWriteIntent(lastUserText);
     if (requiresFileWrite) {
@@ -1669,8 +1886,8 @@ async function runAutonomousAgent(data, callbacks = {}) {
         events.push({ type: 'status', iteration, status: 'thinking', model });
 
         const completion = callbacks.streamFinal
-            ? await callNimChatStream(payload, callbacks.event, signal)
-            : await callNimChat(payload, signal);
+            ? await callNimChatStream(payload, callbacks.event, signal, providerResolved)
+            : await callNimChat(payload, signal, providerResolved);
 
         const message = completion.choices?.[0]?.message;
         if (!message) throw new Error('NIM returned no assistant message');
@@ -1741,7 +1958,8 @@ async function runAutonomousAgent(data, callbacks = {}) {
 
 async function handleProxyChat(req, res) {
     const data = await getBody(req);
-    console.log(`[POST] /proxy/chat - Model: ${data.model || DEFAULT_MODEL}`);
+    const providerResolved = resolveProviderForChat(data.model);
+    console.log(`[POST] /proxy/chat - Provider: ${providerResolved.provider.id} Model: ${providerResolved.model}`);
     const abortController = new AbortController();
     req.on('close', () => {
         if (!res.writableEnded) abortController.abort();
@@ -1775,6 +1993,7 @@ async function handleProxyChat(req, res) {
 }
 
 async function probeModels(models, concurrency = 12, timeoutMs = 15000) {
+    const providerResolved = resolveProviderForChat('auto');
     const results = {};
     const limit = Math.max(1, Math.min(Number(concurrency) || 12, 24));
     const timeout = Math.max(3000, Math.min(Number(timeoutMs) || 15000, 30000));
@@ -1787,7 +2006,7 @@ async function probeModels(models, concurrency = 12, timeoutMs = 15000) {
             const response = await fetchNim('/chat/completions', {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${process.env.NVIDIA_API_KEY || ''}`,
+                    'Authorization': `Bearer ${providerResolved.apiKey || ''}`,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
@@ -1797,7 +2016,8 @@ async function probeModels(models, concurrency = 12, timeoutMs = 15000) {
                     temperature: 0,
                     stream: true
                 }),
-                signal: controller.signal
+                signal: controller.signal,
+                baseUrl: providerResolved.baseUrl
             }, `probe:${modelId}`);
 
             if (!response.ok) {
@@ -1877,8 +2097,10 @@ const server = http.createServer(async (req, res) => {
             }
 
             if (req.url === '/api/models') {
+                const providerResolved = resolveProviderForChat('auto');
                 const response = await fetchNim('/models', {
-                    headers: { 'Authorization': `Bearer ${process.env.NVIDIA_API_KEY || ''}` }
+                    headers: { 'Authorization': `Bearer ${providerResolved.apiKey || ''}` },
+                    baseUrl: providerResolved.baseUrl
                 }, 'models.list');
                 const data = await response.json();
                 return sendJSON(res, response.ok ? 200 : response.status, data);
@@ -1902,6 +2124,11 @@ const server = http.createServer(async (req, res) => {
             if (req.url === '/api/workspace') return sendJSON(res, 200, { path: currentWorkspace });
             if (req.url === '/api/trust') return sendJSON(res, 200, getWorkspaceTrustStatus());
             if (req.url === '/api/profile') return sendJSON(res, 200, loadProfile());
+            if (req.url === '/api/settings') return sendJSON(res, 200, getSettingsPayload());
+            if (req.url === '/api/providers') {
+                const payload = getSettingsPayload();
+                return sendJSON(res, 200, { ok: true, providers: payload.providers, warnings: payload.warnings });
+            }
             if (req.url === '/api/pending_edits') return sendJSON(res, 200, { edits: workspaceCore.listPendingEditsTool() });
             if (req.url === '/api/command_jobs') return sendJSON(res, 200, { jobs: workspaceCore.commandJobStatusTool({}) });
             if (req.url === '/api/tools') return sendJSON(res, 200, { tools: getAgentTools() });
@@ -1990,6 +2217,145 @@ const server = http.createServer(async (req, res) => {
                 return sendJSON(res, 400, { error: 'Invalid uiMode. Use enterprise or ide.' });
             }
             return sendJSON(res, 200, saveProfile(body));
+        }
+
+        if (req.url === '/api/settings') {
+            try {
+                ensureIdeMutationAllowed(req);
+                const body = await getBody(req);
+                const state = loadProviderState();
+                const requestedDefaultProviderId = body?.settings?.defaultProviderId || body?.defaultProviderId || state.defaultProviderId;
+                const requestedDefaultModel = String(body?.settings?.defaultModel || '').trim().slice(0, MAX_PROVIDER_MODEL);
+                if (!PROVIDER_ID_RE.test(String(requestedDefaultProviderId || ''))) {
+                    return sendJSON(res, 400, { ok: false, error: 'Invalid defaultProviderId.' });
+                }
+                if (!state.providers.some(p => p.id === requestedDefaultProviderId)) {
+                    return sendJSON(res, 400, { ok: false, error: `Unknown default provider: ${requestedDefaultProviderId}` });
+                }
+                state.defaultProviderId = requestedDefaultProviderId;
+                if (requestedDefaultModel) {
+                    state.providers = state.providers.map(p => p.id === requestedDefaultProviderId ? { ...p, defaultModel: requestedDefaultModel } : p);
+                }
+                saveProviderState(state);
+                return sendJSON(res, 200, getSettingsPayload());
+            } catch (e) {
+                return sendJSON(res, 403, { ok: false, error: redactSecrets(e.message) });
+            }
+        }
+
+        if (req.url === '/api/providers') {
+            try {
+                ensureIdeMutationAllowed(req);
+                const body = await getBody(req);
+                const inputProvider = body.provider && typeof body.provider === 'object' ? body.provider : body;
+                const state = loadProviderState();
+                const existing = state.providers.find(p => p.id === String(inputProvider.id || '').toLowerCase()) || null;
+                const provider = normalizeProviderRecord(inputProvider, existing);
+                state.providers = state.providers.filter(p => p.id !== provider.id);
+                state.providers.push(provider);
+                if (state.providers.length > MAX_PROVIDER_RECORDS) {
+                    return sendJSON(res, 413, { ok: false, error: `Too many providers. Max ${MAX_PROVIDER_RECORDS}.` });
+                }
+                if (!state.defaultProviderId) state.defaultProviderId = 'nvidia';
+                saveProviderState(state);
+                return sendJSON(res, 200, { ok: true, provider: providerToClientRecord(provider), providers: state.providers.map(providerToClientRecord), warnings: [] });
+            } catch (e) {
+                return sendJSON(res, 400, { ok: false, error: redactSecrets(e.message) });
+            }
+        }
+
+        if (req.url === '/api/providers/default') {
+            try {
+                ensureIdeMutationAllowed(req);
+                const body = await getBody(req);
+                const providerId = normalizeProviderId(body.id || body.providerId);
+                const state = loadProviderState();
+                if (!state.providers.some(p => p.id === providerId)) {
+                    return sendJSON(res, 404, { ok: false, error: `Provider not found: ${providerId}` });
+                }
+                state.defaultProviderId = providerId;
+                saveProviderState(state);
+                return sendJSON(res, 200, { ok: true, settings: { defaultProviderId: providerId }, providers: state.providers.map(providerToClientRecord), warnings: [] });
+            } catch (e) {
+                return sendJSON(res, 400, { ok: false, error: redactSecrets(e.message) });
+            }
+        }
+
+        if (req.url === '/api/providers/clear_key') {
+            try {
+                ensureIdeMutationAllowed(req);
+                const body = await getBody(req);
+                const providerId = normalizeProviderId(body.id || body.providerId);
+                const state = loadProviderState();
+                let found = false;
+                state.providers = state.providers.map(p => {
+                    if (p.id !== providerId) return p;
+                    found = true;
+                    return { ...p, apiKey: '', lastTestStatus: 'untested', lastTestAt: nowIso(), lastTestMessage: 'API key cleared' };
+                });
+                if (!found) return sendJSON(res, 404, { ok: false, error: `Provider not found: ${providerId}` });
+                saveProviderState(state);
+                return sendJSON(res, 200, { ok: true, provider: providerToClientRecord(state.providers.find(p => p.id === providerId)), warnings: [] });
+            } catch (e) {
+                return sendJSON(res, 400, { ok: false, error: redactSecrets(e.message) });
+            }
+        }
+
+        if (req.url === '/api/providers/test') {
+            try {
+                ensureIdeMutationAllowed(req);
+                const body = await getBody(req);
+                const providerId = normalizeProviderId(body.id || body.providerId);
+                const state = loadProviderState();
+                const provider = state.providers.find(p => p.id === providerId);
+                if (!provider) return sendJSON(res, 404, { ok: false, error: `Provider not found: ${providerId}` });
+                const keyCandidate = body.apiKey !== undefined ? String(body.apiKey || '').trim() : (provider.apiKey || getProviderEnvValue(providerId, 'apiKey') || '');
+                let status = 'untested';
+                let message = 'Connection test is not implemented for this provider in Sprint 10.';
+                if (providerId === 'nvidia') {
+                    if (!keyCandidate) {
+                        status = 'failed';
+                        message = 'Missing API key for NVIDIA provider.';
+                    } else {
+                        const timeoutMs = Math.max(2000, Math.min(Number(body.timeoutMs) || 8000, 20000));
+                        const controller = new AbortController();
+                        const timer = setTimeout(() => controller.abort(), timeoutMs);
+                        try {
+                            const response = await fetchNim('/models', {
+                                method: 'GET',
+                                headers: { 'Authorization': `Bearer ${keyCandidate}` },
+                                baseUrl: provider.baseUrl || getProviderEnvValue('nvidia', 'baseUrl') || NIM_BASE_URL,
+                                signal: controller.signal
+                            }, 'provider.test.nvidia');
+                            status = response.ok ? 'ok' : 'failed';
+                            message = response.ok ? 'NVIDIA connection test passed.' : `NVIDIA connection test failed: HTTP ${response.status}`;
+                        } catch (e) {
+                            status = 'failed';
+                            message = `NVIDIA connection test failed: ${redactSecrets(e.message).slice(0, MAX_PROVIDER_MESSAGE)}`;
+                        } finally {
+                            clearTimeout(timer);
+                        }
+                    }
+                }
+                state.providers = state.providers.map(p => p.id === providerId ? {
+                    ...p,
+                    apiKey: body.saveKey === true && body.apiKey !== undefined ? String(body.apiKey || '').trim().slice(0, 400) : p.apiKey,
+                    lastTestStatus: status,
+                    lastTestAt: nowIso(),
+                    lastTestMessage: message
+                } : p);
+                saveProviderState(state);
+                const updated = state.providers.find(p => p.id === providerId);
+                return sendJSON(res, 200, {
+                    ok: status === 'ok',
+                    status,
+                    provider: providerToClientRecord(updated),
+                    warnings: status === 'untested' ? ['Provider test is not implemented for this provider in Sprint 10.'] : [],
+                    reason: status === 'untested' ? 'not implemented' : undefined
+                });
+            } catch (e) {
+                return sendJSON(res, 400, { ok: false, status: 'failed', error: redactSecrets(e.message), warnings: [] });
+            }
         }
 
         if (req.url === '/api/apply_pending_edit') {

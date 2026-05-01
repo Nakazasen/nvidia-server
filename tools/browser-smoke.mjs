@@ -435,6 +435,41 @@ async function runRealBrowserSmoke(url) {
       const indexOk = exists('#index-status') || exists('#index-query') || exists('#index-results');
       add('Index Engine UI exists or safely gated', indexOk, 'index selectors found', false);
 
+      const settingsEntryOk = exists('.activity-bar .activity-btn[title=\"Settings\"]') || exists('.activity-bar .activity-btn[onclick*=\"openSettings\"]');
+      add('Settings entry exists in IDE shell', settingsEntryOk, 'settings activity entry selector found', true);
+
+      let settingsOpenOk = false;
+      let providerSectionOk = false;
+      let apiKeyInputOk = false;
+      let enterpriseBlocksSettingsEdit = false;
+      try {
+        if (typeof window.openSettings === 'function') {
+          await window.openSettings();
+          await sleep(120);
+          settingsOpenOk = visible('#modal-overlay.active') && visible('#settings-container');
+          providerSectionOk = exists('#setting-default-provider') && exists('#settings-provider-list');
+          apiKeyInputOk = exists('#provider-key-input') || exists('#setting-api-key');
+          const denyBtn = document.getElementById('btn-deny');
+          if (denyBtn) denyBtn.click();
+          await sleep(100);
+        }
+        await window.setUIMode('enterprise', { persist: false });
+        await sleep(120);
+        const settingsButton = document.querySelector('.activity-bar .activity-btn[title=\"Settings\"]') || document.querySelector('.activity-bar .activity-btn[onclick*=\"openSettings\"]');
+        enterpriseBlocksSettingsEdit = !visible('.activity-bar') || !settingsButton || !visible('.activity-bar .activity-btn[title=\"Settings\"]');
+        await window.setUIMode('ide', { persist: false });
+        await sleep(80);
+      } catch {
+        settingsOpenOk = false;
+        providerSectionOk = false;
+        apiKeyInputOk = false;
+        enterpriseBlocksSettingsEdit = false;
+      }
+      add('Settings panel opens', settingsOpenOk, 'settings modal and container visible', true);
+      add('Settings provider section renders', providerSectionOk, 'default provider + provider list', true);
+      add('Settings API key input exists', apiKeyInputOk, 'provider key input selector found', true);
+      add('Enterprise mode hides settings mutation surface', enterpriseBlocksSettingsEdit, 'settings button hidden/blocked in enterprise mode', true);
+
       return { checks };
     });
 

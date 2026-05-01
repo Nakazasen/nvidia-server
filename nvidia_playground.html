@@ -1938,32 +1938,11 @@
                     style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); cursor: pointer; opacity: 0.7; font-size: 1.2rem;"
                     title="Choose file/folder">[EXP]</span>
             </div>
-            <div id="settings-container" style="display:none; text-align: left; margin-bottom: 20px;">
-                <div style="margin-bottom:15px;">
-                    <label style="font-size:0.75rem; opacity:0.6; display:block; margin-bottom:5px;">NVIDIA API
-                        KEY</label>
-                    <input type="password" id="setting-api-key" placeholder="nvapi-..."
-                        style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
-                </div>
-                <div style="margin-bottom:15px;">
-                    <label style="font-size:0.75rem; opacity:0.6; display:block; margin-bottom:5px;">NVIDIA BASE
-                        URL</label>
-                    <input type="text" id="setting-base-url" placeholder="https://integrate.api.nvidia.com/v1"
-                        style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
-                </div>
-                <div style="margin-bottom:15px;">
-                    <label style="font-size:0.75rem; opacity:0.6; display:block; margin-bottom:5px;">THEME</label>
-                    <select
-                        style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
-                        <option>NVIDIA Dark (Default)</option>
-                        <option>Midnight Blue</option>
-                        <option>Matrix Green</option>
-                    </select>
-                </div>
-                <div style="margin-bottom:15px;">
+            <div id="settings-container" style="display:none; text-align:left; margin-bottom:20px; max-height:55vh; overflow-y:auto; border:1px solid #2b3647; border-radius:8px; padding:12px;">
+                <div style="font-size:0.75rem; opacity:0.7; margin-bottom:10px;">Sprint 10: Settings / Provider Manager / API Key UI</div>
+                <div style="margin-bottom:12px;">
                     <label style="font-size:0.75rem; opacity:0.6; display:block; margin-bottom:5px;">UI MODE</label>
-                    <select id="setting-ui-mode"
-                        style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                    <select id="setting-ui-mode" style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
                         <option value="enterprise">Enterprise</option>
                         <option value="ide">IDE</option>
                     </select>
@@ -1973,6 +1952,36 @@
                         <input type="checkbox" id="setting-trust-workspace"> Trust this workspace for file edits and commands
                     </label>
                 </div>
+                <div style="margin:10px 0; border-top:1px solid #333;"></div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.75rem; opacity:0.6; display:block; margin-bottom:5px;">Default Provider</label>
+                    <select id="setting-default-provider" style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;"></select>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.75rem; opacity:0.6; display:block; margin-bottom:5px;">Default Model</label>
+                    <input id="setting-default-model" type="text" placeholder="e.g. meta/llama-3.1-405b-instruct" style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                </div>
+                <div id="provider-status-note" style="font-size:0.75rem; opacity:0.75; margin-bottom:10px;">Provider status loading...</div>
+                <div id="settings-provider-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;"></div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+                    <input id="provider-id-input" type="text" placeholder="provider id (nvidia/openai/...)" style="background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                    <input id="provider-label-input" type="text" placeholder="label" style="background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+                    <input id="provider-type-input" type="text" placeholder="type" style="background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                    <input id="provider-baseurl-input" type="text" placeholder="base URL" style="background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+                    <input id="provider-model-input" type="text" placeholder="default model" style="background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                    <input id="provider-key-input" type="password" placeholder="API key (local runtime storage)" style="background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                </div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                    <button class="btn-small" onclick="saveProviderFromSettings()">Save Provider</button>
+                    <button class="btn-small" onclick="testProviderFromSettings()">Test Connection</button>
+                    <button class="btn-small" onclick="clearProviderKeyFromSettings()">Clear Key</button>
+                    <button class="btn-small" onclick="resetSettingsForm()">Reset Form</button>
+                </div>
+                <div id="settings-warning-box" style="font-size:0.74rem; color:#ffd166; line-height:1.35;"></div>
             </div>
             <div class="btn-group">
                 <button id="btn-allow" class="btn" style="background:var(--primary); color:#000;">Confirm</button>
@@ -2883,28 +2892,201 @@
         }
 
         const slashMenu = document.getElementById('slash-menu');
+        function findProviderById(providerId) {
+            return (providerSettings.providers || []).find(p => p.id === providerId) || null;
+        }
+
+        function updateSettingsWarningBox(lines = []) {
+            const box = document.getElementById('settings-warning-box');
+            if (!box) return;
+            const list = Array.isArray(lines) ? lines.filter(Boolean) : [];
+            box.innerHTML = list.length
+                ? list.map(line => `<div>- ${escapeHtml(String(line))}</div>`).join('')
+                : '';
+        }
+
+        function renderProviderCards() {
+            const listEl = document.getElementById('settings-provider-list');
+            if (!listEl) return;
+            const providers = providerSettings.providers || [];
+            if (!providers.length) {
+                listEl.innerHTML = '<div style="opacity:0.5;">No providers configured.</div>';
+                return;
+            }
+            listEl.innerHTML = providers.map(provider => {
+                const active = provider.id === activeSettingsProviderId;
+                const defaultFlag = provider.id === providerSettings.settings?.defaultProviderId ? 'default' : '';
+                const status = provider.lastTestStatus || 'untested';
+                const statusColor = status === 'ok' ? '#4caf50' : status === 'failed' ? '#ff5555' : '#f5b942';
+                return `
+                    <div data-provider-id="${escapeHtml(provider.id)}" onclick="selectSettingsProvider('${escapeHtml(provider.id)}')" style="cursor:pointer; border:1px solid ${active ? 'var(--primary)' : '#333'}; border-radius:6px; padding:8px; background:${active ? 'rgba(var(--primary-rgb),0.08)' : '#0f141b'};">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                            <strong>${escapeHtml(provider.label || provider.id)}</strong>
+                            <span style="font-size:0.7rem; color:${statusColor};">${escapeHtml(status)}</span>
+                        </div>
+                        <div style="font-size:0.72rem; opacity:0.75; margin-top:4px;">
+                            id=${escapeHtml(provider.id)} | type=${escapeHtml(provider.type || '')} | ${defaultFlag || 'secondary'}
+                        </div>
+                        <div style="font-size:0.72rem; opacity:0.75;">hasApiKey=${provider.hasApiKey === true ? 'true' : 'false'} ${provider.apiKeyPreview ? `(${escapeHtml(provider.apiKeyPreview)})` : ''}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function selectSettingsProvider(providerId) {
+            activeSettingsProviderId = providerId;
+            const provider = findProviderById(providerId);
+            document.getElementById('provider-id-input').value = provider?.id || providerId;
+            document.getElementById('provider-label-input').value = provider?.label || '';
+            document.getElementById('provider-type-input').value = provider?.type || providerId;
+            document.getElementById('provider-baseurl-input').value = provider?.baseUrl || '';
+            document.getElementById('provider-model-input').value = provider?.defaultModel || '';
+            document.getElementById('provider-key-input').value = '';
+            renderProviderCards();
+        }
+
+        function resetSettingsForm() {
+            const defId = providerSettings.settings?.defaultProviderId || 'nvidia';
+            selectSettingsProvider(defId);
+            document.getElementById('setting-default-model').value = findProviderById(defId)?.defaultModel || '';
+            updateSettingsWarningBox(providerSettings.warnings || []);
+        }
+
+        async function loadSettingsPayload() {
+            const payload = await fetchJsonOrThrow('/api/settings');
+            providerSettings = payload || { settings: {}, providers: [], warnings: [] };
+            const defaultProviderSelect = document.getElementById('setting-default-provider');
+            if (defaultProviderSelect) {
+                const providers = providerSettings.providers || [];
+                defaultProviderSelect.innerHTML = providers.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label || p.id)}</option>`).join('');
+                defaultProviderSelect.value = providerSettings.settings?.defaultProviderId || (providers[0]?.id || 'nvidia');
+            }
+            const defaultProviderId = providerSettings.settings?.defaultProviderId || 'nvidia';
+            activeSettingsProviderId = defaultProviderId;
+            document.getElementById('setting-default-model').value = findProviderById(defaultProviderId)?.defaultModel || '';
+            document.getElementById('provider-status-note').innerText = `Secret storage: ${providerSettings.settings?.secretStorage || 'local runtime state'}`;
+            renderProviderCards();
+            selectSettingsProvider(activeSettingsProviderId);
+            updateSettingsWarningBox(providerSettings.warnings || []);
+        }
+
+        async function saveSettingsRoot() {
+            const defaultProviderId = document.getElementById('setting-default-provider').value || 'nvidia';
+            const defaultModel = document.getElementById('setting-default-model').value || '';
+            const data = await fetchJsonOrThrow('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                body: JSON.stringify({
+                    settings: {
+                        defaultProviderId,
+                        defaultModel
+                    }
+                })
+            });
+            providerSettings = data;
+            activeSettingsProviderId = defaultProviderId;
+        }
+
+        async function saveProviderFromSettings() {
+            if (!guardIdeOnlyAction('Provider settings edit')) return;
+            try {
+                const payload = {
+                    provider: {
+                        id: document.getElementById('provider-id-input').value.trim().toLowerCase(),
+                        label: document.getElementById('provider-label-input').value.trim(),
+                        type: document.getElementById('provider-type-input').value.trim().toLowerCase(),
+                        baseUrl: document.getElementById('provider-baseurl-input').value.trim(),
+                        defaultModel: document.getElementById('provider-model-input').value.trim(),
+                        apiKey: document.getElementById('provider-key-input').value.trim(),
+                        enabled: true
+                    }
+                };
+                const data = await fetchJsonOrThrow('/api/providers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify(payload)
+                });
+                providerSettings.providers = data.providers || providerSettings.providers;
+                document.getElementById('provider-key-input').value = '';
+                renderProviderCards();
+                selectSettingsProvider(payload.provider.id);
+                updateSettingsWarningBox(['Provider saved. API key is masked and never shown back.']);
+            } catch (e) {
+                updateSettingsWarningBox([`Save failed: ${e.message}`]);
+            }
+        }
+
+        async function testProviderFromSettings() {
+            if (!guardIdeOnlyAction('Provider connection test')) return;
+            try {
+                const providerId = (document.getElementById('provider-id-input').value || activeSettingsProviderId || '').trim().toLowerCase();
+                const apiKey = document.getElementById('provider-key-input').value.trim();
+                const data = await fetchJsonOrThrow('/api/providers/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ id: providerId, apiKey, saveKey: apiKey.length > 0, timeoutMs: 8000 })
+                });
+                await loadSettingsPayload();
+                updateSettingsWarningBox([`Test status: ${data.status || 'unknown'}`, data.reason || data.provider?.message || '']);
+            } catch (e) {
+                updateSettingsWarningBox([`Test failed: ${e.message}`]);
+            }
+        }
+
+        async function clearProviderKeyFromSettings() {
+            if (!guardIdeOnlyAction('Clear provider key')) return;
+            try {
+                const providerId = (document.getElementById('provider-id-input').value || activeSettingsProviderId || '').trim().toLowerCase();
+                await fetchJsonOrThrow('/api/providers/clear_key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ id: providerId })
+                });
+                document.getElementById('provider-key-input').value = '';
+                await loadSettingsPayload();
+                updateSettingsWarningBox(['API key cleared for selected provider.']);
+            } catch (e) {
+                updateSettingsWarningBox([`Clear key failed: ${e.message}`]);
+            }
+        }
+
         function openSettings() {
             const modal = document.getElementById('modal-overlay');
             if (!modal) return;
-
             document.getElementById('modal-title').innerText = "System Settings";
-            document.getElementById('modal-desc').innerText = "Configure local NVIDIA Agent settings.";
+            document.getElementById('modal-desc').innerText = "Configure local provider/runtime settings. API keys are masked after save.";
             document.getElementById('modal-input-container').style.display = 'none';
-
-            // Ensure settings container exists
-            let settingsCont = document.getElementById('settings-container');
+            const settingsCont = document.getElementById('settings-container');
             if (settingsCont) settingsCont.style.display = 'block';
             const modeInput = document.getElementById('setting-ui-mode');
             if (modeInput) modeInput.value = uiMode;
-
             modal.classList.add('active');
 
+            loadSettingsPayload().catch(err => updateSettingsWarningBox([`Load settings failed: ${err.message}`]));
+
+            document.getElementById('setting-default-provider').onchange = (ev) => {
+                const nextId = ev.target.value;
+                activeSettingsProviderId = nextId;
+                const current = findProviderById(nextId);
+                document.getElementById('setting-default-model').value = current?.defaultModel || '';
+                renderProviderCards();
+            };
+
             document.getElementById('btn-allow').onclick = async () => {
-                modal.classList.remove('active');
-                if (settingsCont) settingsCont.style.display = 'none';
                 await setWorkspaceTrustFromSettings();
                 if (modeInput) await setUIMode(modeInput.value, { persist: true });
-                logDebug(" lu ci t m.");
+                if (isIdeMode()) {
+                    try {
+                        await saveSettingsRoot();
+                    } catch (e) {
+                        updateSettingsWarningBox([`Save settings failed: ${e.message}`]);
+                    }
+                } else {
+                    updateSettingsWarningBox(['Provider/API key mutation is IDE-mode only.']);
+                }
+                modal.classList.remove('active');
+                if (settingsCont) settingsCont.style.display = 'none';
+                logDebug("Settings saved.");
             };
             document.getElementById('btn-deny').onclick = () => {
                 modal.classList.remove('active');
@@ -2921,6 +3103,8 @@
         let extensionAgentProviders = [];
         let selectedExtensionId = null;
         let extensionSearchTimer = null;
+        let providerSettings = { settings: {}, providers: [], warnings: [] };
+        let activeSettingsProviderId = 'nvidia';
 
         function normalizeExtensionForUi(ext) {
             const fallbackId = [ext.namespace || ext.publisher || 'local', ext.extension || ext.name || ext.displayName || 'extension'].join('.');
