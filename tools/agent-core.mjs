@@ -14,7 +14,12 @@ export function createWorkspaceCore({
   const trustFile = path.join(stateDir, 'trusted-workspaces.json');
   const pendingEdits = new Map();
   const commandJobs = new Map();
+  const indexDir = path.join(stateDir, 'index');
+  const indexMetaPath = path.join(indexDir, 'index-meta.json');
+  const indexFilesPath = path.join(indexDir, 'index-files.json');
+  const indexChunksPath = path.join(indexDir, 'index-chunks.json');
   fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(indexDir, { recursive: true });
 
   function setWorkspace(nextWorkspace) {
     currentWorkspace = path.resolve(nextWorkspace);
@@ -65,6 +70,256 @@ export function createWorkspaceCore({
 
   function shouldSkipDir(name) {
     return new Set(['node_modules', '.git', 'dist', 'build', '.brain', '.nvidia-agent', '.next', 'coverage', '.venv', '__pycache__']).has(name);
+  }
+
+  function detectLanguage(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    const map = {
+      '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript', '.jsx': 'javascript',
+      '.ts': 'typescript', '.tsx': 'typescript', '.py': 'python', '.md': 'markdown',
+      '.json': 'json', '.html': 'html', '.css': 'css', '.yml': 'yaml', '.yaml': 'yaml',
+      '.sh': 'shell', '.ps1': 'powershell', '.go': 'go', '.rs': 'rust', '.java': 'java',
+      '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.hpp': 'cpp', '.cs': 'csharp', '.sql': 'sql'
+    };
+    return map[ext] || (path.basename(filePath).toLowerCase() === 'readme.md' ? 'markdown' : 'text');
+  }
+
+  function shouldSkipIndexFile(file) {
+    if (!file || !file.path) return true;
+    if (!isLikelyTextFile(file.path)) return true;
+    if (file.size > 1024 * 1024) return true;
+    const lower = file.relPath.toLowerCase();
+    if (lower.includes('.nvidia-agent\\') || lower.includes('.nvidia-agent/')) return true;
+    if (lower.endsWith('.lock') || lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.gif') || lower.endsWith('.pdf') || lower.endsWith('.zip') || lower.endsWith('.vsix')) return true;
+    return false;
+  }
+
+  function tokenize(text = '') {
+    return String(text)
+      .toLowerCase()
+      .split(/[^a-z0-9_.$-]+/)
+      .filter(Boolean)
+      .slice(0, 5000);
+  }
+
+  function buildTokenFreq(tokens = []) {
+    const freq = {};
+    for (const token of tokens) {
+      freq[token] = (freq[token] || 0) + 1;
+      if (Object.keys(freq).length > 160) break;
+    }
+    return freq;
+  }
+
+  function makeChunks(relPath, content, chunkSize = 60, overlap = 10) {
+    const lines = String(content || '').split(/\r?\n/);
+    const chunks = [];
+    let start = 0;
+    while (start < lines.length) {
+      const end = Math.min(lines.length, start + chunkSize);
+      const text = lines.slice(start, end).join('\n');
+      const tokens = tokenize(text);
+      chunks.push({
+        id: `${relPath}:${start + 1}-${end}`,
+        relPath,
+        startLine: start + 1,
+        endLine: end,
+        preview: truncate(text, 300),
+        tokenFreq: buildTokenFreq(tokens)
+      });
+      if (end >= lines.length) break;
+      start = Math.max(start + 1, end - overlap);
+    }
+    return chunks;
+  }
+
+  function loadIndexCache() {
+    try {
+      if (!fs.existsSync(indexMetaPath) || !fs.existsSync(indexFilesPath) || !fs.existsSync(indexChunksPath)) {
+        return null;
+      }
+      const meta = JSON.parse(fs.readFileSync(indexMetaPath, 'utf8'));
+      const files = JSON.parse(fs.readFileSync(indexFilesPath, 'utf8'));
+      const chunks = JSON.parse(fs.readFileSync(indexChunksPath, 'utf8'));
+      return { meta, files, chunks };
+    } catch {
+      return null;
+    }
+  }
+
+  function saveIndexCache(meta, files, chunks) {
+    fs.mkdirSync(indexDir, { recursive: true });
+    fs.writeFileSync(indexMetaPath, JSON.stringify(meta, null, 2));
+    fs.writeFileSync(indexFilesPath, JSON.stringify(files, null, 2));
+    fs.writeFileSync(indexChunksPath, JSON.stringify(chunks, null, 2));
+  }
+
+  function getGitChangedFilesSet() {
+    return new Promise(resolve => {
+      exec('git status --short', { cwd: currentWorkspace, timeout: 10000, windowsHide: true }, (err, stdout) => {
+        if (err) return resolve(new Set());
+        const set = new Set();
+        String(stdout || '').split(/\r?\n/).forEach(line => {
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          const rel = trimmed.slice(3).trim();
+          if (rel) set.add(rel.replace(/\\/g, '/'));
+        });
+        resolve(set);
+      });
+    });
+  }
+
+  async function buildIndexCache({ maxFiles = 1200, full = true } = {}) {
+    const start = Date.now();
+    const allFiles = getFilesFlat(currentWorkspace);
+    const eligibleFiles = allFiles.filter(f => !shouldSkipIndexFile(f));
+    const filesFlat = eligibleFiles.slice(0, Math.max(1, Math.min(Number(maxFiles) || 1200, 4000)));
+    const previous = loadIndexCache();
+    const previousFiles = new Map((previous?.files || []).map(item => [item.relPath, item]));
+    const nextFiles = [];
+    const nextChunks = [];
+    const warnings = [];
+    let skippedFiles = Math.max(0, allFiles.length - filesFlat.length);
+
+    for (const file of filesFlat) {
+      const stat = fs.statSync(file.path);
+      const relPath = file.relPath.replace(/\\/g, '/');
+      const signature = `${stat.size}:${Math.floor(stat.mtimeMs)}`;
+      const prev = previousFiles.get(relPath);
+      if (!full && prev && prev.signature === signature && Array.isArray(prev.chunkIds)) {
+        nextFiles.push(prev);
+        if (Array.isArray(previous?.chunks)) {
+          const idSet = new Set(prev.chunkIds);
+          previous.chunks.forEach(chunk => { if (idSet.has(chunk.id)) nextChunks.push(chunk); });
+        }
+        continue;
+      }
+      try {
+        const content = redactSecrets(fs.readFileSync(file.path, 'utf8'));
+        const chunkItems = makeChunks(relPath, content);
+        nextChunks.push(...chunkItems);
+        nextFiles.push({
+          relPath,
+          size: stat.size,
+          mtimeMs: Math.floor(stat.mtimeMs),
+          signature,
+          language: detectLanguage(file.path),
+          hash: stat.size <= 512 * 1024 ? fileHash(file.path) : null,
+          chunkIds: chunkItems.map(c => c.id)
+        });
+      } catch {
+        skippedFiles += 1;
+      }
+    }
+
+    const meta = {
+      version: 1,
+      workspace: currentWorkspace,
+      lastIndexedAt: new Date().toISOString(),
+      scannedFiles: allFiles.length,
+      eligibleFiles: eligibleFiles.length,
+      indexedFiles: nextFiles.length,
+      chunks: nextChunks.length,
+      skippedFiles,
+      durationMs: Date.now() - start,
+      warnings
+    };
+    saveIndexCache(meta, nextFiles, nextChunks);
+    return { ok: true, status: 'ready', ...meta, errors: [] };
+  }
+
+  async function refreshIndexCache({ maxFiles = 1200 } = {}) {
+    return buildIndexCache({ maxFiles, full: false });
+  }
+
+  function indexStatusTool() {
+    const cache = loadIndexCache();
+    if (!cache) {
+      return {
+        ok: true,
+        status: 'missing',
+        workspace: currentWorkspace,
+        indexedFiles: 0,
+        chunks: 0,
+        skippedFiles: 0,
+        durationMs: 0,
+        warnings: ['Index cache not built yet.'],
+        errors: []
+      };
+    }
+    return {
+      ok: true,
+      status: 'ready',
+      workspace: currentWorkspace,
+      indexedFiles: Number(cache.meta?.indexedFiles || cache.files.length || 0),
+      chunks: Number(cache.meta?.chunks || cache.chunks.length || 0),
+      skippedFiles: Number(cache.meta?.skippedFiles || 0),
+      durationMs: Number(cache.meta?.durationMs || 0),
+      lastIndexedAt: cache.meta?.lastIndexedAt || null,
+      warnings: Array.isArray(cache.meta?.warnings) ? cache.meta.warnings : [],
+      errors: []
+    };
+  }
+
+  async function searchIndexCache({ query = '', limit = 20, recentFiles = [], maxFiles = 1200 } = {}) {
+    const searchTerms = tokenize(query);
+    if (!searchTerms.length) {
+      return { ok: true, status: 'ready', query, results: [], indexedFiles: 0, chunks: 0, skippedFiles: 0, durationMs: 0, warnings: [], errors: [] };
+    }
+    let cache = loadIndexCache();
+    if (!cache) {
+      await buildIndexCache({ maxFiles, full: true });
+      cache = loadIndexCache();
+    }
+    if (!cache) throw new Error('Index cache is unavailable after build.');
+    const start = Date.now();
+    const recentSet = new Set((Array.isArray(recentFiles) ? recentFiles : []).map(v => String(v).replace(/\\/g, '/')));
+    const changedSet = await getGitChangedFilesSet();
+    const results = [];
+    const fileMap = new Map(cache.files.map(f => [f.relPath, f]));
+
+    for (const chunk of cache.chunks) {
+      const tokenFreq = chunk.tokenFreq || {};
+      const relPath = chunk.relPath;
+      const lowerPath = relPath.toLowerCase();
+      let lexicalScore = 0;
+      let pathScore = 0;
+      for (const term of searchTerms) {
+        lexicalScore += Number(tokenFreq[term] || 0);
+        if (lowerPath.includes(term)) pathScore += 2;
+      }
+      if (lexicalScore <= 0 && pathScore <= 0) continue;
+      const file = fileMap.get(relPath);
+      const recentBonus = recentSet.has(relPath) ? 1.5 : 0;
+      const gitBonus = changedSet.has(relPath) ? 1.2 : 0;
+      const exactBonus = searchTerms.some(term => lowerPath === term || path.basename(lowerPath) === term) ? 1.0 : 0;
+      const score = lexicalScore * 2 + pathScore + recentBonus + gitBonus + exactBonus;
+      results.push({
+        file: relPath,
+        path: path.join(currentWorkspace, relPath),
+        score: Number(score.toFixed(3)),
+        snippet: chunk.preview,
+        startLine: chunk.startLine,
+        endLine: chunk.endLine,
+        language: file?.language || 'text'
+      });
+    }
+    results.sort((a, b) => b.score - a.score);
+    return {
+      ok: true,
+      status: 'ready',
+      query,
+      indexedFiles: cache.files.length,
+      chunks: cache.chunks.length,
+      skippedFiles: Number(cache.meta?.skippedFiles || 0),
+      durationMs: Date.now() - start,
+      warnings: [],
+      errors: [],
+      provider: 'lexical',
+      fallback: 'lexical-offline',
+      results: results.slice(0, Math.max(1, Math.min(Number(limit) || 20, 100)))
+    };
   }
 
   function getFilesFlat(dir = currentWorkspace, baseDir = '') {
@@ -252,35 +507,9 @@ export function createWorkspaceCore({
     return summary;
   }
 
-  function semanticIndexTool({ query = '', limit = 20, maxFiles = 400 } = {}) {
-    const textFiles = getFilesFlat(currentWorkspace)
-      .filter(f => isLikelyTextFile(f.path))
-      .slice(0, Math.max(1, Math.min(Number(maxFiles) || 400, 2000)));
-    const terms = String(query || '').toLowerCase().split(/[^a-z0-9_.$-]+/).filter(Boolean);
-    const chunks = [];
-    for (const file of textFiles) {
-      try {
-        const lines = redactSecrets(fs.readFileSync(file.path, 'utf8')).split(/\r?\n/);
-        for (let i = 0; i < lines.length; i += 80) {
-          const text = lines.slice(i, i + 80).join('\n');
-          const lower = text.toLowerCase();
-          const score = terms.length ? terms.reduce((sum, term) => sum + (lower.includes(term) ? 1 : 0), 0) : 0;
-          if (!terms.length || score > 0) {
-            chunks.push({
-              file: path.relative(currentWorkspace, file.path),
-              path: file.path,
-              startLine: i + 1,
-              endLine: Math.min(lines.length, i + 80),
-              score,
-              preview: truncate(text, 1200)
-            });
-          }
-        }
-      } catch {
-        // Ignore unreadable files.
-      }
-    }
-    return chunks.sort((a, b) => b.score - a.score).slice(0, Math.max(1, Math.min(Number(limit) || 20, 100)));
+  async function semanticIndexTool({ query = '', limit = 20, maxFiles = 1200, recentFiles = [] } = {}) {
+    const result = await searchIndexCache({ query, limit, maxFiles, recentFiles });
+    return result.results || [];
   }
 
   function gitContextTool({ includeDiff = true, includeLog = true } = {}) {
@@ -433,6 +662,10 @@ export function createWorkspaceCore({
   async function callTool(name, args = {}) {
     if (name === 'project_indexer') return projectIndexerTool(args);
     if (name === 'semantic_index') return semanticIndexTool(args);
+    if (name === 'index_status') return indexStatusTool(args);
+    if (name === 'index_build') return buildIndexCache(args);
+    if (name === 'index_refresh') return refreshIndexCache(args);
+    if (name === 'index_search') return searchIndexCache(args);
     if (name === 'git_context') return gitContextTool(args);
     if (name === 'list_dir') return listDirTool(args);
     if (name === 'read_file') return readFileTool(args);
@@ -455,7 +688,7 @@ export function createWorkspaceCore({
     resolveWorkspacePath, isLikelyTextFile, shouldSkipDir, getFilesFlat, getFileTree,
     isWorkspaceTrusted, setWorkspaceTrust, getWorkspaceTrustStatus,
     fileHash, makeUnifiedDiff, makeLineHunks, readFileTool, readFilePagedTool, listDirTool, searchFiles,
-    projectIndexerTool, semanticIndexTool, gitContextTool, createPendingEdit, applyPatchTool, applyPendingEditTool, discardPendingEditTool,
+    projectIndexerTool, semanticIndexTool, indexStatusTool, buildIndexCache, refreshIndexCache, searchIndexCache, gitContextTool, createPendingEdit, applyPatchTool, applyPendingEditTool, discardPendingEditTool,
     listPendingEditsTool, executeCommandTool, startCommandJobTool, commandJobStatusTool,
     cancelCommandJobTool, callTool
   };

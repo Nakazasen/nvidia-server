@@ -1694,6 +1694,22 @@
             <div style="opacity: 0.3; text-align: center; padding: 10px;">No recent files.</div>
         </div>
 
+        <div class="mode-ide-only">
+            <div class="sidebar-section-title">Index Engine</div>
+            <div style="display:flex; gap:6px; margin-bottom:8px;">
+                <button class="btn-small" onclick="buildSemanticIndex()">Rebuild</button>
+                <button class="btn-small" onclick="refreshSemanticIndex()">Refresh</button>
+            </div>
+            <div id="index-status" style="font-size:0.72rem; opacity:0.75; margin-bottom:8px;">Index: unknown</div>
+            <div style="display:flex; gap:6px; margin-bottom:8px;">
+                <input id="index-query" type="text" placeholder="Search index..." style="flex:1; background:#0f141b; color:#fff; border:1px solid #2b3647; border-radius:6px; padding:6px 8px; font-size:0.75rem;" />
+                <button class="btn-small" onclick="searchSemanticIndex()">Search</button>
+            </div>
+            <div id="index-results" class="recent-files">
+                <div style="opacity:0.45; text-align:center; padding:8px;">No index results.</div>
+            </div>
+        </div>
+
         <div class="sidebar-section-title">Sessions</div>
         <button onclick="createNewSession()"
             style="width:100%; padding:10px; background:rgba(var(--primary-rgb), 0.1); color:var(--primary); border:1px solid var(--primary); border-radius:8px; cursor:pointer; font-weight:bold; margin-bottom:15px; font-size: 0.8rem;">+
@@ -1990,6 +2006,7 @@
         let editorTabs = [];
         let activeEditorTabPath = null;
         let isSwitchingEditorModel = false;
+        let lastIndexStatus = null;
         const RECENT_FILES_STORAGE_KEY = 'nvidia.recentFiles.v1';
         let editingMessageIndex = null;
         let currentAgentController = null;
@@ -2079,6 +2096,7 @@
                 localStorage.setItem(UI_MODE_STORAGE_KEY, nextMode);
                 await saveProfileMode(nextMode);
             }
+            if (nextMode === 'ide') await loadIndexStatus();
             logDebug(`UI mode: ${nextMode}`);
         }
 
@@ -2759,7 +2777,7 @@
                                 updateTaskTimeline({ type: 'plan', label: 'Plan Updated', steps: args.steps });
                                 result = "Plan updated.";
                             } else {
-                                const readOnlyTools = new Set(['project_indexer', 'semantic_index', 'git_context', 'list_dir', 'read_file', 'read_file_paged', 'search', 'search_files', 'pending_edits', 'command_job_status']);
+                                const readOnlyTools = new Set(['project_indexer', 'semantic_index', 'index_status', 'index_search', 'git_context', 'list_dir', 'read_file', 'read_file_paged', 'search', 'search_files', 'pending_edits', 'command_job_status']);
                                 if (!readOnlyTools.has(name) && !isIdeMode()) {
                                     result = JSON.stringify({ ok: false, denied: true, error: `${name} is only available in IDE mode.` });
                                 } else if (readOnlyTools.has(name) || (isIdeMode() && autoAcceptCheck.checked) || await askPermission(name, args)) {
@@ -3894,6 +3912,119 @@
             await openCodeViewer(filePath, name || basename(filePath));
         }
 
+        function renderIndexStatus(status) {
+            lastIndexStatus = status || null;
+            const node = document.getElementById('index-status');
+            if (!node) return;
+            if (!status) {
+                node.innerText = 'Index: unavailable';
+                return;
+            }
+            const ts = status.lastIndexedAt ? new Date(status.lastIndexedAt).toLocaleTimeString() : 'never';
+            node.innerText = `Index: ${status.status} | files ${status.indexedFiles || 0} | chunks ${status.chunks || 0} | updated ${ts}`;
+        }
+
+        function renderIndexResults(payload) {
+            const node = document.getElementById('index-results');
+            if (!node) return;
+            const results = Array.isArray(payload?.results) ? payload.results : [];
+            if (!results.length) {
+                node.innerHTML = '<div style="opacity:0.45; text-align:center; padding:8px;">No index results.</div>';
+                return;
+            }
+            node.innerHTML = results.map(item => `
+                <div class="file-item file" data-path="${escapeHtml(item.path || item.file || '')}" data-name="${escapeHtml(basename(item.file || item.path || 'result'))}" data-file="${escapeHtml(item.file || '')}" data-snippet="${escapeHtml(item.snippet || '')}" data-score="${escapeHtml(String(item.score || 0))}">
+                    <span class="icon">IDX</span>
+                    <div style="display:flex; flex-direction:column; min-width:0; flex:1;">
+                        <span style="font-size:0.75rem; color:#d8deea; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(item.file || item.path || '')}</span>
+                        <span style="font-size:0.68rem; opacity:0.7;">score ${escapeHtml(String(item.score || 0))} | L${escapeHtml(String(item.startLine || 1))}-${escapeHtml(String(item.endLine || 1))}</span>
+                        <span style="font-size:0.68rem; opacity:0.72; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(item.snippet || '')}</span>
+                    </div>
+                    <button class="btn-small" onclick="event.stopPropagation(); attachIndexResult(this.parentElement.dataset.file, this.parentElement.dataset.snippet, this.parentElement.dataset.score)">Attach</button>
+                </div>
+            `).join('');
+            node.querySelectorAll('.file-item').forEach(el => {
+                el.onclick = () => openCodeViewer(el.dataset.path, basename(el.dataset.file || el.dataset.path || 'result'));
+            });
+        }
+
+        async function loadIndexStatus() {
+            if (!isIdeMode()) return;
+            try {
+                const data = await fetchJsonOrThrow('/api/index/status');
+                renderIndexStatus(data);
+            } catch (e) {
+                renderIndexStatus(null);
+                logDebug(`Index status failed: ${e.message}`);
+            }
+        }
+
+        async function buildSemanticIndex() {
+            if (!guardIdeOnlyAction('Index rebuild')) return;
+            try {
+                const data = await fetchJsonOrThrow('/api/index/build', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ maxFiles: 1200 })
+                });
+                renderIndexStatus(data);
+                logDebug(`Index rebuilt: files=${data.indexedFiles || 0} chunks=${data.chunks || 0}`);
+            } catch (e) {
+                alert(`Index rebuild failed: ${e.message}`);
+            }
+        }
+
+        async function refreshSemanticIndex() {
+            if (!guardIdeOnlyAction('Index refresh')) return;
+            try {
+                const data = await fetchJsonOrThrow('/api/index/refresh', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ maxFiles: 1200 })
+                });
+                renderIndexStatus(data);
+                logDebug(`Index refreshed: files=${data.indexedFiles || 0} chunks=${data.chunks || 0}`);
+            } catch (e) {
+                alert(`Index refresh failed: ${e.message}`);
+            }
+        }
+
+        async function searchSemanticIndex() {
+            if (!guardIdeOnlyAction('Index search')) return;
+            const input = document.getElementById('index-query');
+            const query = String(input?.value || '').trim();
+            if (!query) {
+                renderIndexResults({ results: [] });
+                return;
+            }
+            try {
+                const recent = loadRecentFiles();
+                const data = await fetchJsonOrThrow('/api/index_search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query, limit: 20, recentFiles: recent })
+                });
+                renderIndexResults(data.result || data);
+            } catch (e) {
+                alert(`Index search failed: ${e.message}`);
+            }
+        }
+
+        function attachIndexResult(file, snippet, score) {
+            if (!isIdeMode()) return;
+            const relPath = String(file || '').trim();
+            if (!relPath) return;
+            attachContext({
+                type: 'index',
+                cmd: '@index',
+                desc: `Index ${relPath} (score ${score || 0})`,
+                relPath,
+                path: relPath,
+                content: String(snippet || '').slice(0, 600)
+            });
+            renderAttachedContexts();
+        }
+
         function renderEditorTabs() {
             const tabs = document.getElementById('editor-tabs');
             if (!tabs) return;
@@ -4180,6 +4311,7 @@
                     await loadWorkspaceInfo();
                     await loadFileExplorer();
                     renderRecentFiles();
+                    await loadIndexStatus();
                     await loadWorkflows();
                 } else {
                     alert("Workspace switch failed: " + data.error);
@@ -4535,7 +4667,17 @@
                 await initializeUIMode();
                 await loadWorkflows();
                 await loadFileExplorer();
+                await loadIndexStatus();
                 await refreshModelStatus();
+                const indexInput = document.getElementById('index-query');
+                if (indexInput) {
+                    indexInput.addEventListener('keydown', (ev) => {
+                        if (ev.key === 'Enter') {
+                            ev.preventDefault();
+                            searchSemanticIndex();
+                        }
+                    });
+                }
 
                 if (!currentSessionId || !sessions[currentSessionId]) {
                     createNewSession();

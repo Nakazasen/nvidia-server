@@ -19,7 +19,7 @@ const HOST = process.env.HOST || process.env.NVIDIA_SERVER_HOST || '127.0.0.1';
 const STATE_DIR = path.join(APP_DIR, '.nvidia-agent');
 const TRUST_FILE = path.join(STATE_DIR, 'trusted-workspaces.json');
 const PROFILE_FILE = path.join(STATE_DIR, 'profile.json');
-const READ_ONLY_TOOLS = new Set(['project_indexer', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
+const READ_ONLY_TOOLS = new Set(['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
 const DESTRUCTIVE_TOOLS = new Set(['write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job']);
 
 let currentWorkspace = process.cwd();
@@ -858,6 +858,56 @@ function getAgentTools() {
         {
             type: 'function',
             function: {
+                name: 'index_status',
+                description: 'Get semantic index cache status and metadata.',
+                parameters: { type: 'object', properties: {} }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'index_build',
+                description: 'Build semantic index cache for workspace files using lexical offline indexing.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        maxFiles: { type: 'integer', minimum: 1, maximum: 4000 }
+                    }
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'index_refresh',
+                description: 'Refresh semantic index incrementally using file size/mtime signatures.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        maxFiles: { type: 'integer', minimum: 1, maximum: 4000 }
+                    }
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'index_search',
+                description: 'Search semantic index cache and return ranked snippets with file paths and scores.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        query: { type: 'string' },
+                        limit: { type: 'integer', minimum: 1, maximum: 100 },
+                        maxFiles: { type: 'integer', minimum: 1, maximum: 4000 }
+                    },
+                    required: ['query']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
                 name: 'git_context',
                 description: 'Read git branch/status/diff/log context for the current workspace.',
                 parameters: {
@@ -1073,7 +1123,7 @@ async function runToolCall(toolCall, options = {}) {
                 observation: 'Ask the user to enable Auto-Accept or approve the operation, then retry.'
             };
         }
-        if (['project_indexer', 'semantic_index', 'git_context', 'list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'search_files', 'search', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job'].includes(name)) {
+        if (['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'search_files', 'search', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job'].includes(name)) {
             return await workspaceCore.callTool(name, args);
         }
         if (name === 'load_skill') return await loadSkillTool(args);
@@ -1552,7 +1602,7 @@ async function probeModels(models, concurrency = 12, timeoutMs = 15000) {
 }
 
 async function routeApiTool(toolName, args) {
-    if (['list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'pending_edits', 'search', 'search_files', 'semantic_index', 'git_context', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job', 'project_indexer'].includes(toolName)) {
+    if (['list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'pending_edits', 'search', 'search_files', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job', 'project_indexer'].includes(toolName)) {
         const result = await workspaceCore.callTool(toolName, args);
         return toolName === 'read_file' ? result.content : result;
     }
@@ -1617,6 +1667,12 @@ const server = http.createServer(async (req, res) => {
             if (req.url === '/api/command_jobs') return sendJSON(res, 200, { jobs: workspaceCore.commandJobStatusTool({}) });
             if (req.url === '/api/tools') return sendJSON(res, 200, { tools: getAgentTools() });
             if (req.url === '/api/rate_limit') return sendJSON(res, 200, getRateLimitStatus());
+            if (req.url === '/api/index/status') return sendJSON(res, 200, await workspaceCore.indexStatusTool());
+            if (requestUrl.pathname === '/api/index/search') {
+                const query = requestUrl.searchParams.get('q') || requestUrl.searchParams.get('query') || '';
+                const limit = Number(requestUrl.searchParams.get('limit') || 20);
+                return sendJSON(res, 200, await workspaceCore.searchIndexCache({ query, limit }));
+            }
 
             if (req.url === '/api/select_folder') {
                 const psCommand = "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.ShowNewFolderButton = $true; if($f.ShowDialog() -eq 'OK'){$f.SelectedPath}";
@@ -1761,6 +1817,18 @@ const server = http.createServer(async (req, res) => {
                 ? String(provider.runTemplate).replaceAll('{prompt}', quotedPrompt)
                 : `${provider.command} ${quotedPrompt}`;
             return sendJSON(res, 200, { status: 'success', job: await workspaceCore.startCommandJobTool({ command, timeoutMs: body.timeoutMs || 3600000 }) });
+        }
+
+        if (req.url === '/api/index/build') {
+            const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'index build requires explicit UI approval.' });
+            return sendJSON(res, 200, await workspaceCore.buildIndexCache({ maxFiles: body.maxFiles || 1200, full: true }));
+        }
+
+        if (req.url === '/api/index/refresh') {
+            const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'index refresh requires explicit UI approval.' });
+            return sendJSON(res, 200, await workspaceCore.refreshIndexCache({ maxFiles: body.maxFiles || 1200 }));
         }
 
         if (req.url.startsWith('/api/')) {
