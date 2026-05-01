@@ -2344,6 +2344,13 @@
                 }
                 const result = data.result || data;
                 logDebug(` apply pending edit ${id}: ${result.relPath}`);
+                const appliedTab = editorTabs.find(tab => tab.path === result.relPath);
+                if (appliedTab && appliedTab.pendingSaveEditId === id) {
+                    appliedTab.originalContent = appliedTab.workingContent;
+                    appliedTab.isDirty = false;
+                    appliedTab.pendingSaveEditId = null;
+                    renderEditorTabs();
+                }
                 const card = document.getElementById(`pending-${id}`);
                 if (card) {
                     card.innerHTML = `<div style="color:var(--primary); padding:10px;"><b>Applied:</b> ${escapeHtml(result.relPath)}</div>`;
@@ -4401,6 +4408,7 @@
                     });
 
                     setupAIAutocomplete();
+                    setupInlineEdit();
                     editor.onDidChangeModelContent(() => {
                         if (isSwitchingEditorModel) return;
                         markActiveTabDirtyState();
@@ -4564,11 +4572,11 @@
                 });
                 const data = await res.json();
                 if (!res.ok || data.error) throw new Error(data.error || 'Save failed');
-                tab.originalContent = content;
                 tab.workingContent = content;
-                tab.isDirty = false;
+                tab.isDirty = true;
+                tab.pendingSaveEditId = data?.result?.pendingEdit?.id || tab.pendingSaveEditId || null;
                 renderEditorTabs();
-                logDebug(`Save queued as pending edit: ${tab.path}`);
+                logDebug(`Save queued as pending edit (review/apply required): ${tab.path}`);
                 if (data.result?.pendingEdit) renderPendingEdit(data.result.pendingEdit);
                 refreshPendingEdits();
             } catch (e) {
@@ -4584,6 +4592,150 @@
             if (name.endsWith('.json')) return 'json';
             if (name.endsWith('.py')) return 'python';
             return 'plaintext';
+        }
+
+        let inlineEditWidget = null;
+
+        function setupInlineEdit() {
+            if (!editor) return;
+            editor.addAction({
+                id: 'nvidia-inline-edit',
+                label: 'Inline Edit (Agent)',
+                keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+                contextMenuGroupId: 'navigation',
+                contextMenuOrder: 1.5,
+                run: function(ed) {
+                    if (!guardIdeOnlyAction('Inline Edit')) return;
+                    const selection = ed.getSelection();
+                    if (selection.isEmpty()) {
+                        alert("Please select some code to edit first.");
+                        return;
+                    }
+                    if (inlineEditWidget) {
+                        ed.removeContentWidget(inlineEditWidget);
+                        inlineEditWidget = null;
+                    }
+
+                    inlineEditWidget = {
+                        getId: function() { return 'nvidia.inline.edit.widget'; },
+                        getDomNode: function() {
+                            if (!this.domNode) {
+                                this.domNode = document.createElement('div');
+                                this.domNode.style.background = '#1e1e1e';
+                                this.domNode.style.border = '1px solid #76b900';
+                                this.domNode.style.borderRadius = '4px';
+                                this.domNode.style.padding = '8px';
+                                this.domNode.style.display = 'flex';
+                                this.domNode.style.gap = '8px';
+                                this.domNode.style.boxShadow = '0 4px 6px rgba(0,0,0,0.5)';
+                                this.domNode.style.zIndex = '1000';
+
+                                const input = document.createElement('input');
+                                input.type = 'text';
+                                input.placeholder = 'Instruct the agent (e.g. Add error handling)';
+                                input.style.width = '300px';
+                                input.style.background = '#2d2d2d';
+                                input.style.color = '#fff';
+                                input.style.border = '1px solid #444';
+                                input.style.padding = '6px 8px';
+                                input.style.outline = 'none';
+
+                                const submitBtn = document.createElement('button');
+                                submitBtn.innerText = 'Ask';
+                                submitBtn.className = 'btn';
+                                submitBtn.style.padding = '4px 12px';
+
+                                const cancelBtn = document.createElement('button');
+                                cancelBtn.innerText = 'Esc';
+                                cancelBtn.className = 'btn-secondary';
+                                cancelBtn.style.padding = '4px 8px';
+
+                                const submit = async () => {
+                                    const instruction = input.value.trim();
+                                    if (!instruction) return;
+                                    const selectedCode = ed.getModel().getValueInRange(selection);
+                                    if (!selectedCode.trim()) {
+                                        alert('Inline Edit requires a non-empty code selection.');
+                                        return;
+                                    }
+                                    const filePath = ed.getModel().uri.fsPath || ed.getModel().uri.path.replace(/^\/+/, '');
+                                    
+                                    submitBtn.innerText = 'Wait...';
+                                    submitBtn.disabled = true;
+                                    input.disabled = true;
+                                    
+                                    const tab = getActiveEditorTab();
+                                    if (tab && tab.isDirty) {
+                                        throw new Error('Inline Edit requires a clean tab. Apply or discard pending save edits first.');
+                                    }
+
+                                    try {
+                                        const res = await fetch('/api/inline_edit', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                                            body: JSON.stringify({
+                                                filePath,
+                                                instruction,
+                                                selectedCode,
+                                                startLine: selection.startLineNumber,
+                                                endLine: selection.endLineNumber
+                                            })
+                                        });
+                                        
+                                        const data = await res.json();
+                                        
+                                        if (inlineEditWidget) {
+                                            ed.removeContentWidget(inlineEditWidget);
+                                            inlineEditWidget = null;
+                                        }
+                                        
+                                        if (!res.ok || data.error) {
+                                            throw new Error(data.error || 'Failed to generate inline edit');
+                                        }
+                                        
+                                        if (data.pendingEdit) {
+                                            renderPendingEdit(data.pendingEdit);
+                                        }
+                                        refreshPendingEdits();
+                                    } catch(e) {
+                                        alert("Inline Edit Error: " + e.message);
+                                        if (inlineEditWidget) {
+                                            ed.removeContentWidget(inlineEditWidget);
+                                            inlineEditWidget = null;
+                                        }
+                                    }
+                                };
+
+                                cancelBtn.onclick = () => {
+                                    ed.removeContentWidget(inlineEditWidget);
+                                    inlineEditWidget = null;
+                                    ed.focus();
+                                };
+
+                                submitBtn.onclick = submit;
+                                input.onkeydown = (e) => {
+                                    if (e.key === 'Enter') submit();
+                                    if (e.key === 'Escape') cancelBtn.click();
+                                };
+
+                                this.domNode.appendChild(input);
+                                this.domNode.appendChild(submitBtn);
+                                this.domNode.appendChild(cancelBtn);
+                                
+                                setTimeout(() => input.focus(), 50);
+                            }
+                            return this.domNode;
+                        },
+                        getPosition: function() {
+                            return {
+                                position: { lineNumber: selection.startLineNumber, column: selection.startColumn },
+                                preference: [monaco.editor.ContentWidgetPositionPreference.ABOVE, monaco.editor.ContentWidgetPositionPreference.BELOW]
+                            };
+                        }
+                    };
+                    ed.addContentWidget(inlineEditWidget);
+                }
+            });
         }
 
         function setupAIAutocomplete() {

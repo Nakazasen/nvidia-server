@@ -442,6 +442,8 @@ const MAX_PROVIDER_BASE_URL = 300;
 const MAX_PROVIDER_MODEL = 120;
 const MAX_PROVIDER_MESSAGE = 300;
 const MAX_PROVIDER_RECORDS = 40;
+const MAX_INLINE_SELECTION_CHARS = 12000;
+const MAX_INLINE_INSTRUCTION_CHARS = 800;
 
 function nowIso() {
     return new Date().toISOString();
@@ -2364,10 +2366,89 @@ const server = http.createServer(async (req, res) => {
             return sendJSON(res, 200, { result: workspaceCore.applyPendingEditTool(body) });
         }
 
+        if (req.url === '/api/write_file') {
+            const body = await getBody(req);
+            ensureIdeMutationAllowed(req);
+            const result = await routeApiTool('write_file', { filePath: body.path, content: body.content, reason: 'Manual UI Save' });
+            return sendJSON(res, 200, { ok: true, result });
+        }
+
         if (req.url === '/api/discard_pending_edit') {
             const body = await getBody(req);
             if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'discard_pending_edit requires explicit UI approval.' });
             return sendJSON(res, 200, { result: workspaceCore.discardPendingEditTool(body) });
+        }
+
+        if (req.url === '/api/inline_edit') {
+            try {
+                ensureIdeMutationAllowed(req);
+                const body = await getBody(req);
+                const { filePath, instruction, selectedCode, startLine, endLine } = body;
+                if (!filePath || !instruction || !selectedCode) {
+                    return sendJSON(res, 400, { ok: false, error: 'filePath, instruction, and selectedCode are required.' });
+                }
+                const resolvedPath = resolveWorkspacePath(String(filePath));
+                const relPath = path.relative(currentWorkspace, resolvedPath);
+                const normalizedInstruction = String(instruction || '').trim();
+                const normalizedSelectedCode = String(selectedCode || '');
+                if (!normalizedInstruction) {
+                    return sendJSON(res, 400, { ok: false, error: 'instruction must not be empty.' });
+                }
+                if (!normalizedSelectedCode.trim()) {
+                    return sendJSON(res, 400, { ok: false, error: 'selectedCode must not be empty.' });
+                }
+                if (normalizedInstruction.length > MAX_INLINE_INSTRUCTION_CHARS) {
+                    return sendJSON(res, 400, { ok: false, error: `instruction is too long. Max ${MAX_INLINE_INSTRUCTION_CHARS} characters.` });
+                }
+                if (normalizedSelectedCode.length > MAX_INLINE_SELECTION_CHARS) {
+                    return sendJSON(res, 400, { ok: false, error: `selectedCode is too long. Max ${MAX_INLINE_SELECTION_CHARS} characters.` });
+                }
+                const start = Number(startLine);
+                const end = Number(endLine);
+                if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start || end - start > 2000) {
+                    return sendJSON(res, 400, { ok: false, error: 'Invalid startLine/endLine range.' });
+                }
+
+                const providerResolved = resolveProviderForChat('auto');
+                const prompt = `You are an expert coder. The user has selected the following code in ${relPath}:
+\`\`\`
+${normalizedSelectedCode}
+\`\`\`
+Instruction: ${normalizedInstruction}
+
+Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten code without any markdown blocks (like \`\`\`javascript) or explanations. If you cannot edit it, return the original code exactly.`;
+
+                const completion = await callNimChat({
+                    model: providerResolved.model,
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: 0.1,
+                    max_tokens: 4096
+                }, null, providerResolved);
+
+                let newCode = completion.choices[0].message.content.trim();
+                newCode = newCode.replace(/^```[\w]*\n/i, '').replace(/\n```$/i, '');
+                if (!newCode) {
+                    return sendJSON(res, 400, { ok: false, status: 'failed', error: 'Inline edit model response was empty.' });
+                }
+
+                const result = await routeApiTool('apply_patch', {
+                    filePath: relPath,
+                    find: normalizedSelectedCode,
+                    replace: newCode,
+                    reason: 'Inline Edit: ' + normalizedInstruction.slice(0, 50)
+                });
+
+                return sendJSON(res, 200, { ok: true, pendingEdit: result.pendingEdit || result });
+            } catch (e) {
+                const safeMessage = redactSecrets(e.message);
+                const lowered = String(safeMessage || '').toLowerCase();
+                const statusCode = lowered.includes('x-agent-approved') || lowered.includes('ide-mode only')
+                    ? 403
+                    : lowered.includes('outside workspace') || lowered.includes('invalid')
+                        ? 400
+                        : 500;
+                return sendJSON(res, statusCode, { ok: false, status: 'failed', error: safeMessage });
+            }
         }
 
         if (req.url === '/api/install_extension') {

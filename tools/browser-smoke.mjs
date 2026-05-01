@@ -428,6 +428,52 @@ async function runRealBrowserSmoke(url) {
 
       const monacoOk = exists('#code-body') || exists('#editor-tabs') || exists('.monaco-editor');
       add('Monaco/editor surface renders if safe', monacoOk, 'editor shell selectors found', false);
+      let inlineEditActionOk = false;
+      let inlineEditWidgetOk = false;
+      let enterpriseBlocksInlineEdit = false;
+      try {
+        const input = document.querySelector('#user-input');
+        if (typeof window.setUIMode === 'function') {
+          await window.setUIMode('ide', { persist: false });
+          await sleep(120);
+        }
+        if (typeof window.openCodeViewer === 'function') {
+          await window.openCodeViewer();
+          await sleep(250);
+        }
+        if (window.editor && typeof window.editor.getAction === 'function') {
+          inlineEditActionOk = !!window.editor.getAction('nvidia-inline-edit');
+        }
+        if (window.editor && typeof window.editor.getAction === 'function') {
+          const action = window.editor.getAction('nvidia-inline-edit');
+          const model = window.editor.getModel();
+          if (action && model) {
+            const line1 = model.getLineMaxColumn(1);
+            window.editor.setSelection(new window.monaco.Range(1, 1, 1, Math.max(2, line1)));
+            await action.run();
+            await sleep(140);
+            inlineEditWidgetOk = !!document.querySelector('div[style*="border: 1px solid rgb(118, 185, 0)"], div[style*="border:1px solid #76b900"]');
+            const escBtn = [...document.querySelectorAll('button')].find(btn => btn.textContent?.trim() === 'Esc');
+            if (escBtn) escBtn.click();
+            await sleep(80);
+          }
+        }
+        if (typeof window.setUIMode === 'function') {
+          await window.setUIMode('enterprise', { persist: false });
+          await sleep(120);
+          enterpriseBlocksInlineEdit = !window.editor || !window.editor.getAction('nvidia-inline-edit') || !visible('#code-viewer');
+          await window.setUIMode('ide', { persist: false });
+          await sleep(80);
+        }
+        if (input) input.focus();
+      } catch {
+        inlineEditActionOk = false;
+        inlineEditWidgetOk = false;
+        enterpriseBlocksInlineEdit = false;
+      }
+      add('Inline edit action exists', inlineEditActionOk, inlineEditActionOk ? 'monaco action nvidia-inline-edit registered' : 'action not observable in current smoke state', false);
+      add('Inline edit widget opens from selection', inlineEditWidgetOk, inlineEditWidgetOk ? 'inline widget opens with selection' : 'widget not observable in current smoke state', false);
+      add('Enterprise mode blocks inline edit mutation surface', enterpriseBlocksInlineEdit, 'editor/inline-edit surface blocked in enterprise mode', true);
 
       const extOk = exists('#sidebar-extensions') || exists('#installed-ext-list') || exists('#btn-extensions');
       add('Extensions panel exists or safely gated', extOk, 'extensions selectors found', false);
