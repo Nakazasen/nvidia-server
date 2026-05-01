@@ -844,6 +844,40 @@
             display: none !important;
         }
 
+        /* Sidebar Tab System */
+        .activity-btn.active {
+            color: var(--primary);
+            background: rgba(var(--primary-rgb), 0.1);
+        }
+
+        /* Task Control Styles */
+        .task-controls {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .task-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            transition: 0.2s;
+        }
+
+        .task-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .task-status-badge.running { background: rgba(var(--primary-rgb), 0.2); color: var(--primary); }
+        .task-status-badge.paused { background: rgba(245, 185, 66, 0.2); color: #f5b942; }
+        .task-status-badge.cancelled { background: rgba(255, 85, 85, 0.2); color: #ff5555; }
+        .task-status-badge.completed { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
+
         /* Task Timeline Styles */
         .timeline-item {
             display: flex;
@@ -1760,6 +1794,7 @@
         <div id="task-timeline" style="flex: 1; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 8px;">
             <div style="opacity: 0.3; text-align: center; padding: 10px;">No active task</div>
         </div>
+        <button class="btn-small" onclick="clearCompletedTasks()" style="margin: -10px 0 15px 0;">Clear Completed</button>
 
         <div class="sidebar-section-title">Changed Files</div>
         <div id="changed-files-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 5px;">
@@ -2035,6 +2070,7 @@
         const RECENT_FILES_STORAGE_KEY = 'nvidia.recentFiles.v1';
         let editingMessageIndex = null;
         let currentAgentController = null;
+        let currentAgentTaskId = null;
         let isAgentRunning = false;
         const UI_MODE_STORAGE_KEY = 'nvidia.uiMode';
         const IDE_ONLY_TABS = new Set(['explorer', 'tasks', 'extensions', 'terminal', 'jobs', 'search', 'problems']);
@@ -2363,33 +2399,130 @@
             }
         }
 
-        let timelineEvents = [];
-        function updateTaskTimeline(event) {
+        function switchSidebarTab(tabId) {
+            if (!isIdeMode() && IDE_ONLY_TABS.has(tabId)) {
+                document.querySelectorAll('.sidebar').forEach(s => s.style.display = 'none');
+                return;
+            }
+            const sidebars = document.querySelectorAll('.sidebar');
+            const btns = document.querySelectorAll('.activity-btn');
+            
+            sidebars.forEach(s => s.style.display = 'none');
+            btns.forEach(b => b.classList.remove('active'));
+            
+            const targetSidebar = document.getElementById(`sidebar-${tabId}`);
+            if (targetSidebar) targetSidebar.style.display = 'flex';
+            
+            const targetBtn = document.getElementById(`btn-${tabId}`);
+            if (targetBtn) targetBtn.classList.add('active');
+            
+            if (tabId === 'tasks') {
+                refreshTasks();
+                refreshPendingEdits();
+            }
+        }
+
+        async function refreshTasks() {
+            try {
+                const res = await fetch('/api/tasks');
+                const data = await res.json();
+                if (data.ok) renderTasks(data.tasks);
+            } catch (e) {
+                console.error("Failed to refresh tasks:", e);
+            }
+        }
+
+        function renderTasks(tasks) {
             const list = document.getElementById('task-timeline');
             if (!list) return;
-
-            if (event.type === 'start') {
-                timelineEvents = [{ type: 'start', label: event.label || 'Task Started', status: 'completed', time: new Date() }];
-            } else {
-                timelineEvents.push({ ...event, time: new Date() });
-            }
-
-            if (timelineEvents.length === 0) {
-                list.innerHTML = '<div style="opacity: 0.3; text-align: center; padding: 10px;">No active task</div>';
+            
+            if (!tasks || tasks.length === 0) {
+                list.innerHTML = '<div style="opacity: 0.3; text-align: center; padding: 10px;">No active tasks</div>';
                 return;
             }
 
-            list.innerHTML = timelineEvents.map((ev, idx) => `
-                <div class="timeline-item">
-                    <div class="timeline-dot ${ev.status === 'completed' ? 'completed' : 'active'}"></div>
-                    <div class="timeline-content">
-                        <div class="timeline-label">${escapeHtml(ev.label)}</div>
-                        <div style="font-size: 0.7rem; opacity: 0.5;">${ev.time.toLocaleTimeString()}</div>
-                        ${ev.steps ? `<div style="font-size: 0.75rem; margin-top: 5px; color: var(--primary);">${ev.steps.length} steps planned</div>` : ''}
+            list.innerHTML = tasks.map(task => `
+                <div class="task-card ${task.status === 'running' ? 'active' : ''}">
+                    <div class="task-card-header">
+                        <div class="task-title">${escapeHtml(task.title)}</div>
+                        <div class="task-status-badge ${task.status}">${task.status}</div>
+                    </div>
+                    <div style="font-size: 0.7rem; opacity: 0.5; margin-bottom: 8px;">ID: ${task.id} | ${new Date(task.createdAt).toLocaleString()}</div>
+                    
+                    <div class="task-timeline-mini" style="border-left: 2px solid #333; padding-left: 10px; margin-bottom: 10px;">
+                        ${task.steps.slice(-3).map(step => `
+                            <div style="font-size: 0.75rem; margin-bottom: 4px; color: ${step.status === 'failed' ? '#ff5555' : '#ccc'}">
+                                • ${escapeHtml(step.label)}
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <div class="task-controls">
+                        ${task.status === 'running' ? 
+                            `<button class="btn-small" style="flex:1" onclick="pauseTask('${task.id}')">Pause</button>` : 
+                            ((task.status === 'paused' || task.status === 'failed' || task.resumeAvailable) ? `<button class="btn-small" style="flex:1" onclick="resumeTask('${task.id}')">Resume</button>` : '')
+                        }
+                        ${['running', 'paused'].includes(task.status) ? 
+                            `<button class="btn-small" style="flex:1; border-color:#ff5555; color:#ff5555;" onclick="cancelTask('${task.id}')">Cancel</button>` : 
+                            ''
+                        }
                     </div>
                 </div>
             `).join('');
-            list.scrollTop = list.scrollHeight;
+        }
+
+        async function pauseTask(id) {
+            if (!guardIdeOnlyAction('Pause task')) return;
+            try {
+                const res = await fetch('/api/tasks/pause', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ id })
+                });
+                if (res.ok) refreshTasks();
+            } catch (e) { alert("Pause failed: " + e.message); }
+        }
+
+        async function resumeTask(id) {
+            if (!guardIdeOnlyAction('Resume task')) return;
+            try {
+                const res = await fetch('/api/tasks/resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ id })
+                });
+                if (res.ok) refreshTasks();
+            } catch (e) { alert("Resume failed: " + e.message); }
+        }
+
+        async function cancelTask(id) {
+            if (!guardIdeOnlyAction('Cancel task')) return;
+            if (!confirm('Cancel this task?')) return;
+            try {
+                const res = await fetch('/api/tasks/cancel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ id })
+                });
+                if (res.ok) refreshTasks();
+            } catch (e) { alert("Cancel failed: " + e.message); }
+        }
+
+        async function clearCompletedTasks() {
+            if (!guardIdeOnlyAction('Clear completed tasks')) return;
+            try {
+                const res = await fetch('/api/tasks/clear_completed', {
+                    method: 'POST',
+                    headers: { 'X-Agent-Approved': 'true' }
+                });
+                if (res.ok) refreshTasks();
+            } catch (e) { console.error("Clear failed:", e); }
+        }
+
+        function updateTaskTimeline(event) {
+            // Synchronize local timeline state with server if needed
+            // For now, we mainly rely on refreshTasks() to pull the full persisted state
+            refreshTasks();
         }
 
         // --- By l ton cc ---
@@ -2746,6 +2879,29 @@
             const loading = addMessage('assistant', "Agent ng suy ngh...");
             currentAgentController = new AbortController();
             setAgentRunning(true);
+            currentAgentTaskId = null;
+            if (isIdeMode()) {
+                try {
+                    let latestUserText = 'Untitled';
+                    for (let i = s.messages.length - 1; i >= 0; i--) {
+                        if (s.messages[i]?.role === 'user' && typeof s.messages[i].content === 'string' && s.messages[i].content.trim()) {
+                            latestUserText = s.messages[i].content;
+                            break;
+                        }
+                    }
+                    const startRes = await fetch('/api/tasks/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                        body: JSON.stringify({
+                            title: `Agent task: ${latestUserText.slice(0, 120)}`
+                        })
+                    });
+                    const startData = await startRes.json();
+                    if (startData?.ok && startData.task?.id) currentAgentTaskId = startData.task.id;
+                } catch (e) {
+                    console.warn('Failed to start persisted task:', e);
+                }
+            }
             updateTaskTimeline({ type: 'start', label: 'Agent Started' });
             let history = [
                 { role: 'system', content: 'Bn l Agent thng minh. S dng update_plan cho tc v phc tp.' },
@@ -2773,7 +2929,8 @@
                             contextTerminalJobs: contextPayload.contextTerminalJobs || [],
                             contextProblems: contextPayload.contextProblems === true,
                             selection: contextPayload.selection || null,
-                            autoAccept: isIdeMode() && autoAcceptCheck.checked
+                            autoAccept: isIdeMode() && autoAcceptCheck.checked,
+                            taskId: currentAgentTaskId
                         })
                     });
                     const data = await res.json();
@@ -2839,13 +2996,24 @@
                 if (e.name === 'AbortError') {
                     loading.innerText = " dng theo yu cu.";
                     logDebug("Agent  dng theo yu cu.");
+                    if (currentAgentTaskId && isIdeMode()) {
+                        try {
+                            await fetch('/api/tasks/pause', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                                body: JSON.stringify({ id: currentAgentTaskId })
+                            });
+                        } catch {}
+                    }
                 } else {
                     loading.innerText = "L: " + e.message;
                     logDebug("L: " + e.message);
                 }
             } finally {
                 currentAgentController = null;
+                currentAgentTaskId = null;
                 setAgentRunning(false);
+                refreshTasks();
             }
         }
 
@@ -3493,26 +3661,6 @@
             showSlashMenu(getCommandPaletteEntries());
         }
 
-        function switchSidebarTab(tab) {
-            if (!isIdeMode() && IDE_ONLY_TABS.has(tab)) {
-                document.querySelectorAll('.sidebar').forEach(s => s.style.display = 'none');
-                return;
-            }
-            document.querySelectorAll('.activity-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.sidebar').forEach(s => s.style.display = 'none');
-
-            if (tab === 'explorer') {
-                document.getElementById('btn-explorer').classList.add('active');
-                document.getElementById('sidebar-explorer').style.display = 'flex';
-            } else if (tab === 'tasks') {
-                document.getElementById('btn-tasks').classList.add('active');
-                document.getElementById('sidebar-tasks').style.display = 'flex';
-                refreshPendingEdits();
-            } else {
-                document.getElementById('btn-extensions').classList.add('active');
-                document.getElementById('sidebar-extensions').style.display = 'flex';
-            }
-        }
 
         function filterExtensions(query) {
             clearTimeout(extensionSearchTimer);
@@ -5198,6 +5346,7 @@
                 await loadFileExplorer();
                 await loadIndexStatus();
                 await refreshModelStatus();
+                await refreshTasks();
                 const indexInput = document.getElementById('index-query');
                 if (indexInput) {
                     indexInput.addEventListener('keydown', (ev) => {

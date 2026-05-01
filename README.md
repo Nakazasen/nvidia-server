@@ -474,11 +474,11 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 11: Inline Edit kiểu Cursor",
+  "last_completed_sprint": "Sprint 12: Task Timeline + Recovery / Resume",
   "last_implementer": "Builder model (external handoff)",
   "last_auditor": "Codex",
-  "last_audit_result": "Sprint 11 audited/fixed by Codex: inline_edit now enforces IDE mode + X-Agent-Approved end-to-end, frontend includes approval header, backend validates workspace path and payload sizes, inline edit creates pending proposal only (no direct write), dirty tabs are not marked clean when save only queues pending edits, and real-browser smoke still passes with inline-edit safety coverage.",
-  "next_sprint": "Sprint 12: Task Timeline + Recovery / Resume",
+  "last_audit_result": "Sprint 12 audited/fixed by Codex: task API mutation guards enforce IDE mode + X-Agent-Approved, /api/tasks/event was added with status validation and payload bounds, task model was normalized/sanitized with secret-redacted summaries, clearCompleted now sends approval header, runAutonomousAgent toolResults loop bug was fixed, taskId wiring to /proxy/chat and abort-to-pause marker were added, browser smoke passed 27/0 (real-browser), and agent:audit passed 25/25.",
+  "next_sprint": "Sprint 13: Git / SCM Panel tốt hơn",
   "next_prompt_instruction": "Ask builder model to implement Sprint 12 only, then return to Codex for audit/fix.",
   "status_marker_version": 2
 }

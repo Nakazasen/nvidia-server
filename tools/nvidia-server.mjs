@@ -20,6 +20,7 @@ const STATE_DIR = path.join(APP_DIR, '.nvidia-agent');
 const TRUST_FILE = path.join(STATE_DIR, 'trusted-workspaces.json');
 const PROFILE_FILE = path.join(STATE_DIR, 'profile.json');
 const PROVIDERS_FILE = path.join(STATE_DIR, 'providers.json');
+const TASKS_DIR = path.join(STATE_DIR, 'tasks');
 const READ_ONLY_TOOLS = new Set(['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
 const DESTRUCTIVE_TOOLS = new Set(['write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job']);
 
@@ -260,6 +261,171 @@ const nimRequestLog = [];
 let lastNimRateLimitHit = null;
 const pendingEdits = new Map();
 const commandJobs = new Map();
+
+// --- Task Timeline & Persistence (Sprint 12) ---
+const taskStore = new Map();
+const TASK_STATUSES = new Set(['running', 'completed', 'failed', 'cancelled', 'paused', 'needs_user']);
+const STEP_STATUSES = new Set(['pending', 'running', 'completed', 'failed', 'skipped', 'blocked']);
+const MAX_TASK_TITLE_CHARS = 200;
+const MAX_TASK_TEXT_CHARS = 1200;
+const MAX_TASK_STEPS = 200;
+const MAX_TASK_WARNINGS = 50;
+const MAX_TASK_ERRORS = 50;
+const MAX_TASK_RECOVERY_HINTS = 50;
+
+function sanitizeTaskText(value, limit = MAX_TASK_TEXT_CHARS) {
+    return redactSecrets(String(value ?? '').trim()).slice(0, limit);
+}
+
+function sanitizeArrayText(values, maxItems, limit = MAX_TASK_TEXT_CHARS) {
+    if (!Array.isArray(values)) return [];
+    return values.slice(0, maxItems).map(v => sanitizeTaskText(v, limit)).filter(Boolean);
+}
+
+function sanitizeTaskStep(input = {}) {
+    const status = STEP_STATUSES.has(input.status) ? input.status : 'pending';
+    const startedAt = input.startedAt || (status === 'running' ? new Date().toISOString() : null);
+    const endedAt = ['completed', 'failed', 'skipped', 'blocked'].includes(status) ? (input.endedAt || new Date().toISOString()) : null;
+    return {
+        stepId: sanitizeTaskText(input.stepId || `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, 120),
+        label: sanitizeTaskText(input.label || 'Step'),
+        status,
+        startedAt,
+        endedAt,
+        toolName: sanitizeTaskText(input.toolName || '', 120),
+        inputSummary: sanitizeTaskText(input.inputSummary || '', 500),
+        outputSummary: sanitizeTaskText(input.outputSummary || '', 500),
+        evidenceRefs: sanitizeArrayText(input.evidenceRefs, 20, 200),
+        errorSummary: sanitizeTaskText(input.errorSummary || '', 500),
+        nextActionHint: sanitizeTaskText(input.nextActionHint || '', 300)
+    };
+}
+
+function toTaskView(task) {
+    return {
+        id: task.id,
+        taskId: task.id,
+        title: task.title,
+        status: task.status,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        currentStepId: task.currentStepId || null,
+        steps: Array.isArray(task.steps) ? task.steps.slice(-MAX_TASK_STEPS) : [],
+        warnings: Array.isArray(task.warnings) ? task.warnings.slice(-MAX_TASK_WARNINGS) : [],
+        errors: Array.isArray(task.errors) ? task.errors.slice(-MAX_TASK_ERRORS) : [],
+        recoveryHints: Array.isArray(task.recoveryHints) ? task.recoveryHints.slice(-MAX_TASK_RECOVERY_HINTS) : [],
+        resumeAvailable: task.resumeAvailable === true
+    };
+}
+
+function normalizeTask(task = {}) {
+    const id = sanitizeTaskText(task.id || task.taskId || `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, 120);
+    const status = TASK_STATUSES.has(task.status) ? task.status : 'needs_user';
+    const nowIso = new Date().toISOString();
+    return {
+        id,
+        title: sanitizeTaskText(task.title || 'Task', MAX_TASK_TITLE_CHARS),
+        status,
+        createdAt: task.createdAt || nowIso,
+        updatedAt: task.updatedAt || nowIso,
+        currentStepId: sanitizeTaskText(task.currentStepId || '', 120) || null,
+        steps: Array.isArray(task.steps) ? task.steps.map(sanitizeTaskStep).slice(-MAX_TASK_STEPS) : [],
+        warnings: sanitizeArrayText(task.warnings, MAX_TASK_WARNINGS, 400),
+        errors: sanitizeArrayText(task.errors, MAX_TASK_ERRORS, 400),
+        recoveryHints: sanitizeArrayText(task.recoveryHints, MAX_TASK_RECOVERY_HINTS, 400),
+        resumeAvailable: task.resumeAvailable === true
+    };
+}
+
+function loadTasks() {
+    if (!fs.existsSync(TASKS_DIR)) return;
+    const files = fs.readdirSync(TASKS_DIR).filter(f => f.endsWith('.json'));
+    for (const file of files) {
+        try {
+            const parsed = JSON.parse(fs.readFileSync(path.join(TASKS_DIR, file), 'utf8'));
+            const task = normalizeTask(parsed);
+            taskStore.set(task.id, task);
+        } catch (e) {
+            console.error(`[TASKS] Failed to load ${file}: ${e.message}`);
+        }
+    }
+}
+
+function saveTask(task) {
+    const normalized = normalizeTask(task);
+    taskStore.set(normalized.id, normalized);
+    const safeTask = { ...normalized };
+    if (!fs.existsSync(TASKS_DIR)) fs.mkdirSync(TASKS_DIR, { recursive: true });
+    fs.writeFileSync(path.join(TASKS_DIR, `${normalized.id}.json`), JSON.stringify(safeTask, null, 2));
+}
+
+function createTask(title = 'New Task', model = 'auto') {
+    const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const task = {
+        id,
+        title: sanitizeTaskText(title || 'Task', MAX_TASK_TITLE_CHARS),
+        status: 'running',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        currentStepId: null,
+        steps: [],
+        warnings: [],
+        errors: [],
+        recoveryHints: [],
+        resumeAvailable: true
+    };
+    saveTask(task);
+    return normalizeTask(taskStore.get(id));
+}
+
+function recordTaskEvent(taskId, event) {
+    const task = taskStore.get(taskId);
+    if (!task) return;
+
+    const nowIso = new Date().toISOString();
+    task.updatedAt = nowIso;
+    if (event.status && TASK_STATUSES.has(event.status)) task.status = event.status;
+
+    if (event.type === 'tool_start' || event.type === 'tool_result' || event.type === 'step') {
+        const step = sanitizeTaskStep({
+            stepId: event.stepId || `${event.iteration || 'iter'}-${event.tool || event.label || 'step'}`,
+            label: event.label || event.tool || event.type || 'step',
+            status: event.stepStatus || (event.ok === false ? 'failed' : (event.type === 'tool_start' ? 'running' : 'completed')),
+            startedAt: event.startedAt || nowIso,
+            endedAt: event.endedAt || (event.type === 'tool_result' ? nowIso : null),
+            toolName: event.tool || '',
+            inputSummary: event.arguments || event.inputSummary || '',
+            outputSummary: event.result || event.outputSummary || event.content || '',
+            evidenceRefs: event.evidenceRefs || [],
+            errorSummary: event.ok === false ? (event.errorSummary || event.result || 'Step failed') : (event.errorSummary || ''),
+            nextActionHint: event.nextActionHint || ''
+        });
+        task.currentStepId = step.stepId;
+        task.steps.push(step);
+        if (task.steps.length > MAX_TASK_STEPS) task.steps = task.steps.slice(-MAX_TASK_STEPS);
+    }
+
+    if (event.warning) {
+        task.warnings.push(sanitizeTaskText(event.warning, 400));
+        if (task.warnings.length > MAX_TASK_WARNINGS) task.warnings = task.warnings.slice(-MAX_TASK_WARNINGS);
+    }
+    if (event.error || event.errorSummary) {
+        task.errors.push(sanitizeTaskText(event.error || event.errorSummary, 400));
+        if (task.errors.length > MAX_TASK_ERRORS) task.errors = task.errors.slice(-MAX_TASK_ERRORS);
+    }
+    if (event.recoveryHint) {
+        task.recoveryHints.push(sanitizeTaskText(event.recoveryHint, 400));
+        if (task.recoveryHints.length > MAX_TASK_RECOVERY_HINTS) task.recoveryHints = task.recoveryHints.slice(-MAX_TASK_RECOVERY_HINTS);
+    }
+    if (typeof event.resumeAvailable === 'boolean') task.resumeAvailable = event.resumeAvailable;
+    if (['cancelled', 'completed'].includes(task.status)) task.resumeAvailable = false;
+    if (['paused', 'failed', 'needs_user'].includes(task.status) && task.resumeAvailable !== false) task.resumeAvailable = true;
+
+    saveTask(task);
+}
+
+loadTasks();
+
 const workspaceCore = createWorkspaceCore({
     workspace: currentWorkspace,
     appDir: APP_DIR,
@@ -276,6 +442,7 @@ const extensionHost = createExtensionHost({
 
 loadEnvFiles();
 fs.mkdirSync(STATE_DIR, { recursive: true });
+if (!fs.existsSync(TASKS_DIR)) fs.mkdirSync(TASKS_DIR, { recursive: true });
 
 function loadEnvFiles() {
     const envPaths = [
@@ -598,7 +765,7 @@ function ensureIdeMutationAllowed(req) {
     }
     const profile = loadProfile();
     if (profile.uiMode !== 'ide') {
-        throw new Error('Provider/settings mutation is IDE-mode only.');
+        throw new Error('This mutation endpoint is IDE-mode only.');
     }
 }
 
@@ -1861,9 +2028,19 @@ async function runAutonomousAgent(data, callbacks = {}) {
     let finalMessage = null;
     let successfulWrite = false;
     let writeEnforcementRetried = false;
+    let terminalStatus = 'running';
     const emit = (name, payload) => {
         try {
             callbacks[name]?.(payload);
+            if (data.taskId) {
+                if (name === 'status') {
+                    recordTaskEvent(data.taskId, { type: 'status', ...payload });
+                } else if (name === 'tool_start') {
+                    recordTaskEvent(data.taskId, { type: 'tool_start', ...payload });
+                } else if (name === 'tool_result') {
+                    recordTaskEvent(data.taskId, { type: 'tool_result', ...payload });
+                }
+            }
         } catch (e) {
             events.push({ type: 'callback_error', callback: name, error: e.message });
         }
@@ -1873,6 +2050,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
         if (signal?.aborted) {
             finalMessage = { role: 'assistant', content: 'Đã dừng theo yêu cầu của người dùng.' };
             events.push({ type: 'status', iteration, status: 'aborted' });
+            terminalStatus = 'paused';
             break;
         }
         const payload = {
@@ -1929,9 +2107,11 @@ async function runAutonomousAgent(data, callbacks = {}) {
             const result = await runToolCall(toolCall, { allowDestructive });
             if (toolName === 'write_file' && result?.ok !== false) successfulWrite = true;
             const content = toolResult(result);
+            const ok = result?.ok !== false;
 
-            emit('tool_result', { iteration, tool: toolName, ok: result?.ok !== false, result: content });
-            events.push({ type: 'tool_result', iteration, tool: toolName, ok: result?.ok !== false, result: content });
+            emit('tool_result', { iteration, tool: toolName, ok, result: content });
+            events.push({ type: 'tool_result', iteration, tool: toolName, ok, result: content });
+            if (!ok) terminalStatus = 'failed';
             return { role: 'tool', tool_call_id: toolCall.id, content };
         }));
         messages.push(...toolResults);
@@ -1944,7 +2124,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
         };
     }
 
-    return {
+    const result = {
         id: `agent-${Date.now()}`,
         object: 'chat.completion',
         created: Math.floor(Date.now() / 1000),
@@ -1956,6 +2136,19 @@ async function runAutonomousAgent(data, callbacks = {}) {
             events
         }
     };
+
+    if (data.taskId) {
+        if (terminalStatus === 'running') terminalStatus = 'completed';
+        recordTaskEvent(data.taskId, {
+            type: terminalStatus === 'completed' ? 'completed' : 'status',
+            status: terminalStatus,
+            content: typeof finalMessage.content === 'string' ? finalMessage.content.slice(0, 1000) : 'Task finished',
+            resumeAvailable: ['paused', 'failed', 'needs_user'].includes(terminalStatus),
+            recoveryHint: terminalStatus === 'paused' ? 'Resume can continue from saved context; review pending edits and diagnostics first.' : undefined
+        });
+    }
+
+    return result;
 }
 
 async function handleProxyChat(req, res) {
@@ -2135,6 +2328,14 @@ const server = http.createServer(async (req, res) => {
             if (req.url === '/api/command_jobs') return sendJSON(res, 200, { jobs: workspaceCore.commandJobStatusTool({}) });
             if (req.url === '/api/tools') return sendJSON(res, 200, { tools: getAgentTools() });
             if (req.url === '/api/rate_limit') return sendJSON(res, 200, getRateLimitStatus());
+
+            // Sprint 12: Tasks API
+            if (req.url === '/api/tasks') {
+                const tasks = Array.from(taskStore.values())
+                    .map(toTaskView)
+                    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+                return sendJSON(res, 200, { ok: true, tasks });
+            }
 
             // Sprint 8: Diagnostics API (read-only, safe for enterprise mode)
             if (req.url === '/api/diagnostics') {
@@ -2574,6 +2775,85 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
             return sendJSON(res, 200, await workspaceCore.refreshIndexCache({ maxFiles: body.maxFiles || 1200 }));
         }
 
+        if (req.url === '/api/tasks/start') {
+            ensureIdeMutationAllowed(req);
+            const body = await getBody(req);
+            if (JSON.stringify(body).length > 20_000) return sendJSON(res, 413, { error: 'Task start payload too large' });
+            const title = sanitizeTaskText(body.title || 'Task', MAX_TASK_TITLE_CHARS);
+            if (!title) return sendJSON(res, 400, { error: 'title is required' });
+            const task = createTask(title, body.model);
+            return sendJSON(res, 200, { ok: true, task: toTaskView(task) });
+        }
+
+        if (req.url === '/api/tasks/event') {
+            ensureIdeMutationAllowed(req);
+            const body = await getBody(req);
+            if (JSON.stringify(body).length > 30_000) return sendJSON(res, 413, { error: 'Task event payload too large' });
+            const taskId = String(body.id || body.taskId || '');
+            if (!taskId || !taskStore.has(taskId)) return sendJSON(res, 404, { error: 'Task not found' });
+            const status = body.status ? String(body.status) : undefined;
+            const stepStatus = body.stepStatus ? String(body.stepStatus) : undefined;
+            if (status && !TASK_STATUSES.has(status)) return sendJSON(res, 400, { error: 'Invalid task status' });
+            if (stepStatus && !STEP_STATUSES.has(stepStatus)) return sendJSON(res, 400, { error: 'Invalid step status' });
+            recordTaskEvent(taskId, body);
+            return sendJSON(res, 200, { ok: true, task: toTaskView(taskStore.get(taskId)) });
+        }
+
+        if (req.url === '/api/tasks/pause') {
+            ensureIdeMutationAllowed(req);
+            const body = await getBody(req);
+            const taskId = String(body.id || body.taskId || '');
+            const task = taskStore.get(taskId);
+            if (!task) return sendJSON(res, 404, { error: 'Task not found' });
+            if (task.status !== 'running') return sendJSON(res, 409, { error: 'Only running tasks can be paused' });
+            recordTaskEvent(task.id, { type: 'paused', status: 'paused', content: 'Task paused by user', resumeAvailable: true });
+            return sendJSON(res, 200, { ok: true, task: toTaskView(taskStore.get(task.id)) });
+        }
+
+        if (req.url === '/api/tasks/cancel') {
+            ensureIdeMutationAllowed(req);
+            const body = await getBody(req);
+            const taskId = String(body.id || body.taskId || '');
+            const task = taskStore.get(taskId);
+            if (!task) return sendJSON(res, 404, { error: 'Task not found' });
+            recordTaskEvent(task.id, { type: 'cancelled', status: 'cancelled', content: 'Task cancelled by user', resumeAvailable: false });
+            return sendJSON(res, 200, { ok: true, task: toTaskView(taskStore.get(task.id)) });
+        }
+
+        if (req.url === '/api/tasks/resume') {
+            ensureIdeMutationAllowed(req);
+            const body = await getBody(req);
+            const taskId = String(body.id || body.taskId || '');
+            const task = taskStore.get(taskId);
+            if (!task) return sendJSON(res, 404, { error: 'Task not found' });
+            if (!['paused', 'failed', 'needs_user'].includes(task.status) && task.resumeAvailable !== true) {
+                return sendJSON(res, 409, { error: 'Task is not resumable' });
+            }
+            recordTaskEvent(task.id, {
+                type: 'resume',
+                label: 'Task resumed',
+                status: 'running',
+                warning: 'Resume is manual context recovery marker; destructive tools still require normal approval.',
+                recoveryHint: 'Review pending edits, running jobs, diagnostics, and dirty tabs before continuing.',
+                resumeAvailable: true
+            });
+            return sendJSON(res, 200, { ok: true, task: toTaskView(taskStore.get(task.id)) });
+        }
+
+        if (req.url === '/api/tasks/clear_completed') {
+            ensureIdeMutationAllowed(req);
+            const toDelete = [];
+            for (const [id, task] of taskStore.entries()) {
+                if (['completed', 'cancelled', 'failed'].includes(task.status)) {
+                    toDelete.push(id);
+                    const filePath = path.join(TASKS_DIR, `${id}.json`);
+                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                }
+            }
+            toDelete.forEach(id => taskStore.delete(id));
+            return sendJSON(res, 200, { ok: true, deleted: toDelete.length });
+        }
+
         if (req.url.startsWith('/api/')) {
             const toolName = req.url.split('/')[2];
             const args = await getBody(req);
@@ -2607,6 +2887,9 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
                 return;
             }
             return sendJSON(res, 429, { error: e.message, rateLimit: e.rateLimit, retryAfterMs: e.retryAfterMs });
+        }
+        if (/X-Agent-Approved=true|IDE-mode only/i.test(String(e.message || ''))) {
+            return sendJSON(res, 403, { error: redactSecrets(e.message) });
         }
         if (req.url === '/proxy/chat' && !res.headersSent) {
             return sendJSON(res, 500, { error: e.message });
