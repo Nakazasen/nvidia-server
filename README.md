@@ -120,7 +120,7 @@ Dự án đã có nền tảng agent khá tốt:
 
 ## Triết Lý Kiến Trúc (Architecture Philosophy)
 
-Dự án định vị là một **Hệ điều hành Nhận thức cho Doanh nghiệp (Cognitive OS for Enterprise)** với kiến trúc 4 lớp tách biệt:
+Tầm nhìn dài hạn của dự án là **Hệ điều hành Nhận thức cho Doanh nghiệp (Cognitive OS for Enterprise)**; trạng thái hiện tại vẫn là prototype Agent IDE và chưa thể coi là Cognitive OS. Kiến trúc mục tiêu gồm 4 lớp tách biệt:
 
 ```text
 Model Providers: NVIDIA NIM / Gemini / local model / OpenAI
@@ -455,9 +455,11 @@ Dự án có thể coi là đạt mốc UX AI coding agent IDE khi:
 
 ```bash
 npm run agent:audit
+npm run browser:smoke
 node --check tools/nvidia-server.mjs
 node --check tools/nvidia-cli-agent.mjs
 node --check tools/extension-host.mjs
+node --check tools/browser-smoke.mjs
 ```
 
 Báo cáo audit được ghi vào:
@@ -472,12 +474,12 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 8: LSP Diagnostics / Problems Panel",
-  "last_implementer": "Gemini 3 Flash",
+  "last_completed_sprint": "Sprint 9: Browser E2E Smoke Harness",
+  "last_implementer": "DeepSeek-v4-pro via Cline",
   "last_auditor": "Codex",
-  "last_audit_result": "Sprint 8 audited and fixed as a minimal diagnostics layer (not full LSP server). Codex fixed Problems panel data binding (`diagnostics` vs `result`), safe rendering/click behavior, marker-sync debounce, marker payload normalization/limits, diagnostics endpoint validation, dedupe/stable diagnostic IDs, and Sprint 3 regression in terminal command execution. Diagnostics refresh/clear/update API smoke passed, malformed marker payload was safely normalized, syntax-error refresh/remove smoke passed, node syntax checks passed, and `npm run agent:audit` passed 25/25. Enterprise/IDE guards remain enforced for refresh actions; diagnostics read endpoint remains read-only.",
-  "next_sprint": "Sprint 9: Browser E2E Smoke Harness",
-  "next_prompt_instruction": "Ask Gemini 3 Flash to implement Sprint 9 only, then return to Codex for audit/fix.",
+  "last_audit_result": "Sprint 9 audited/fixed by Codex: real browser smoke now runs via playwright-core with local Chrome, opens live UI, executes JS, verifies mode toggle + context picker + Terminal/Jobs + Problems + editor/extensions/index surfaces, captures screenshot/JSON/log under .nvidia-agent/reports, and exits 0 only when mode=real-browser. HTTP fallback is informational and non-passing.",
+  "next_sprint": "Sprint 10: Settings / Provider Manager / API Key UI",
+  "next_prompt_instruction": "Ask DeepSeek-v4-pro via Cline to implement Sprint 10 only, then return to Codex for audit/fix.",
   "status_marker_version": 2
 }
 ```

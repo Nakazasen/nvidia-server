@@ -9,6 +9,7 @@
     "cli": "node tools/nvidia-cli.mjs",
     "agent": "node tools/nvidia-cli-agent.mjs",
     "agent:audit": "node tools/agent-capability-harness.mjs",
+    "browser:smoke": "node tools/browser-smoke.mjs",
     "desktop": "electron electron-main.js",
     "dist": "electron-builder"
   },
@@ -34,6 +35,7 @@
   },
   "devDependencies": {
     "electron": "^41.3.0",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "playwright-core": "^1.59.1"
   }
 }
