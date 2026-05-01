@@ -237,10 +237,28 @@ export function createExtensionHost({
     return entry;
   }
 
+  function deactivateExtensionState(id) {
+    const state = activatedExtensions.get(id);
+    if (!state) return false;
+    for (const disposable of state.subscriptions || []) {
+      try {
+        disposable.dispose?.();
+      } catch {
+        // Best-effort cleanup for extension-owned subscriptions.
+      }
+    }
+    for (const [command, item] of commandRegistry.entries()) {
+      if (item.extensionId === id) commandRegistry.delete(command);
+    }
+    activatedExtensions.delete(id);
+    return true;
+  }
+
   function installFromFolder(sourcePath, source = 'folder') {
     if (!sourcePath || !fs.existsSync(sourcePath)) throw new Error('Source folder does not exist.');
     const manifestRoot = findManifestRoot(path.resolve(sourcePath));
     const manifest = readManifest(manifestRoot);
+    deactivateExtensionState(manifest.id);
     const targetName = `${slug(manifest.id)}-${slug(manifest.version)}`;
     const targetPath = path.join(extensionsDir, targetName);
     fs.rmSync(targetPath, { recursive: true, force: true });
@@ -336,6 +354,7 @@ export function createExtensionHost({
     if (!item) throw new Error(`Extension not found: ${id}`);
     item.enabled = enabled === true;
     writeRegistry(registry);
+    if (item.enabled === false) deactivateExtensionState(id);
     return item;
   }
 
@@ -343,6 +362,7 @@ export function createExtensionHost({
     const registry = readRegistry();
     const item = registry.find(ext => ext.id === id);
     if (!item) throw new Error(`Extension not found: ${id}`);
+    deactivateExtensionState(id);
     fs.rmSync(item.extensionPath, { recursive: true, force: true });
     writeRegistry(registry.filter(ext => ext.id !== id));
     return { ok: true, id };
@@ -391,11 +411,11 @@ export function createExtensionHost({
     const extension = listExtensions().find(ext => ext.id === id);
     if (!extension) throw new Error(`Extension not found: ${id}`);
     if (extension.enabled === false) throw new Error(`Extension is disabled: ${id}`);
-    if (activatedExtensions.has(id)) return activatedExtensions.get(id);
+    if (activatedExtensions.has(id)) return activatedExtensions.get(id).summary;
     if (!extension.main) {
-      const activated = { id, activated: true, activationEvent, exports: {}, message: 'No main entry; manifest commands only.' };
-      activatedExtensions.set(id, activated);
-      return activated;
+      const summary = { id, activated: true, activationEvent, exports: {}, message: 'No main entry; manifest commands only.' };
+      activatedExtensions.set(id, { summary, subscriptions: [] });
+      return summary;
     }
 
     const mainFile = path.resolve(extension.extensionPath, extension.main);
@@ -404,6 +424,7 @@ export function createExtensionHost({
     }
 
     const { api: vscodeApi, context } = createVscodeApi(extension);
+    const subscriptions = context.subscriptions || [];
     const module = { exports: {} };
     const sandbox = {
       exports: module.exports,
@@ -424,12 +445,23 @@ export function createExtensionHost({
     const runner = script.runInNewContext(sandbox, { timeout: 1000 });
     runner(module.exports, sandbox.require, module, mainFile, path.dirname(mainFile));
 
-    if (typeof module.exports.activate === 'function') {
-      await module.exports.activate(context);
+    try {
+      if (typeof module.exports.activate === 'function') {
+        await module.exports.activate(context);
+      }
+      const summary = { id, activated: true, activationEvent, exports: Object.keys(module.exports || {}), commands: listRegisteredCommands().filter(cmd => cmd.extensionId === id) };
+      activatedExtensions.set(id, { summary, subscriptions });
+      return summary;
+    } catch (error) {
+      for (const disposable of subscriptions) {
+        try {
+          disposable.dispose?.();
+        } catch {
+          // Ignore cleanup failures while unwinding activation errors.
+        }
+      }
+      throw error;
     }
-    const activated = { id, activated: true, activationEvent, exports: Object.keys(module.exports || {}), commands: listRegisteredCommands().filter(cmd => cmd.extensionId === id) };
-    activatedExtensions.set(id, activated);
-    return activated;
   }
 
   async function activateByEvent(event) {
@@ -456,6 +488,10 @@ export function createExtensionHost({
         return { ok: false, command, extensionId: manifestCommand.extensionId, message: 'Command is declared in manifest but was not registered by extension activate().' };
       }
       throw new Error(`Command not found: ${command}`);
+    }
+    const extension = listExtensions().find(ext => ext.id === registered.extensionId);
+    if (!extension || extension.enabled === false) {
+      throw new Error(`Command belongs to a disabled or missing extension: ${registered.extensionId}`);
     }
     const result = await registered.callback(...(Array.isArray(args) ? args : [args]));
     return { ok: true, command, extensionId: registered.extensionId, result };

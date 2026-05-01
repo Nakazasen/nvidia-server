@@ -472,12 +472,12 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 4: Enterprise/IDE Mode Toggle",
+  "last_completed_sprint": "Sprint 5: Extension UX Tối Thiểu",
   "last_implementer": "Gemini 3 Flash",
   "last_auditor": "Codex",
-  "last_audit_result": "Codex tightened Enterprise mode safety by hiding code/context/pending-edit surfaces, disabling Auto-Accept and IDE context payloads outside IDE mode, sanitizing profile enabledPanels, verified profile API mode persistence/rejection, verified command job start/list/cancel, verified contextTerminalJobs through a local provider stub, syntax checks passed, inline script parse passed, and npm run agent:audit passed 25/25.",
-  "next_sprint": "Sprint 5: Extension UX Tối Thiểu",
-  "next_prompt_instruction": "Ask Gemini 3 Flash to start from README.md Sprint 5 only, keep Sprint 1/2/3/4 behavior intact, then send results back to Codex for audit/fix",
+  "last_audit_result": "Codex fixed extension activation crash (subscriptions scope), removed duplicate toggleBottomPanel, added IDE guard in showExtensionDetail, completed hard mojibake cleanup pass in nvidia_playground.html (final blocker patterns 0), re-verified local fixture install/activate/run/disable/uninstall flow, node syntax checks passed, inline script parse passed, and npm run agent:audit passed 25/25.",
+  "next_sprint": "Sprint 6: Monaco Workbench / Multi-tab Editor",
+  "next_prompt_instruction": "Ask Gemini 3 Flash to start from README.md Sprint 6 only, keep Sprint 1/2/3/4/5 behavior intact, then send results back to Codex for audit/fix",
   "status_marker_version": 1
 }
 ```

@@ -1596,7 +1596,12 @@ const server = http.createServer(async (req, res) => {
             }
 
             if (req.url === '/api/workflows') return sendJSON(res, 200, { commands: getWorkflowCommands() });
-            if (req.url === '/api/extensions') return sendJSON(res, 200, { extensions: extensionHost.listExtensions(), commands: extensionHost.listCommands(), registeredCommands: extensionHost.listRegisteredCommands() });
+            if (req.url === '/api/extensions') return sendJSON(res, 200, {
+                extensions: extensionHost.listExtensions(),
+                commands: extensionHost.listCommands(),
+                registeredCommands: extensionHost.listRegisteredCommands(),
+                providers: extensionHost.getAgentProviders()
+            });
             if (requestUrl.pathname === '/api/extensions/search') {
                 const query = requestUrl.searchParams.get('q') || requestUrl.searchParams.get('query') || '';
                 const results = await extensionHost.searchOpenVsx(query, requestUrl.searchParams.get('size') || 20);
@@ -1615,6 +1620,19 @@ const server = http.createServer(async (req, res) => {
 
             if (req.url === '/api/select_folder') {
                 const psCommand = "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.ShowNewFolderButton = $true; if($f.ShowDialog() -eq 'OK'){$f.SelectedPath}";
+                exec(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${psCommand}"`, { windowsHide: true }, (error, stdout) => {
+                    if (error) return sendJSON(res, 500, { error: error.message });
+                    sendJSON(res, 200, { path: stdout.trim() });
+                });
+                return;
+            }
+
+            if (requestUrl.pathname === '/api/select_file') {
+                const kind = (requestUrl.searchParams.get('kind') || '').toLowerCase();
+                const filter = kind === 'vsix'
+                    ? 'VSIX files (*.vsix)|*.vsix|All files (*.*)|*.*'
+                    : 'All files (*.*)|*.*';
+                const psCommand = `[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Filter = ${JSON.stringify(filter)}; $f.Multiselect = $false; if($f.ShowDialog() -eq 'OK'){$f.FileName}`;
                 exec(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${psCommand}"`, { windowsHide: true }, (error, stdout) => {
                     if (error) return sendJSON(res, 500, { error: error.message });
                     sendJSON(res, 200, { path: stdout.trim() });
@@ -1680,37 +1698,44 @@ const server = http.createServer(async (req, res) => {
 
         if (req.url === '/api/install_extension') {
             const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'install_extension requires explicit UI approval.' });
             const installed = extensionHost.installFromFolder(body.path);
             return sendJSON(res, 200, { status: 'success', extension: installed });
         }
 
         if (req.url === '/api/extensions/install_folder') {
             const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/install_folder requires explicit UI approval.' });
             return sendJSON(res, 200, { status: 'success', extension: extensionHost.installFromFolder(body.path) });
         }
 
         if (req.url === '/api/extensions/install_vsix') {
             const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/install_vsix requires explicit UI approval.' });
             return sendJSON(res, 200, { status: 'success', extension: extensionHost.installFromVsix(body.path) });
         }
 
         if (req.url === '/api/extensions/install_openvsx') {
             const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/install_openvsx requires explicit UI approval.' });
             return sendJSON(res, 200, { status: 'success', extension: await extensionHost.installFromOpenVsx(body) });
         }
 
         if (req.url === '/api/extensions/enable') {
             const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/enable requires explicit UI approval.' });
             return sendJSON(res, 200, { status: 'success', extension: extensionHost.setEnabled(body.id, body.enabled === true) });
         }
 
         if (req.url === '/api/extensions/uninstall') {
             const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/uninstall requires explicit UI approval.' });
             return sendJSON(res, 200, { status: 'success', result: extensionHost.uninstall(body.id) });
         }
 
         if (req.url === '/api/extensions/activate') {
             const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/activate requires explicit UI approval.' });
             const result = body.event
                 ? await extensionHost.activateByEvent(body.event)
                 : await extensionHost.activateExtension(body.id, body.activationEvent || 'manual');
@@ -1719,6 +1744,7 @@ const server = http.createServer(async (req, res) => {
 
         if (req.url === '/api/extensions/run_command') {
             const body = await getBody(req);
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/run_command requires explicit UI approval.' });
             const result = await extensionHost.executeCommand(body.command, body.args || []);
             return sendJSON(res, 200, { status: 'success', result });
         }

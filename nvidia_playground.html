@@ -1255,7 +1255,7 @@
             position: relative;
         }
 
-        /* Monaco cần flex-1 và hidden */
+        /* Monaco needs flex-1 and hidden */
         @keyframes slideUp {
             from {
                 transform: translateY(20px);
@@ -1608,13 +1608,13 @@
 
 <body>
     <div class="activity-bar">
-        <div class="activity-btn active" onclick="switchSidebarTab('explorer')" id="btn-explorer" title="Explorer">📂
+        <div class="activity-btn active" onclick="switchSidebarTab('explorer')" id="btn-explorer" title="Explorer">[EXP]
         </div>
-        <div class="activity-btn" onclick="switchSidebarTab('tasks')" id="btn-tasks" title="Composer & Tasks">📝
+        <div class="activity-btn" onclick="switchSidebarTab('tasks')" id="btn-tasks" title="Composer & Tasks">[TASK]
         </div>
-        <div class="activity-btn" onclick="switchSidebarTab('extensions')" id="btn-extensions" title="Extensions">🧩
+        <div class="activity-btn" onclick="switchSidebarTab('extensions')" id="btn-extensions" title="Extensions">[EXT]
         </div>
-        <div style="margin-top: auto;" class="activity-btn" onclick="openSettings()" title="Settings">⚙️</div>
+        <div style="margin-top: auto;" class="activity-btn" onclick="openSettings()" title="Settings">[SET]</div>
     </div>
 
     <div class="sidebar" id="sidebar-explorer">
@@ -1623,19 +1623,19 @@
         </div>
 
         <div class="workspace-info">
-            <div class="sidebar-section-title">🏠 Workspace</div>
-            <div id="current-workspace-path" class="workspace-path">Đang tải...</div>
+            <div class="sidebar-section-title">Workspace</div>
+            <div id="current-workspace-path" class="workspace-path">Loading...</div>
             <div style="display: flex; gap: 5px;">
-                <button class="btn-small" onclick="changeWorkspace()">Thay đổi...</button>
+                <button class="btn-small" onclick="changeWorkspace()">Thay ...</button>
             </div>
         </div>
 
-        <div class="sidebar-section-title">📂 Project Files</div>
+        <div class="sidebar-section-title">[EXP] Project Files</div>
         <div id="file-explorer" class="file-tree">
-            <div style="opacity: 0.3; text-align: center; padding: 10px;">Đang tải tệp...</div>
+            <div style="opacity: 0.3; text-align: center; padding: 10px;">Loading files...</div>
         </div>
 
-        <div class="sidebar-section-title">💬 Sessions</div>
+        <div class="sidebar-section-title">Sessions</div>
         <button onclick="createNewSession()"
             style="width:100%; padding:10px; background:rgba(var(--primary-rgb), 0.1); color:var(--primary); border:1px solid var(--primary); border-radius:8px; cursor:pointer; font-weight:bold; margin-bottom:15px; font-size: 0.8rem;">+
             New Chat</button>
@@ -1643,8 +1643,8 @@
 
         <div style="margin-top:auto; padding-top:20px; border-top:1px solid #222;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                <label style="font-size:0.75rem; opacity:0.6;">Mô hình NIM:</label>
-                <button class="btn-refresh-models" onclick="refreshModelStatus()" title="Refresh Status">🔄</button>
+                <label style="font-size:0.75rem; opacity:0.6;">NIM Model:</label>
+                <button class="btn-refresh-models" onclick="refreshModelStatus()" title="Refresh Status">Refresh</button>
             </div>
 
             <div id="smart-model-selector" class="custom-dropdown">
@@ -1655,9 +1655,9 @@
                     </div>
                     <div style="display:flex; gap:10px; align-items:center;">
                         <button class="btn-refresh-models" onclick="event.stopPropagation(); sortModelsByPerformance()"
-                            title="Sắp xếp thông minh (Ưu tiên IQ cao + Xanh)"
-                            style="background:none; border:none; padding:0; font-size:1rem; cursor:pointer;">⚡</button>
-                        <span>▾</span>
+                            title="Smart sort (IQ + healthy status)"
+                            style="background:none; border:none; padding:0; font-size:1rem; cursor:pointer;">Sort</button>
+                        <span>v</span>
                     </div>
                 </div>
                 <div id="model-dropdown-list" class="dropdown-content">
@@ -1681,12 +1681,12 @@
             <h3 style="margin: 0; font-size: 1rem; color: var(--primary);">Task & Composer</h3>
         </div>
 
-        <div class="sidebar-section-title">🕒 Timeline</div>
+        <div class="sidebar-section-title">Timeline</div>
         <div id="task-timeline" style="flex: 1; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 8px;">
             <div style="opacity: 0.3; text-align: center; padding: 10px;">No active task</div>
         </div>
 
-        <div class="sidebar-section-title">📁 Changed Files</div>
+        <div class="sidebar-section-title">Changed Files</div>
         <div id="changed-files-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 5px;">
             <div style="opacity: 0.3; text-align: center; padding: 10px;">No changes yet</div>
         </div>
@@ -1700,20 +1700,28 @@
     <div class="sidebar" id="sidebar-extensions" style="display:none;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
             <h3 style="margin: 0; font-size: 1rem; color: var(--primary);">Extensions</h3>
-            <button class="btn-small" onclick="installExtension()" title="Install from Folder">📥 Local</button>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+                <button class="btn-small" onclick="installExtension()" title="Install from Folder">Local Folder</button>
+                <button class="btn-small" onclick="installVsix()" title="Install VSIX">VSIX</button>
+                <button class="btn-small" onclick="refreshExtensions()">Refresh</button>
+            </div>
         </div>
 
-        <input type="text" class="ext-search-box" placeholder="Search Extensions in Market..."
+        <input type="text" class="ext-search-box" placeholder="Search Open VSX..."
             oninput="filterExtensions(this.value)">
 
         <div class="extension-view active">
-            <div class="sidebar-section-title">✔️ Installed</div>
-            <div id="installed-ext-list" class="ext-list" style="max-height: 50%; margin-bottom: 20px;"></div>
+            <div class="sidebar-section-title">Installed</div>
+            <div id="installed-ext-list" class="ext-list" style="max-height: 28%; margin-bottom: 18px;"></div>
 
-            <div class="sidebar-section-title">🔥 Recommended</div>
-            <div id="recommended-ext-list" class="ext-list">
-                <!-- Sẽ được render từ JS để dễ quản lý -->
-            </div>
+            <div class="sidebar-section-title">Registered Commands</div>
+            <div id="registered-ext-command-list" class="ext-list" style="max-height: 20%; margin-bottom: 18px;"></div>
+
+            <div class="sidebar-section-title">Agent Providers</div>
+            <div id="agent-provider-list" class="ext-list" style="max-height: 18%; margin-bottom: 18px;"></div>
+
+            <div class="sidebar-section-title">Open VSX Results</div>
+            <div id="marketplace-ext-list" class="ext-list"></div>
         </div>
     </div>
 
@@ -1724,14 +1732,15 @@
 
         <div id="chat-view" style="display: flex; flex-direction: column; flex: 1; height: 100%; min-height: 0;">
             <div class="header">
-                <button class="toggle-btn mode-ide-only" onclick="toggleSidebar()">☰ Menu</button>
+                <button class="toggle-btn mode-ide-only" onclick="toggleSidebar()">Menu</button>
                 <div style="display: flex; gap: 15px; align-items: center;">
                     <div style="font-weight: bold; color: var(--primary); font-size: 0.9rem;">NVIDIA NIM IDE</div>
                     <span id="ui-mode-chip" class="mode-chip">Mode: enterprise</span>
                     <button id="mode-toggle-btn" class="mode-toggle-btn" onclick="toggleUIMode()">Switch to IDE Mode</button>
-                    <button class="btn-small mode-ide-only" onclick="toggleBottomPanel()">💻 Terminal & Search</button>
+                    <button class="btn-small mode-ide-only" onclick="openCommandPalette()">Command Palette</button>
+                    <button class="btn-small mode-ide-only" onclick="toggleBottomPanel()">Terminal & Search</button>
                 </div>
-                <button class="toggle-btn mode-ide-only" onclick="togglePlan()">📋 Kế hoạch</button>
+                <button class="toggle-btn mode-ide-only" onclick="togglePlan()">Plan</button>
             </div>
             <div id="chat-box" class="chat-container"></div>
 
@@ -1739,14 +1748,14 @@
                 <div class="code-header">
                     <div id="code-filename" style="color: var(--primary); font-weight: bold; font-family: monospace;">
                         filename.js</div>
-                    <button class="toggle-btn" onclick="closeCodeViewer()">✕ Đóng</button>
+                    <button class="toggle-btn" onclick="closeCodeViewer()">Close</button>
                 </div>
                 <div id="code-body" class="code-content"></div>
             </div>
 
             <div id="selection-badge"
                 style="display:none; background:rgba(118, 185, 0, 0.1); color:var(--primary); padding:5px 15px; border-top:1px solid var(--glass-border); font-size:0.75rem; border-left: 3px solid var(--primary);">
-                📎 Đã đính kèm vùng chọn code
+                Attached code selection
             </div>
             <div id="pinned-context" class="context-pills"></div>
             <div class="input-area" style="position: relative;">
@@ -1756,23 +1765,23 @@
                     <button onclick="document.getElementById('file-input').click()"
                         style="background:none; border:none; color:#777; cursor:pointer; font-size:1.5rem; padding:0 5px;">+</button>
                     <input type="file" id="file-input" multiple style="display:none">
-                    <textarea id="user-input" placeholder="Nhập câu hỏi..."></textarea>
-                    <button id="send-stop-btn" onclick="handleSendStop()" class="btn-send">🚀</button>
+                    <textarea id="user-input" placeholder="Enter your question..."></textarea>
+                    <button id="send-stop-btn" onclick="handleSendStop()" class="btn-send">Send</button>
                 </div>
             </div>
 
             <div id="debug-console" class="debug-console">
-                <div>[Hệ thống]: Agent đã sẵn sàng.</div>
+                <div>[System]: Agent ready.</div>
             </div>
         </div>
 
         <div id="bottom-panel" class="bottom-panel">
             <div class="panel-tabs">
-                <div class="panel-tab active" id="tab-terminal" onclick="switchTab('terminal')">💻 Terminal</div>
-                <div class="panel-tab" id="tab-jobs" onclick="switchTab('jobs')">⚙️ Jobs</div>
-                <div class="panel-tab" id="tab-search" onclick="switchTab('search')">🔍 Search</div>
+                <div class="panel-tab active" id="tab-terminal" onclick="switchTab('terminal')">Terminal</div>
+                <div class="panel-tab" id="tab-jobs" onclick="switchTab('jobs')">Jobs</div>
+                <div class="panel-tab" id="tab-search" onclick="switchTab('search')">Search</div>
                 <div style="margin-left: auto; padding: 8px 15px; cursor: pointer; opacity: 0.5;"
-                    onclick="toggleBottomPanel()">✕</div>
+                    onclick="toggleBottomPanel()">x</div>
             </div>
             
             <div id="terminal-view" class="panel-content" style="padding: 0; display: flex; flex-direction: column;">
@@ -1781,11 +1790,11 @@
                     <span id="active-job-status"></span>
                 </div>
                 <div id="terminal-output-container" class="terminal-output-container">
-                    <div id="terminal-output" style="padding: 10px; color: #ccc;">Sẵn sàng...</div>
+                    <div id="terminal-output" style="padding: 10px; color: #ccc;">Ready...</div>
                 </div>
                 <div class="terminal-input-row">
-                    <span style="color: var(--primary);">❯</span>
-                    <input type="text" id="terminal-input" class="terminal-input" placeholder="Nhập lệnh và Enter..." onkeydown="if(event.key==='Enter') runManualCommand()">
+                    <span style="color: var(--primary);">></span>
+                    <input type="text" id="terminal-input" class="terminal-input" placeholder="Enter command and press Enter..." onkeydown="if(event.key==='Enter') runManualCommand()">
                 </div>
             </div>
 
@@ -1799,12 +1808,12 @@
                 <div style="display: flex; gap: 10px; margin-bottom: 15px; padding: 10px;">
                     <input type="text" id="global-search-input"
                         style="flex:1; background:#111; border:1px solid #333; color:#fff; padding:5px 10px; border-radius:4px;"
-                        placeholder="Tìm nội dung trong project..."
+                        placeholder="Search in project..."
                         onkeydown="if(event.key==='Enter') runGlobalSearch()">
-                    <button class="btn-small" onclick="runGlobalSearch()">Tìm</button>
+                    <button class="btn-small" onclick="runGlobalSearch()">Search</button>
                 </div>
                 <div id="search-results-list" class="search-results" style="padding: 0 10px;">
-                    <div style="opacity: 0.3; text-align: center; padding: 20px;">Nhập từ khóa và nhấn Enter.</div>
+                    <div style="opacity: 0.3; text-align: center; padding: 20px;">Enter keyword and press Enter.</div>
                 </div>
             </div>
         </div>
@@ -1812,25 +1821,25 @@
 
     <div id="right-panel" class="right-panel">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h3 style="margin: 0;">📋 Kế hoạch (Plan)</h3>
+            <h3 style="margin: 0;">Plan (Plan)</h3>
             <button class="toggle-btn mobile-only" onclick="togglePlan()"
-                style="display: none; padding: 2px 8px;">✕</button>
+                style="display: none; padding: 2px 8px;">/button>
         </div>
         <div id="plan-steps">
-            <div style="opacity:0.3; text-align:center;">Chưa có kế hoạch</div>
+            <div style="opacity:0.3; text-align:center;">No plan yet</div>
         </div>
     </div>
 
     <div id="modal-overlay" class="modal-overlay">
         <div class="modal">
-            <h3 id="modal-title">Yêu cầu thực thi</h3>
+            <h3 id="modal-title">Execution Approval</h3>
             <p id="modal-desc" style="margin: 15px 0; font-size: 0.9rem; color: #ccc;"></p>
             <div id="modal-input-container" style="display:none; margin-bottom: 15px; position: relative;">
                 <input type="text" id="modal-input"
                     style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px 35px 8px 8px; border-radius:4px;">
                 <span id="modal-folder-picker"
                     style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); cursor: pointer; opacity: 0.7; font-size: 1.2rem;"
-                    title="Chọn thư mục">📂</span>
+                    title="Choose file/folder">[EXP]</span>
             </div>
             <div id="settings-container" style="display:none; text-align: left; margin-bottom: 20px;">
                 <div style="margin-bottom:15px;">
@@ -1869,26 +1878,26 @@
                 </div>
             </div>
             <div class="btn-group">
-                <button id="btn-allow" class="btn" style="background:var(--primary); color:#000;">Xác nhận</button>
-                <button id="btn-deny" class="btn" style="background:#333; color:#fff;">Hủy</button>
+                <button id="btn-allow" class="btn" style="background:var(--primary); color:#000;">Confirm</button>
+                <button id="btn-deny" class="btn" style="background:#333; color:#fff;">Cancel</button>
             </div>
         </div>
     </div>
 
     <script>
-        // --- 1. Khai báo biến toàn cục (PHẢI ở trên cùng) ---
+        // --- 1. Global variables (must be first) ---
         const tools_def = [
-            { type: "function", function: { name: "update_plan", description: "Cập nhật các bước kế hoạch hành động", parameters: { type: "object", properties: { steps: { type: "array", items: { type: "string" } } } } } },
-            { type: "function", function: { name: "list_dir", description: "Liệt kê tệp/thư mục", parameters: { type: "object", properties: { dirPath: { type: "string" } } } } },
-            { type: "function", function: { name: "read_file", description: "Đọc tệp", parameters: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] } } },
-            { type: "function", function: { name: "read_file_paged", description: "Đọc một đoạn dòng trong tệp lớn", parameters: { type: "object", properties: { filePath: { type: "string" }, startLine: { type: "integer" }, lineCount: { type: "integer" } }, required: ["filePath"] } } },
-            { type: "function", function: { name: "write_file", description: "Ghi tệp", parameters: { type: "object", properties: { filePath: { type: "string" }, content: { type: "string" } }, required: ["filePath", "content"] } } },
-            { type: "function", function: { name: "apply_patch", description: "Đề xuất patch bằng thay thế text chính xác và tạo diff chờ duyệt", parameters: { type: "object", properties: { filePath: { type: "string" }, find: { type: "string" }, replace: { type: "string" }, reason: { type: "string" } }, required: ["filePath"] } } },
-            { type: "function", function: { name: "start_command_job", description: "Chạy lệnh lâu dưới dạng job có thể hủy", parameters: { type: "object", properties: { command: { type: "string" }, timeoutMs: { type: "integer" } }, required: ["command"] } } },
-            { type: "function", function: { name: "command_job_status", description: "Xem trạng thái command job", parameters: { type: "object", properties: { id: { type: "string" } } } } },
-            { type: "function", function: { name: "cancel_command_job", description: "Hủy command job đang chạy", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } } },
+            { type: "function", function: { name: "update_plan", description: "Cp nht cc b k hoch hnh g", parameters: { type: "object", properties: { steps: { type: "array", items: { type: "string" } } } } } },
+            { type: "function", function: { name: "list_dir", description: "Li k t/th mc", parameters: { type: "object", properties: { dirPath: { type: "string" } } } } },
+            { type: "function", function: { name: "read_file", description: " t", parameters: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] } } },
+            { type: "function", function: { name: "read_file_paged", description: " m n dng trong t l", parameters: { type: "object", properties: { filePath: { type: "string" }, startLine: { type: "integer" }, lineCount: { type: "integer" } }, required: ["filePath"] } } },
+            { type: "function", function: { name: "write_file", description: "Ghi t", parameters: { type: "object", properties: { filePath: { type: "string" }, content: { type: "string" } }, required: ["filePath", "content"] } } },
+            { type: "function", function: { name: "apply_patch", description: "xut patch bng thay th text chnh xc v to diff chduy", parameters: { type: "object", properties: { filePath: { type: "string" }, find: { type: "string" }, replace: { type: "string" }, reason: { type: "string" } }, required: ["filePath"] } } },
+            { type: "function", function: { name: "start_command_job", description: "Chy lh lu d dng job c thhy", parameters: { type: "object", properties: { command: { type: "string" }, timeoutMs: { type: "integer" } }, required: ["command"] } } },
+            { type: "function", function: { name: "command_job_status", description: "Xem trng thi command job", parameters: { type: "object", properties: { id: { type: "string" } } } } },
+            { type: "function", function: { name: "cancel_command_job", description: "Cancel command job ng chy", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } } },
             { type: "function", function: { name: "discard_pending_edit", description: "Discard a pending edit without writing it to disk", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } } },
-            { type: "function", function: { name: "execute_command", description: "Thực thi lệnh", parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } } }
+            { type: "function", function: { name: "execute_command", description: "Thc thi lh", parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } } }
         ];
 
         tools_def.splice(3, 0, { type: "function", function: { name: "search", description: "Search text in the current workspace", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } });
@@ -1906,10 +1915,10 @@
         const pinnedContext = document.getElementById('pinned-context');
         const sendStopBtn = document.getElementById('send-stop-btn');
 
-        let attachedContexts = []; // Danh sách context đang ghim
-        let allFiles = []; // Danh sách file cho @ mention
-        let allFolders = []; // Danh sách folder cho @ mention
-        let isAtMenu = false; // Đang hiện menu @
+        let attachedContexts = []; // Danh sch context ng ghim
+        let allFiles = []; // Danh sch file cho @ mention
+        let allFolders = []; // Danh sch folder cho @ mention
+        let isAtMenu = false; // ng hi menu @
         let menuType = 'command'; // 'command', 'context', 'file', 'folder'
         let editor = null; // Monaco Editor instance
         let currentEditingPath = "";
@@ -2030,7 +2039,7 @@
                 if (input) input.checked = !!trust.trusted;
                 logDebug(`Workspace trust: ${trust.trusted ? 'trusted' : 'restricted'}`);
             } catch (e) {
-                logDebug('Không đọc được workspace trust: ' + e.message);
+                logDebug('Khng  c workspace trust: ' + e.message);
             }
         }
 
@@ -2043,7 +2052,7 @@
                 body: JSON.stringify({ trusted: input.checked })
             });
             const trust = await res.json();
-            logDebug(`Workspace trust đã chuyển sang: ${trust.trusted ? 'trusted' : 'restricted'}`);
+            logDebug(`Workspace trust  chuy sang: ${trust.trusted ? 'trusted' : 'restricted'}`);
         }
 
         async function refreshPendingEdits() {
@@ -2071,7 +2080,7 @@
             list.innerHTML = edits.map(edit => `
                 <div class="file-item" style="justify-content: space-between;" onclick="openDiffViewer('${edit.id}')">
                     <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
-                        <span class="icon">📝</span>
+                        <span class="icon">[TASK]</span>
                         <span style="overflow:hidden; text-overflow:ellipsis;">${escapeHtml(edit.relPath)}</span>
                     </div>
                     <span style="font-size:0.7rem; opacity:0.5;">${edit.hunks ? edit.hunks.length : 1} hunks</span>
@@ -2219,7 +2228,7 @@
                     return;
                 }
                 const result = data.result || data;
-                logDebug(`Đã apply pending edit ${id}: ${result.relPath}`);
+                logDebug(` apply pending edit ${id}: ${result.relPath}`);
                 const card = document.getElementById(`pending-${id}`);
                 if (card) {
                     card.innerHTML = `<div style="color:var(--primary); padding:10px;"><b>Applied:</b> ${escapeHtml(result.relPath)}</div>`;
@@ -2261,7 +2270,7 @@
             list.scrollTop = list.scrollHeight;
         }
 
-        // --- Bẫy lỗi toàn cục ---
+        // --- By l ton cc ---
         async function refreshRateLimitStatus() {
             const el = document.getElementById('rate-limit-status');
             if (!el) return;
@@ -2282,11 +2291,11 @@
         }
 
         window.onerror = function (message, source, lineno, colno, error) {
-            logDebug(`LỖI JS: ${message} tại ${source}:${lineno}`);
+            logDebug(`L JS: ${message} ti ${source}:${lineno}`);
             return false;
         };
         window.onunhandledrejection = function (event) {
-            logDebug(`LỖI ASYNC: ${event.reason}`);
+            logDebug(`L ASYNC: ${event.reason}`);
         };
         let sessions = JSON.parse(localStorage.getItem('nvidia_sessions_v5') || '{}');
         let currentSessionId = localStorage.getItem('nvidia_current_session_id_v5');
@@ -2313,7 +2322,7 @@
 
         function createNewSession() {
             const id = 's_' + Date.now();
-            sessions[id] = { title: "Hội thoại mới", messages: [], model: getCurrentModelId() };
+            sessions[id] = { title: "New Chat", messages: [], model: getCurrentModelId() };
             currentSessionId = id;
             resetDraftInput();
             saveSessions();
@@ -2329,10 +2338,10 @@
             }
             if (s.model) selectModel(s.model);
             chatBox.innerHTML = '';
-            planSteps.innerHTML = '<div style="opacity:0.3; text-align:center;">Chưa có kế hoạch</div>';
+            planSteps.innerHTML = '<div style="opacity:0.3; text-align:center;">No plan yet</div>';
 
             if (s.messages.length === 0) {
-                const greeting = "Chào bạn! Tôi có thể giúp gì cho bạn?";
+                const greeting = "Hello! How can I help you today?";
                 addMessage('assistant', greeting, [], 0);
                 s.messages.push({ role: 'assistant', content: greeting });
                 saveSessions();
@@ -2354,7 +2363,7 @@
                 div.innerHTML = `
                     <span class="session-title"></span>
                     <span class="session-actions">
-                        <button class="session-action-btn danger" title="Xóa hẳn hội thoại" onclick="deleteSession('${id}', event)">Xóa</button>
+                        <button class="session-action-btn danger" title="Delete this chat" onclick="deleteSession('${id}', event)">Delete</button>
                     </span>
                 `;
                 div.querySelector('.session-title').innerText = sessions[id].title;
@@ -2366,7 +2375,7 @@
         function deleteSession(id = currentSessionId, event = null) {
             if (event) event.stopPropagation();
             if (!id || !sessions[id]) return;
-            if (!confirm('Xóa hẳn hội thoại này khỏi danh sách?')) return;
+            if (!confirm('Delete this chat ny kh danh sch?')) return;
             delete sessions[id];
             resetDraftInput();
             const remainingIds = Object.keys(sessions).sort((a, b) => b.substring(2) - a.substring(2));
@@ -2407,7 +2416,7 @@
                 document.execCommand('copy');
                 temp.remove();
             }
-            logDebug('Đã copy nội dung chat.');
+            logDebug(' copy n dung chat.');
         }
 
         function editUserMessage(index, fallback = '') {
@@ -2417,7 +2426,7 @@
             userInput.value = text;
             userInput.focus();
             userInput.selectionStart = userInput.selectionEnd = userInput.value.length;
-            logDebug('Đã đưa prompt cũ vào ô nhập để chỉnh sửa và gửi lại.');
+            logDebug(' a prompt c vo  nhp chh sa v gi li.');
         }
 
         function addMessage(role, text, images = [], messageIndex = null) {
@@ -2447,7 +2456,7 @@
                     const header = document.createElement('div');
                     header.className = 'composer-header';
                     header.innerHTML = `
-                        <div class="composer-title">🛠️ Composer: ${matches.length} file cần sửa</div>
+                        <div class="composer-title">Composer: ${matches.length} file cn sa</div>
                         <button class="composer-apply-all" onclick="applyAllComposerChanges(this)">Apply All</button>
                     `;
 
@@ -2466,7 +2475,7 @@
                     div.appendChild(composerContainer);
                 }
 
-                // Parse Markdown cho phần text còn lại
+                // Parse Markdown cho phn text cn li
                 const textDiv = document.createElement('div');
                 textDiv.className = 'message-content';
                 textDiv.innerHTML = typeof marked !== 'undefined' ? marked.parse(remainingText) : remainingText;
@@ -2482,8 +2491,8 @@
                 const actions = document.createElement('div');
                 actions.className = 'message-actions';
                 actions.innerHTML = `
-                    <button class="message-action-btn" title="Copy nội dung" onclick="copyMessage(${actionIndex})">Copy</button>
-                    ${role === 'user' ? `<button class="message-action-btn" title="Chỉnh sửa rồi gửi lại" onclick="editUserMessage(${actionIndex})">Edit</button>` : ''}
+                    <button class="message-action-btn" title="Copy n dung" onclick="copyMessage(${actionIndex})">Copy</button>
+                    ${role === 'user' ? `<button class="message-action-btn" title="Chh sa r gi li" onclick="editUserMessage(${actionIndex})">Edit</button>` : ''}
                 `;
                 div.appendChild(actions);
             }
@@ -2517,7 +2526,7 @@
             div.className = 'media-preview-item';
             div.innerHTML = `
                 <img src="${dataUrl}">
-                <span class="remove-btn" onclick="removeMedia(this, '${dataUrl}')">✕</span>
+                <span class="remove-btn" onclick="removeMedia(this, '${dataUrl}')">/span>
             `;
             mediaPreview.appendChild(div);
             mediaPreview.style.display = 'flex';
@@ -2533,14 +2542,14 @@
             isAgentRunning = running;
             if (!sendStopBtn) return;
             sendStopBtn.classList.toggle('stop', running);
-            sendStopBtn.innerText = running ? '■' : '🚀';
-            sendStopBtn.title = running ? 'Dừng câu trả lời hiện tại' : 'Gửi';
+            sendStopBtn.innerText = running ? '' : 'Send';
+            sendStopBtn.title = running ? 'Dng cu tr l hi ti' : 'Gi';
         }
 
         function stopAgentResponse() {
             if (!isAgentRunning || !currentAgentController) return;
             currentAgentController.abort();
-            logDebug('Đã gửi yêu cầu dừng Agent.');
+            logDebug(' gi yu cu dng Agent.');
         }
 
         function handleSendStop() {
@@ -2567,7 +2576,7 @@
                 });
                 editingMessageIndex = null;
             }
-            if (!s.messages.some(m => m.role === 'user')) s.title = text.substring(0, 25) || "Hình ảnh";
+            if (!s.messages.some(m => m.role === 'user')) s.title = text.substring(0, 25) || "Hnh nh";
 
             const imagesToSend = [...attachedImages];
             const userMessageIndex = s.messages.length;
@@ -2611,12 +2620,12 @@
 
         async function runAgentLoop(contextPayload = {}, forcedModel = null) {
             const s = sessions[currentSessionId];
-            const loading = addMessage('assistant', "Agent đang suy nghĩ...");
+            const loading = addMessage('assistant', "Agent ng suy ngh...");
             currentAgentController = new AbortController();
             setAgentRunning(true);
             updateTaskTimeline({ type: 'start', label: 'Agent Started' });
             let history = [
-                { role: 'system', content: 'Bạn là Agent thông minh. Sử dụng update_plan cho tác vụ phức tạp.' },
+                { role: 'system', content: 'Bn l Agent thng minh. S dng update_plan cho tc v phc tp.' },
                 { role: 'system', content: 'You are an autonomous local IDE agent. When the user asks about workspace files, inspect them with list_dir, search, and read_file instead of asking the user to paste file content. Use update_plan for complex tasks. Ask before destructive actions; read-only inspection is allowed.' },
                 ...s.messages
             ];
@@ -2625,7 +2634,7 @@
 
             try {
                 while (true) {
-                    logDebug(`Gửi yêu cầu tới Proxy (${modelId})...`);
+                    logDebug(`Gi yu cu t Proxy (${modelId})...`);
                     const res = await fetch('/proxy/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -2669,7 +2678,7 @@
                         for (const tc of msg.tool_calls) {
                             const name = tc.function.name;
                             const args = JSON.parse(tc.function.arguments);
-                            loading.innerText = `Đang chạy: ${name}...`;
+                            loading.innerText = `ng chy: ${name}...`;
 
                             let result = "";
                             if (name === 'update_plan') {
@@ -2705,11 +2714,11 @@
                 }
             } catch (e) {
                 if (e.name === 'AbortError') {
-                    loading.innerText = "Đã dừng theo yêu cầu.";
-                    logDebug("Agent đã dừng theo yêu cầu.");
+                    loading.innerText = " dng theo yu cu.";
+                    logDebug("Agent  dng theo yu cu.");
                 } else {
-                    loading.innerText = "Lỗi: " + e.message;
-                    logDebug("Lỗi: " + e.message);
+                    loading.innerText = "L: " + e.message;
+                    logDebug("L: " + e.message);
                 }
             } finally {
                 currentAgentController = null;
@@ -2720,7 +2729,7 @@
         function askPermission(name, args) {
             return new Promise(r => {
                 const modal = document.getElementById('modal-overlay');
-                document.getElementById('modal-title').innerText = "Yêu cầu thực thi";
+                document.getElementById('modal-title').innerText = "Execution Approval";
                 document.getElementById('modal-desc').innerText = `${name}: ${JSON.stringify(args)}`;
                 document.getElementById('modal-input-container').style.display = 'none';
                 modal.classList.add('active');
@@ -2729,7 +2738,7 @@
             });
         }
 
-        function customPrompt(title, defaultValue = "") {
+        function customPrompt(title, defaultValue = "", options = {}) {
             return new Promise(r => {
                 const modal = document.getElementById('modal-overlay');
                 document.getElementById('modal-title').innerText = title;
@@ -2743,7 +2752,10 @@
                     console.log("Picker clicked, calling API...");
                     picker.style.opacity = "0.3";
                     try {
-                        const res = await fetch('/api/select_folder');
+                        const pickerEndpoint = options.pickerEndpoint || (options.pickerKind === 'file'
+                            ? `/api/select_file${options.fileKind ? `?kind=${encodeURIComponent(options.fileKind)}` : ''}`
+                            : '/api/select_folder');
+                        const res = await fetch(pickerEndpoint);
                         const data = await res.json();
                         if (data.path) {
                             input.value = data.path;
@@ -2768,8 +2780,8 @@
             const modal = document.getElementById('modal-overlay');
             if (!modal) return;
 
-            document.getElementById('modal-title').innerText = "Cài đặt hệ thống";
-            document.getElementById('modal-desc').innerText = "Cấu hình tham số lõi của NVIDIA Agent.";
+            document.getElementById('modal-title').innerText = "System Settings";
+            document.getElementById('modal-desc').innerText = "Configure local NVIDIA Agent settings.";
             document.getElementById('modal-input-container').style.display = 'none';
 
             // Ensure settings container exists
@@ -2785,7 +2797,7 @@
                 if (settingsCont) settingsCont.style.display = 'none';
                 await setWorkspaceTrustFromSettings();
                 if (modeInput) await setUIMode(modeInput.value, { persist: true });
-                logDebug("Đã lưu cài đặt mới.");
+                logDebug(" lu ci t m.");
             };
             document.getElementById('btn-deny').onclick = () => {
                 modal.classList.remove('active');
@@ -2796,180 +2808,252 @@
         let availableCommands = [];
         let filteredCommands = [];
         let selectedCommandIndex = -1;
-
-        const recommendedExtensions = [
-            { id: 'pytest', icon: '🧪', name: 'PyTest Runner', author: 'Python Community', desc: 'Chạy và debug unit test Python cực nhanh.', meta: '⭐ 4.9 | 10k+', longDesc: 'Tiện ích này giúp bạn tích hợp bộ chạy test PyTest trực tiếp vào NVIDIA Agent. Bạn có thể chạy toàn bộ test case hoặc từng file riêng lẻ, xem kết quả trực quan và tự động sửa code nếu test thất bại.' },
-            { id: 'rerank', icon: '📊', name: 'NVIDIA Rerank', author: 'NVIDIA Corp', desc: 'Tăng độ chính xác khi tìm kiếm semantic.', meta: '⭐ 5.0 | Verified', longDesc: 'Sử dụng mô hình Rerank mới nhất của NVIDIA để sắp xếp lại kết quả tìm kiếm. Điều này cực kỳ hữu ích cho các ứng dụng RAG (Retrieval Augmented Generation), giúp AI tìm đúng context nhất trong hàng nghìn tài liệu.' },
-            { id: 'grep', icon: '🔍', name: 'Smart Grep', author: 'Agentic Tools', desc: 'Tìm kiếm text siêu tốc trong toàn bộ project.', meta: '⭐ 4.8 | 5k+', longDesc: 'Công cụ tìm kiếm mạnh mẽ hỗ trợ Regex và lọc file thông minh. Giúp bạn tìm thấy bất kỳ dòng code nào trong project chỉ trong vài mili giây.' },
-            { id: 'linter', icon: '✨', name: 'AI Linter', author: 'NVIDIA AI', desc: 'Tự động kiểm tra và gợi ý sửa lỗi code bằng AI.', meta: '⭐ 4.7 | AI Team', longDesc: 'Vượt xa các linter truyền thống, AI Linter phân tích logic code và đưa ra các gợi ý refactor thông minh để tối ưu hiệu năng và bảo mật.' },
-            { id: 'git', icon: '🌿', name: 'Git Graph', author: 'Open Source', desc: 'Trực quan hóa lịch sử commit và các nhánh.', meta: '⭐ 4.9 | 20k+', longDesc: 'Xem lịch sử phát triển dự án dưới dạng đồ họa trực quan. Hỗ trợ merge, rebase và quản lý nhánh cực kỳ đơn giản.' },
-            { id: 'docker', icon: '🐳', name: 'Docker Manager', author: 'DevOps Tools', desc: 'Quản lý container ngay trong IDE.', meta: '⭐ 4.6 | 8k+', longDesc: 'Điều khiển Docker container, xem log và quản lý image mà không cần rời khỏi IDE.' }
-        ];
-
         let installedExtensionRecords = [];
         let marketplaceExtensions = [];
+        let registeredExtensionCommands = [];
+        let extensionAgentProviders = [];
+        let selectedExtensionId = null;
         let extensionSearchTimer = null;
 
         function normalizeExtensionForUi(ext) {
+            const fallbackId = [ext.namespace || ext.publisher || 'local', ext.extension || ext.name || ext.displayName || 'extension'].join('.');
             return {
-                id: ext.id || `${ext.namespace || ext.publisher || 'local'}.${ext.name}`,
-                namespace: ext.namespace,
-                extension: ext.extension || ext.packageName || ext.name,
-                icon: ext.icon || '▣',
-                name: ext.displayName || ext.name || ext.id,
-                author: ext.publisher || ext.namespace || ext.author || 'Open VSX',
+                id: ext.id || fallbackId,
+                namespace: ext.namespace || ext.publisher || null,
+                extension: ext.extension || ext.packageName || ext.name || null,
+                icon: ext.icon || 'EXT',
+                name: ext.displayName || ext.name || ext.id || fallbackId,
+                author: ext.publisher || ext.namespace || ext.author || 'Local',
                 desc: ext.description || ext.desc || '',
-                meta: ext.meta || `${ext.version || ''}${ext.downloadCount ? ` | ${ext.downloadCount} downloads` : ''}`,
+                meta: ext.meta || [ext.version, ext.downloadCount ? `${ext.downloadCount} downloads` : null].filter(Boolean).join(' | '),
                 longDesc: ext.longDesc || ext.description || ext.desc || '',
-                installed: !!ext.extensionPath,
+                installed: ext.installed === true || !!ext.extensionPath,
                 enabled: ext.enabled !== false,
-                commands: ext.commands || [],
-                agentProviders: ext.agentProviders || []
+                version: ext.version || '',
+                extensionPath: ext.extensionPath || '',
+                commands: Array.isArray(ext.commands) ? ext.commands : [],
+                agentProviders: Array.isArray(ext.agentProviders) ? ext.agentProviders : []
             };
         }
 
+        function allExtensionRecords() {
+            const merged = new Map();
+            [...marketplaceExtensions, ...installedExtensionRecords].forEach(ext => {
+                merged.set(ext.id, { ...merged.get(ext.id), ...ext });
+            });
+            return Array.from(merged.values());
+        }
+
+        function getInstalledExtensionById(id) {
+            return installedExtensionRecords.find(ext => ext.id === id) || null;
+        }
+
+        async function fetchJsonOrThrow(url, options = {}) {
+            const res = await fetch(url, options);
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.error) throw new Error(data.error || `${res.status} ${res.statusText}`);
+            return data;
+        }
+
+        async function extensionAction(url, body, actionLabel) {
+            if (!guardIdeOnlyAction(actionLabel)) return null;
+            return fetchJsonOrThrow(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                body: JSON.stringify(body)
+            });
+        }
+
+        function getCommandPaletteEntries() {
+            const workflowEntries = (availableCommands || []).map(cmd => ({ ...cmd, kind: 'workflow' }));
+            const extensionEntries = registeredExtensionCommands.map(cmd => ({
+                cmd: `> ${cmd.command}`,
+                desc: `Extension command from ${cmd.extensionId || 'extension'}`,
+                commandName: cmd.command,
+                extensionId: cmd.extensionId,
+                kind: 'extension-command',
+                disabled: cmd.enabled === false
+            }));
+            const uiEntries = [
+                { cmd: '> Extensions: Refresh', desc: 'Reload installed extensions from backend', action: () => refreshExtensions(), kind: 'ui' },
+                { cmd: '> Extensions: Open Panel', desc: 'Open Extensions sidebar', action: () => switchSidebarTab('extensions'), kind: 'ui' },
+                { cmd: '> UI Mode: Toggle', desc: 'Switch Enterprise/IDE mode', action: () => toggleUIMode(), kind: 'ui' }
+            ];
+            return [...workflowEntries, ...extensionEntries, ...uiEntries];
+        }
+
         async function refreshExtensions() {
-            const res = await fetch('/api/extensions');
-            const data = await res.json();
+            const data = await fetchJsonOrThrow('/api/extensions');
             installedExtensionRecords = (data.extensions || []).map(normalizeExtensionForUi);
-            renderInstalledExtensions(availableCommands);
-            renderRecommendedExtensions();
+            registeredExtensionCommands = (data.registeredCommands || data.commands || []).map(cmd => ({
+                command: cmd.command || cmd.id || cmd.name,
+                title: cmd.title || cmd.command || cmd.id || cmd.name,
+                extensionId: cmd.extensionId || cmd.extension || cmd.sourceExtensionId || null,
+                enabled: cmd.enabled !== false
+            })).filter(cmd => cmd.command);
+            extensionAgentProviders = data.providers || [];
+            renderInstalledExtensions();
+            renderRegisteredExtensionCommands();
+            renderAgentProviders();
+            renderMarketplaceExtensions();
+            if (selectedExtensionId) {
+                const latest = allExtensionRecords().find(ext => ext.id === selectedExtensionId);
+                if (latest) showExtensionDetail(latest.id);
+            }
         }
 
         async function searchOpenVsxExtensions(query) {
-            const list = document.getElementById('recommended-ext-list');
+            const list = document.getElementById('marketplace-ext-list');
             if (!query || query.trim().length < 2) {
                 marketplaceExtensions = [];
-                renderRecommendedExtensions();
+                renderMarketplaceExtensions();
                 return;
             }
             list.innerHTML = '<div style="opacity:0.5; padding:10px;">Searching Open VSX...</div>';
             try {
-                const res = await fetch(`/api/extensions/search?q=${encodeURIComponent(query.trim())}&size=20`);
-                const data = await res.json();
+                const data = await fetchJsonOrThrow(`/api/extensions/search?q=${encodeURIComponent(query.trim())}&size=20`);
                 marketplaceExtensions = (data.results || []).map(normalizeExtensionForUi);
-                renderRecommendedExtensions();
+                renderMarketplaceExtensions();
             } catch (e) {
                 list.innerHTML = `<div style="color:#ff5555; padding:10px;">Open VSX search failed: ${escapeHtml(e.message)}</div>`;
             }
         }
 
-        function allExtensionRecords() {
-            return [...installedExtensionRecords, ...marketplaceExtensions, ...recommendedExtensions.map(normalizeExtensionForUi)];
-        }
-
-        function renderRecommendedExtensions() {
-            const installedIds = new Set(installedExtensionRecords.map(ext => ext.id));
-            const source = marketplaceExtensions.length ? marketplaceExtensions : recommendedExtensions.map(normalizeExtensionForUi);
-            const list = document.getElementById('recommended-ext-list');
-            list.innerHTML = source.map(ext => {
-                const isInstalled = installedIds.has(ext.id);
-                return `
-                <div class="ext-item" id="ext-${ext.id}" onclick="showExtensionDetail('${ext.id}')">
-                    <div class="ext-icon">${ext.icon}</div>
+        function renderInstalledExtensions() {
+            const list = document.getElementById('installed-ext-list');
+            if (!installedExtensionRecords.length) {
+                list.innerHTML = '<div style="opacity:0.5; padding:10px;">No installed extensions yet.</div>';
+                return;
+            }
+            list.innerHTML = installedExtensionRecords.map(ext => `
+                <div class="ext-item" onclick="showExtensionDetail('${escapeHtml(ext.id)}')">
+                    <div class="ext-icon">${escapeHtml(ext.icon)}</div>
                     <div class="ext-info">
-                        <div class="ext-name">${ext.name}</div>
-                        <div class="ext-desc">${ext.desc}</div>
-                        <div class="ext-meta">
-                            <span>${ext.meta}</span> 
-                            <button class="btn-install" id="btn-inst-${ext.id}" 
-                                onclick="event.stopPropagation(); installMockExtension('${ext.id}', this)"
-                                style="${isInstalled ? 'background:#333; color:#fff;' : ''}"
-                                ${isInstalled ? 'disabled' : ''}>
-                                ${isInstalled ? 'Installed' : 'Install'}
-                            </button>
-                        </div>
+                        <div class="ext-name">${escapeHtml(ext.name)}</div>
+                        <div class="ext-desc">${ext.enabled === false ? 'Disabled' : 'Enabled'}${ext.version ? ` | v${escapeHtml(ext.version)}` : ''}${ext.desc ? ` | ${escapeHtml(ext.desc)}` : ''}</div>
                     </div>
                 </div>
-            `}).join('');
+            `).join('');
+        }
 
-            list.innerHTML += `<button class="btn-small" style="width:100%; margin-top:10px; opacity:0.5;" onclick="alert('Kết nối Marketplace để xem thêm 100+ extension khác!')">Load More Extensions...</button>`;
+        function renderRegisteredExtensionCommands() {
+            const list = document.getElementById('registered-ext-command-list');
+            if (!registeredExtensionCommands.length) {
+                list.innerHTML = '<div style="opacity:0.5; padding:10px;">No registered extension commands.</div>';
+                return;
+            }
+            list.innerHTML = registeredExtensionCommands.map(cmd => `
+                <div class="ext-item">
+                    <div class="ext-icon">CMD</div>
+                    <div class="ext-info">
+                        <div class="ext-name">${escapeHtml(cmd.title || cmd.command)}</div>
+                        <div class="ext-desc">${escapeHtml(cmd.command)}${cmd.extensionId ? ` | ${escapeHtml(cmd.extensionId)}` : ''}${cmd.enabled === false ? ' | Disabled' : ''}</div>
+                    </div>
+                    <button class="btn-small" onclick="event.stopPropagation(); runRegisteredExtensionCommand('${escapeHtml(cmd.command)}')" ${cmd.enabled === false ? 'disabled' : ''}>Run</button>
+                </div>
+            `).join('');
+        }
+
+        function renderAgentProviders() {
+            const list = document.getElementById('agent-provider-list');
+            if (!extensionAgentProviders.length) {
+                list.innerHTML = '<div style="opacity:0.5; padding:10px;">No extension agent providers.</div>';
+                return;
+            }
+            list.innerHTML = extensionAgentProviders.map(provider => `
+                <div class="ext-item">
+                    <div class="ext-icon">AI</div>
+                    <div class="ext-info">
+                        <div class="ext-name">${escapeHtml(provider.name || provider.id || 'provider')}</div>
+                        <div class="ext-desc">${escapeHtml(provider.id || '')}${provider.installed === false ? ' | Not installed' : ''}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderMarketplaceExtensions() {
+            const list = document.getElementById('marketplace-ext-list');
+            if (!marketplaceExtensions.length) {
+                list.innerHTML = '<div style="opacity:0.5; padding:10px;">Search Open VSX to view installable extensions.</div>';
+                return;
+            }
+            const installedIds = new Set(installedExtensionRecords.map(ext => ext.id));
+            list.innerHTML = marketplaceExtensions.map(ext => {
+                const isInstalled = installedIds.has(ext.id);
+                return `
+                    <div class="ext-item" onclick="showExtensionDetail('${escapeHtml(ext.id)}')">
+                        <div class="ext-icon">${escapeHtml(ext.icon)}</div>
+                        <div class="ext-info">
+                            <div class="ext-name">${escapeHtml(ext.name)}</div>
+                            <div class="ext-desc">${escapeHtml(ext.author || 'Open VSX')}${ext.desc ? ` | ${escapeHtml(ext.desc)}` : ''}</div>
+                            <div class="ext-meta">${escapeHtml(ext.meta || '')}</div>
+                        </div>
+                        <button class="btn-small" onclick="event.stopPropagation(); installMarketplaceExtension('${escapeHtml(ext.id)}')" ${isInstalled ? 'disabled' : ''}>
+                            ${isInstalled ? 'Installed' : 'Install'}
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function closeExtensionDetail() {
+            selectedExtensionId = null;
+            document.getElementById('extension-detail').classList.remove('active');
+            document.getElementById('chat-view').style.display = 'flex';
         }
 
         function showExtensionDetail(id) {
-            const ext = allExtensionRecords().find(e => e.id === id);
+            if (!guardIdeOnlyAction('Extension detail')) return;
+            const ext = allExtensionRecords().find(item => item.id === id);
             if (!ext) return;
+            selectedExtensionId = id;
 
-            const autoUpdate = JSON.parse(localStorage.getItem('autoUpdateExtensions') || '{}');
-
-            const isInstalled = installedExtensionRecords.some(e => e.id === id);
-            const isDisabled = isInstalled && installedExtensionRecords.find(e => e.id === id)?.enabled === false;
-            const isAutoUpdate = autoUpdate[id] !== false;
-
+            const installed = getInstalledExtensionById(id);
             const detailView = document.getElementById('extension-detail');
             const chatView = document.getElementById('chat-view');
+            const commands = registeredExtensionCommands.filter(cmd => cmd.extensionId === id);
+            const providers = extensionAgentProviders.filter(provider => provider.extensionId === id || provider.sourceExtensionId === id);
 
             detailView.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <button class="btn-small" onclick="closeExtensionDetail()">← Back to Chat</button>
-                    <span style="opacity: 0.5; font-size: 0.8rem;">Marketplace > ${ext.name}</span>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                    <button class="btn-small" onclick="closeExtensionDetail()">Back</button>
+                    <span style="opacity:0.5; font-size:0.8rem;">Extensions > ${escapeHtml(ext.name)}</span>
                 </div>
-                
                 <div class="ext-detail-header">
-                    <div class="ext-detail-icon">${ext.icon}</div>
+                    <div class="ext-detail-icon">${escapeHtml(ext.icon)}</div>
                     <div class="ext-detail-main">
-                        <h1>${ext.name}</h1>
-                        <div class="ext-detail-author">${ext.author} | 📥 375,967 | ⭐⭐⭐⭐☆ (11)</div>
-                        <div class="ext-detail-stats">VS Code extension for the NVIDIA Agent IDE to optimize NIM models.</div>
-                        
+                        <h1>${escapeHtml(ext.name)}</h1>
+                        <div class="ext-detail-author">${escapeHtml(ext.author || 'Local')}${ext.version ? ` | v${escapeHtml(ext.version)}` : ''}</div>
+                        <div class="ext-detail-stats">${escapeHtml(ext.desc || 'No description provided.')}</div>
                         <div class="ext-actions">
-                            ${!isInstalled ? `
-                                <button class="btn" onclick="installMockExtension('${ext.id}', this)" style="background:var(--primary); color:#000; padding: 6px 20px;">Install</button>
+                            ${installed ? `
+                                <button class="btn-small" onclick="activateExtensionUi('${escapeHtml(id)}')" ${installed.enabled === false ? 'disabled' : ''}>Activate</button>
+                                <button class="btn-small" onclick="toggleDisable('${escapeHtml(id)}')">${installed.enabled === false ? 'Enable' : 'Disable'}</button>
+                                <button class="btn-small" onclick="uninstallExtension('${escapeHtml(id)}')">Uninstall</button>
+                            ` : (ext.namespace && ext.extension ? `
+                                <button class="btn-small" onclick="installMarketplaceExtension('${escapeHtml(id)}')">Install from Open VSX</button>
                             ` : `
-                                <div class="btn-split">
-                                    <button onclick="toggleDisable('${ext.id}')">${isDisabled ? 'Enable' : 'Disable'}</button>
-                                    <button>▾</button>
-                                </div>
-                                <div class="btn-split">
-                                    <button onclick="uninstallExtension('${ext.id}')">Uninstall</button>
-                                    <button>▾</button>
-                                </div>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" ${isAutoUpdate ? 'checked' : ''} onchange="toggleAutoUpdate('${ext.id}', this.checked)"> 
-                                    <span>Auto Update</span>
-                                    <span style="opacity: 0.5;">⚙️</span>
-                                </label>
-                            `}
+                                <div style="opacity:0.7;">Install via Local Folder or VSIX.</div>
+                            `)}
                         </div>
                     </div>
                 </div>
-
-                <div class="ext-tabs">
-                    <div class="ext-tab active" onclick="switchExtTab(this, 'details')">Details</div>
-                    <div class="ext-tab" onclick="switchExtTab(this, 'features')">Features</div>
-                    <div class="ext-tab" onclick="switchExtTab(this, 'changelog')">Changelog</div>
-                </div>
-
                 <div class="ext-content-wrapper">
-                    <div class="ext-body" id="ext-tab-content">
-                        <h2>${ext.name} Watcher</h2>
-                        <p>${escapeHtml(ext.longDesc || ext.desc || '')}</p>
-                        <div style="background: #1a1d23; border: 1px solid #333; border-radius: 8px; padding: 20px; margin-top: 20px; text-align: center;">
-                            <img src="https://via.placeholder.com/600x300/111/76b900?text=Extension+Preview" style="max-width: 100%; border-radius: 4px;">
-                        </div>
+                    <div class="ext-body">
+                        <h2>Overview</h2>
+                        <p>${escapeHtml(ext.longDesc || ext.desc || 'No additional details.')}</p>
+                        <h3>Registered Commands</h3>
+                        ${commands.length ? `<ul>${commands.map(cmd => `<li><code>${escapeHtml(cmd.command)}</code></li>`).join('')}</ul>` : '<p style="opacity:0.7;">No registered commands yet. Activate the extension if required.</p>'}
+                        <h3>Agent Providers</h3>
+                        ${providers.length ? `<ul>${providers.map(provider => `<li>${escapeHtml(provider.name || provider.id || 'provider')}</li>`).join('')}</ul>` : '<p style="opacity:0.7;">No agent providers reported.</p>'}
                     </div>
                     <div class="ext-sidebar">
-                        <div class="sidebar-item">
-                            <span class="sidebar-label">Identifier</span>
-                            <span class="sidebar-value">nvidia.${ext.id}</span>
-                        </div>
-                        <div class="sidebar-item">
-                            <span class="sidebar-label">Version</span>
-                            <span class="sidebar-value">1.2.4</span>
-                        </div>
-                        <div class="sidebar-item">
-                            <span class="sidebar-label">Last Updated</span>
-                            <span class="sidebar-value">2 hours ago</span>
-                        </div>
-                        <div class="sidebar-item">
-                            <span class="sidebar-label">Size</span>
-                            <span class="sidebar-value">412.50KB</span>
-                        </div>
-                        <div class="sidebar-section-title" style="margin-top: 30px;">Marketplace</div>
-                        <div class="sidebar-item">
-                            <span class="sidebar-label">Published</span>
-                            <span class="sidebar-value">4 months ago</span>
-                        </div>
+                        <div class="sidebar-item"><span class="sidebar-label">Identifier</span><span class="sidebar-value">${escapeHtml(ext.id)}</span></div>
+                        <div class="sidebar-item"><span class="sidebar-label">Installed</span><span class="sidebar-value">${installed ? 'Yes' : 'No'}</span></div>
+                        <div class="sidebar-item"><span class="sidebar-label">Enabled</span><span class="sidebar-value">${installed ? (installed.enabled === false ? 'No' : 'Yes') : 'N/A'}</span></div>
+                        <div class="sidebar-item"><span class="sidebar-label">Commands</span><span class="sidebar-value">${commands.length}</span></div>
+                        <div class="sidebar-item"><span class="sidebar-label">Providers</span><span class="sidebar-value">${providers.length}</span></div>
+                        <div class="sidebar-item"><span class="sidebar-label">Path</span><span class="sidebar-value">${escapeHtml(installed?.extensionPath || ext.extensionPath || 'Open VSX / external')}</span></div>
                     </div>
                 </div>
             `;
@@ -2978,73 +3062,112 @@
             detailView.classList.add('active');
         }
 
-        function switchExtTab(tabEl, tabName) {
-            document.querySelectorAll('.ext-tab').forEach(t => t.classList.remove('active'));
-            tabEl.classList.add('active');
-            const content = document.getElementById('ext-tab-content');
-
-            if (tabName === 'details') {
-                content.innerHTML = `<h2>Overview</h2><p>This extension provides deep integration for NVIDIA NIM models, allowing for real-time monitoring and optimization directly within your IDE workspace.</p>`;
-            } else if (tabName === 'features') {
-                content.innerHTML = `<h2>Key Features</h2><ul><li>Real-time performance metrics</li><li>Auto-completion for NIM APIs</li><li>Visual graph of model dependencies</li></ul>`;
-            } else if (tabName === 'changelog') {
-                content.innerHTML = `<h2>v1.2.4</h2><ul><li>Fix: Memory leak in long-running sessions</li><li>Feature: Added support for Llama-3-70B</li></ul>`;
+        async function installMarketplaceExtension(id) {
+            const ext = marketplaceExtensions.find(item => item.id === id) || allExtensionRecords().find(item => item.id === id);
+            if (!ext?.namespace || !ext?.extension) {
+                alert('This extension is not backed by Open VSX metadata.');
+                return;
+            }
+            try {
+                const data = await extensionAction('/api/extensions/install_openvsx', { namespace: ext.namespace, extension: ext.extension }, 'Open VSX install');
+                if (!data) return;
+                logDebug(`Installed extension from Open VSX: ${data.extension.id}`);
+                await refreshExtensions();
+                showExtensionDetail(data.extension.id);
+            } catch (e) {
+                alert(`Open VSX install failed: ${e.message}`);
             }
         }
 
-        function toggleDisable(id) {
-            let disabled = JSON.parse(localStorage.getItem('disabledExtensions') || '[]');
-            if (disabled.includes(id)) {
-                disabled = disabled.filter(x => x !== id);
-                logDebug(`Đã Enable extension: ${id}`);
-            } else {
-                disabled.push(id);
-                logDebug(`Đã Disable extension: ${id}`);
+        async function activateExtensionUi(id) {
+            try {
+                const data = await extensionAction('/api/extensions/activate', { id, activationEvent: 'manual' }, 'Extension activation');
+                if (!data) return;
+                logDebug(`Activated extension: ${id}`);
+                registeredExtensionCommands = (data.registeredCommands || []).map(cmd => ({
+                    command: cmd.command || cmd.id || cmd.name,
+                    title: cmd.title || cmd.command || cmd.id || cmd.name,
+                    extensionId: cmd.extensionId || cmd.extension || cmd.sourceExtensionId || null,
+                    enabled: cmd.enabled !== false
+                })).filter(cmd => cmd.command);
+                await refreshExtensions();
+                showExtensionDetail(id);
+            } catch (e) {
+                alert(`Activation failed: ${e.message}`);
             }
-            localStorage.setItem('disabledExtensions', JSON.stringify(disabled));
-            showExtensionDetail(id); // Re-render
         }
 
-        function toggleAutoUpdate(id, checked) {
-            let config = JSON.parse(localStorage.getItem('autoUpdateExtensions') || '{}');
-            config[id] = checked;
-            localStorage.setItem('autoUpdateExtensions', JSON.stringify(config));
-            // Không logDebug để tránh làm phiền người dùng, chỉ log console
-            console.log(`Auto Update for ${id}: ${checked}`);
+        async function toggleDisable(id) {
+            const ext = getInstalledExtensionById(id);
+            if (!ext) return;
+            try {
+                await extensionAction('/api/extensions/enable', { id, enabled: ext.enabled === false }, 'Extension enable/disable');
+                logDebug(`${ext.enabled === false ? 'Enabled' : 'Disabled'} extension: ${id}`);
+                await refreshExtensions();
+                showExtensionDetail(id);
+            } catch (e) {
+                alert(`Extension state update failed: ${e.message}`);
+            }
         }
 
-        function uninstallExtension(id) {
-            if (!confirm(`Bạn có chắc muốn gỡ cài đặt ${id}?`)) return;
-            let installed = JSON.parse(localStorage.getItem('installedExtensions') || '[]');
-            installed = installed.filter(x => x !== id);
-            localStorage.setItem('installedExtensions', JSON.stringify(installed));
-            logDebug(`Đã gỡ cài đặt: ${id}`);
-            closeExtensionDetail();
-            renderRecommendedExtensions();
-            renderInstalledExtensions(availableCommands);
+        async function uninstallExtension(id) {
+            if (!confirm(`Uninstall ${id}?`)) return;
+            try {
+                await extensionAction('/api/extensions/uninstall', { id }, 'Extension uninstall');
+                logDebug(`Uninstalled extension: ${id}`);
+                closeExtensionDetail();
+                await refreshExtensions();
+            } catch (e) {
+                alert(`Uninstall failed: ${e.message}`);
+            }
         }
 
-        function closeExtensionDetail() {
-            document.getElementById('extension-detail').classList.remove('active');
-            document.getElementById('chat-view').style.display = 'flex';
+        async function runRegisteredExtensionCommand(command) {
+            const commandRecord = registeredExtensionCommands.find(item => item.command === command);
+            if (commandRecord?.enabled === false) {
+                alert(`Command is disabled: ${command}`);
+                return;
+            }
+            try {
+                const data = await extensionAction('/api/extensions/run_command', { command, args: [] }, 'Extension command');
+                if (!data) return;
+                const resultText = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2);
+                logDebug(`Extension command ${command} completed.`);
+                alert(`Command result:\n${resultText}`);
+            } catch (e) {
+                logDebug(`Extension command failed: ${command} :: ${e.message}`);
+                alert(`Command failed: ${e.message}`);
+            }
         }
 
-        async function installMockExtension(id, btn) {
-            btn.innerText = "Installing...";
-            btn.disabled = true;
-            btn.style.opacity = "0.5";
+        async function installExtension() {
+            if (!guardIdeOnlyAction('Extension install')) return;
+            const sourcePath = await customPrompt("Nhp ng dn ti th mc Extension:", "", { pickerKind: 'folder' });
+            if (!sourcePath) return;
+            try {
+                const data = await extensionAction('/api/extensions/install_folder', { path: sourcePath }, 'Extension folder install');
+                if (!data) return;
+                logDebug(`Installed extension from folder: ${data.extension.id}`);
+                await refreshExtensions();
+                showExtensionDetail(data.extension.id);
+            } catch (e) {
+                alert(`Folder install failed: ${e.message}`);
+            }
+        }
 
-            await new Promise(r => setTimeout(r, 1500));
-
-            // Lưu trạng thái
-            const installed = JSON.parse(localStorage.getItem('installedExtensions') || '[]');
-            if (!installed.includes(id)) installed.push(id);
-            localStorage.setItem('installedExtensions', JSON.stringify(installed));
-
-            showExtensionDetail(id); // Chuyển sang giao diện quản lý
-            logDebug(`Đã cài đặt extension: ${id}`);
-            renderInstalledExtensions(availableCommands);
-            renderRecommendedExtensions();
+        async function installVsix() {
+            if (!guardIdeOnlyAction('VSIX install')) return;
+            const vsixPath = await customPrompt("Nhp ng dn ti file VSIX:", "", { pickerKind: 'file', fileKind: 'vsix' });
+            if (!vsixPath) return;
+            try {
+                const data = await extensionAction('/api/extensions/install_vsix', { path: vsixPath }, 'VSIX install');
+                if (!data) return;
+                logDebug(`Installed VSIX extension: ${data.extension.id}`);
+                await refreshExtensions();
+                showExtensionDetail(data.extension.id);
+            } catch (e) {
+                alert(`VSIX install failed: ${e.message}`);
+            }
         }
 
         async function loadWorkflows() {
@@ -3053,31 +3176,23 @@
                 const data = await res.json();
                 if (data.commands) availableCommands = data.commands;
                 await refreshExtensions();
-                logDebug(`Đã tải ${availableCommands.length} kỹ năng từ hệ thống.`);
-                renderInstalledExtensions(availableCommands);
-                renderRecommendedExtensions(); // Thêm dòng này
+                logDebug(`Loaded ${availableCommands.length} workflow commands.`);
             } catch (e) {
-                logDebug("Không thể tải kỹ năng: " + e.message);
+                logDebug("Khong the tai workflows: " + e.message);
                 availableCommands = [
                     { cmd: "/abw-ask", desc: "ABW Dispatcher (Fallback)" },
                     { cmd: "/code", desc: "Code Helper (Fallback)" }
                 ];
-                renderInstalledExtensions(availableCommands);
-                renderRecommendedExtensions();
+                await refreshExtensions().catch(() => { });
             }
         }
 
-        function renderInstalledExtensions(exts) {
-            const list = document.getElementById('installed-ext-list');
-            list.innerHTML = exts.map(ext => `
-                <div class="ext-item">
-                    <div class="ext-icon">⚡</div>
-                    <div class="ext-info">
-                        <div class="ext-name">${ext.cmd}</div>
-                        <div class="ext-desc">${ext.desc}</div>
-                    </div>
-                </div>
-            `).join('');
+        function openCommandPalette() {
+            if (!guardIdeOnlyAction('Command palette')) return;
+            menuType = 'command';
+            userInput.focus();
+            userInput.value = '';
+            showSlashMenu(getCommandPaletteEntries());
         }
 
         function switchSidebarTab(tab) {
@@ -3094,7 +3209,7 @@
             } else if (tab === 'tasks') {
                 document.getElementById('btn-tasks').classList.add('active');
                 document.getElementById('sidebar-tasks').style.display = 'flex';
-                refreshPendingEdits(); // Refresh changed files when switching to tasks
+                refreshPendingEdits();
             } else {
                 document.getElementById('btn-extensions').classList.add('active');
                 document.getElementById('sidebar-extensions').style.display = 'flex';
@@ -3104,86 +3219,14 @@
         function filterExtensions(query) {
             clearTimeout(extensionSearchTimer);
             extensionSearchTimer = setTimeout(() => searchOpenVsxExtensions(query), 350);
-            const items = document.querySelectorAll('#sidebar-extensions .ext-item');
-            query = query.toLowerCase();
-            items.forEach(item => {
-                const name = item.querySelector('.ext-name').innerText.toLowerCase();
-                const desc = item.querySelector('.ext-desc').innerText.toLowerCase();
-                item.style.display = (name.includes(query) || desc.includes(query)) ? 'flex' : 'none';
-            });
-        }
-
-        function renderInstalledExtensions(exts) {
-            const list = document.getElementById('installed-ext-list');
-            const extensionRows = installedExtensionRecords.map(ext => `
-                <div class="ext-item" onclick="showExtensionDetail('${ext.id}')">
-                    <div class="ext-icon">${ext.icon}</div>
-                    <div class="ext-info">
-                        <div class="ext-name">${ext.name}</div>
-                        <div class="ext-desc">${ext.enabled === false ? 'Disabled' : 'Enabled'} | ${ext.desc || ext.id}</div>
-                    </div>
-                </div>
-            `).join('');
-            const skillRows = (exts || []).map(ext => `
-                <div class="ext-item">
-                    <div class="ext-icon">▣</div>
-                    <div class="ext-info">
-                        <div class="ext-name">${ext.cmd}</div>
-                        <div class="ext-desc">${ext.desc}</div>
-                    </div>
-                </div>
-            `).join('');
-            list.innerHTML = extensionRows + skillRows;
-        }
-
-        async function installMockExtension(id, btn) {
-            btn.innerText = "Installing...";
-            btn.disabled = true;
-            btn.style.opacity = "0.5";
-            try {
-                const ext = allExtensionRecords().find(e => e.id === id);
-                if (!ext?.namespace) throw new Error('This sample extension is not backed by Open VSX. Search the marketplace first.');
-                const res = await fetch('/api/extensions/install_openvsx', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ namespace: ext.namespace, extension: ext.extension || ext.name })
+            const normalizedQuery = (query || '').trim().toLowerCase();
+            ['installed-ext-list', 'registered-ext-command-list', 'agent-provider-list', 'marketplace-ext-list'].forEach(id => {
+                document.querySelectorAll(`#${id} .ext-item`).forEach(item => {
+                    const text = item.innerText.toLowerCase();
+                    item.style.display = !normalizedQuery || text.includes(normalizedQuery) ? 'flex' : 'none';
                 });
-                const data = await res.json();
-                if (!res.ok || data.error) throw new Error(data.error || 'Install failed');
-                logDebug(`Installed extension: ${data.extension.id}`);
-                await refreshExtensions();
-                showExtensionDetail(data.extension.id);
-            } catch (e) {
-                alert(e.message);
-                btn.innerText = "Install";
-                btn.disabled = false;
-                btn.style.opacity = "1";
-            }
-        }
-
-        function toggleDisable(id) {
-            const ext = installedExtensionRecords.find(e => e.id === id);
-            if (!ext) return;
-            fetch('/api/extensions/enable', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, enabled: ext.enabled === false })
-            }).then(() => refreshExtensions()).then(() => showExtensionDetail(id));
-        }
-
-        function uninstallExtension(id) {
-            if (!confirm(`Uninstall ${id}?`)) return;
-            fetch('/api/extensions/uninstall', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id })
-            }).then(() => {
-                logDebug(`Uninstalled extension: ${id}`);
-                closeExtensionDetail();
-                refreshExtensions();
             });
         }
-
         const contextTypes = [
             { type: 'file', cmd: '@file', desc: 'Attach a file' },
             { type: 'folder', cmd: '@folder', desc: 'Attach a folder' },
@@ -3210,14 +3253,16 @@
             // Detect /
             if (textBefore.endsWith('/')) {
                 menuType = 'command';
-                showSlashMenu(availableCommands);
+                showSlashMenu(getCommandPaletteEntries());
             } else if (textBefore.includes('/')) {
                 const parts = textBefore.split(' ');
                 const lastPart = parts[parts.length - 1];
                 if (lastPart.startsWith('/')) {
                     menuType = 'command';
                     const query = lastPart.substring(1).toLowerCase();
-                    filteredCommands = availableCommands.filter(c => c.cmd.toLowerCase().includes(query));
+                    filteredCommands = getCommandPaletteEntries().filter(c =>
+                        c.cmd.toLowerCase().includes(query) || (c.desc || '').toLowerCase().includes(query)
+                    );
                     showSlashMenu(filteredCommands);
                 } else {
                     closeSlashMenu();
@@ -3264,7 +3309,7 @@
                     }
                 });
                 allFolders = Array.from(folders).map(d => ({ cmd: `@${d}`, desc: 'Folder', relPath: d }));
-            } catch (e) { logDebug("Lỗi load folders cho mention: " + e.message); }
+            } catch (e) { logDebug("L load folders cho mention: " + e.message); }
         }
 
         function showSlashMenu(commands) {
@@ -3293,7 +3338,15 @@
                 return;
             }
             if (menuType === 'command') {
-                selectCommand(c);
+                if (c.action) {
+                    closeSlashMenu();
+                    await c.action();
+                } else if (c.commandName) {
+                    closeSlashMenu();
+                    await runRegisteredExtensionCommand(c.commandName);
+                } else {
+                    selectCommand(c);
+                }
             } else if (menuType === 'context') {
                 if (c.type === 'file') {
                     menuType = 'file';
@@ -3319,7 +3372,7 @@
                 attachedContexts.push(ctx);
                 renderAttachedContexts();
             }
-            // Xóa phần @... trong input
+            // Delete phn @... trong input
             const val = userInput.value;
             const cursor = userInput.selectionStart;
             const textBefore = val.substring(0, cursor);
@@ -3333,17 +3386,17 @@
 
         function renderAttachedContexts() {
             const icons = {
-                file: '📄',
-                folder: '📁',
-                git: '🌿',
-                terminal: '💻',
-                selection: '✂️',
-                problems: '⚠️'
+                file: 'FILE',
+                folder: 'DIR',
+                git: 'GIT',
+                terminal: 'TERM',
+                selection: 'SEL',
+                problems: 'WARN'
             };
             pinnedContext.innerHTML = attachedContexts.map((c, i) => `
                 <div class="pill">
-                    <span>${icons[c.type] || '📎'} ${c.relPath}</span>
-                    <span class="remove" onclick="unpinContext(${i})">✕</span>
+                    <span>${icons[c.type] || 'CTX'} ${c.relPath}</span>
+                    <span class="remove" onclick="unpinContext(${i})">x</span>
                 </div>
             `).join('');
         }
@@ -3353,13 +3406,7 @@
             renderAttachedContexts();
         }
 
-        // --- HÀM CHO BOTTOM PANEL ---
-        function toggleBottomPanel() {
-            if (!guardIdeOnlyAction('Terminal panel')) return;
-            document.getElementById('bottom-panel').classList.toggle('active');
-        }
-
-        // --- HÀM CHO BOTTOM PANEL ---
+        // --- HM CHO BOTTOM PANEL ---
         function toggleBottomPanel() {
             if (!guardIdeOnlyAction('Terminal panel')) return;
             document.getElementById('bottom-panel').classList.toggle('active');
@@ -3404,10 +3451,10 @@
                     viewJobOutput(job.id);
                     refreshJobManager();
                 } else {
-                    logDebug("Lỗi khởi chạy lệnh: " + JSON.stringify(data.error || data));
+                    logDebug("L kh chy lh: " + JSON.stringify(data.error || data));
                 }
             } catch (e) {
-                logDebug("Lỗi kết nối: " + e.message);
+                logDebug("Connection error: " + e.message);
             }
         }
 
@@ -3441,12 +3488,12 @@
                             ${job.exitCode !== null ? `<span>Exit: ${job.exitCode}</span>` : ''}
                         </div>
                         <div class="job-actions">
-                            <button class="job-btn primary" onclick="viewJobOutput('${job.id}')">👁️ View Output</button>
+                            <button class="job-btn primary" onclick="viewJobOutput('${job.id}')">View Output</button>
                             ${job.status === 'running' ? 
-                                `<button class="job-btn danger" onclick="cancelJob('${job.id}')">⏹️ Cancel</button>` : 
-                                `<button class="job-btn" onclick="rerunJob('${job.id}')">🔄 Rerun</button>`
+                                `<button class="job-btn danger" onclick="cancelJob('${job.id}')">Cancel</button>` : 
+                                `<button class="job-btn" onclick="rerunJob('${job.id}')">Rerun</button>`
                             }
-                            <button class="job-btn" onclick="attachJobToChat('${job.id}')">📎 Attach</button>
+                            <button class="job-btn" onclick="attachJobToChat('${job.id}')">Attach</button>
                         </div>
                     </div>
                 `).join('');
@@ -3545,7 +3592,7 @@
                     document.getElementById('active-job-status').innerText = 'CANCELLED';
                 }
             } catch (e) {
-                logDebug("Lỗi dừng job: " + e.message);
+                logDebug("L dng job: " + e.message);
             }
         }
 
@@ -3573,14 +3620,14 @@
                     }
                 }
             } catch (e) {
-                logDebug("Lỗi chạy lại: " + e.message);
+                logDebug("L chy li: " + e.message);
             }
         }
 
         function attachJobToChat(id) {
             if (!guardIdeOnlyAction('Job attach')) return;
             pinContext({ type: 'terminal', id: id, relPath: `Job ${id}` });
-            logDebug(`Đã đính kèm kết quả Job ${id} vào context.`);
+            logDebug(` nh km kt qu Job ${id} vo context.`);
         }
 
         async function runGlobalSearch() {
@@ -3588,7 +3635,7 @@
             const list = document.getElementById('search-results-list');
             if (!query) return;
 
-            list.innerHTML = '<div style="opacity:0.3; text-align:center;">Đang tìm kiếm...</div>';
+            list.innerHTML = '<div style="opacity:0.3; text-align:center;">ng tm kim...</div>';
 
             try {
                 const res = await fetch('/api/search', {
@@ -3600,18 +3647,18 @@
                 const results = data.result;
 
                 if (results.length === 0) {
-                    list.innerHTML = '<div style="opacity:0.3; text-align:center;">Không tìm thấy kết quả nào.</div>';
+                    list.innerHTML = '<div style="opacity:0.3; text-align:center;">Khng tm thy kt qu no.</div>';
                     return;
                 }
 
                 list.innerHTML = results.map(r => `
                     <div class="search-item" onclick="openCodeViewer('${r.path.replace(/\\/g, '\\\\')}', '${r.file}')">
-                        <div class="search-meta">${r.file} : Dòng ${r.line}</div>
+                        <div class="search-meta">${r.file} : Dng ${r.line}</div>
                         <div style="color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${r.content.replace(/</g, '&lt;')}</div>
                     </div>
                 `).join('');
             } catch (e) {
-                list.innerHTML = `<div style="color:#ff5555">Lỗi tìm kiếm: ${e.message}</div>`;
+                list.innerHTML = `<div style="color:#ff5555">L tm kim: ${e.message}</div>`;
             }
         }
 
@@ -3695,7 +3742,7 @@
                 const data = await res.json();
                 renderFileTree(data.tree, document.getElementById('file-explorer'));
             } catch (e) {
-                logDebug("Lỗi load File Explorer: " + e.message);
+                logDebug("L load File Explorer: " + e.message);
             }
         }
 
@@ -3706,7 +3753,7 @@
                 const item = document.createElement('div');
                 item.className = `file-item ${isDir ? 'folder' : 'file'}`;
 
-                const icon = isDir ? '📁' : getFileIcon(node.name);
+                const icon = isDir ? '[DIR]' : getFileIcon(node.name);
                 item.innerHTML = `<span class="icon">${icon}</span> <span>${node.name}</span>`;
 
                 if (isDir) {
@@ -3715,7 +3762,7 @@
                     item.onclick = (e) => {
                         e.stopPropagation();
                         content.classList.toggle('open');
-                        item.querySelector('.icon').innerText = content.classList.contains('open') ? '📂' : '📁';
+                        item.querySelector('.icon').innerText = content.classList.contains('open') ? '[EXP]' : '[DIR]';
                     };
                     container.appendChild(item);
                     container.appendChild(content);
@@ -3752,7 +3799,7 @@
                             minimap: { enabled: false }
                         });
 
-                        // Thêm AI Autocomplete
+                        // Thm AI Autocomplete
                         setupAIAutocomplete();
                     });
                 } else {
@@ -3760,7 +3807,7 @@
                     monaco.editor.setModelLanguage(editor.getModel(), getMonacoLanguage(name));
                 }
             } catch (e) {
-                logDebug("Lỗi mở file: " + e.message);
+                logDebug("L mfile: " + e.message);
             }
         }
 
@@ -3777,7 +3824,7 @@
         function setupAIAutocomplete() {
             let timer = null;
 
-            // Theo dõi vùng chọn để hiện Badge
+            // Theo di vng ch hi Badge
             editor.onDidChangeCursorSelection(() => {
                 const selectedText = editor.getModel().getValueInRange(editor.getSelection());
                 document.getElementById('selection-badge').style.display = selectedText.trim() ? 'block' : 'none';
@@ -3790,20 +3837,20 @@
                     const position = editor.getPosition();
                     const code = model.getValue();
 
-                    // Chỉ gợi ý nếu đang ở cuối dòng
+                    // Chgi  nu ng cu dng
                     const lineContent = model.getLineContent(position.lineNumber);
                     if (position.column <= lineContent.length) return;
 
-                    logDebug("AI đang nghĩ gợi ý...");
+                    logDebug("AI ng ngh gi ...");
                     try {
                         const res = await fetch('/proxy/chat', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                model: 'meta/llama-3.1-8b-instruct', // Dùng model nhanh nhất cho gợi ý
+                                model: 'meta/llama-3.1-8b-instruct', // Dng model nhanh nht cho gi 
                                 messages: [
-                                    { role: 'system', content: 'Bạn là chuyên gia lập trình. Hãy trả về CHỈ PHẦN CODE TIẾP THEO của đoạn mã người dùng cung cấp. Không giải thích, không dùng markdown.' },
-                                    { role: 'user', content: `Hoàn thiện code này:\n${code.substring(0, model.getOffsetAt(position))}` }
+                                    { role: 'system', content: 'Bn l chuyn gia lp trnh. Hy tr vCHPHN CODE TIP THEO ca n m ng dng cung cp. Khng gii thch, khng dng markdown.' },
+                                    { role: 'user', content: `Hon thi code ny:\n${code.substring(0, model.getOffsetAt(position))}` }
                                 ]
                             })
                         });
@@ -3811,15 +3858,15 @@
                         const suggestion = data.choices[0].message.content.trim();
 
                         if (suggestion) {
-                            logDebug("Có gợi ý AI!");
-                            // Trong bản demo này, chúng ta sẽ chèn trực tiếp hoặc hiện thông báo.
-                            // Để làm Ghost Text xịn cần API phức tạp hơn của Monaco, tạm thời ta hiện gợi ý ở Console
-                            // và cho phép người dùng nhấn phím tắt để chèn.
+                            logDebug("C gi  AI!");
+                            // Trong bn demo ny, chng ta s chn trc tip hoc hi thng bo.
+                            // lm Ghost Text x cn API phc tp hn ca Monaco, tm th ta hi gi  Console
+                            // v cho php ng dng nhn phm tt chn.
                             window.lastAISuggestion = suggestion;
-                            logDebug(`Gợi ý (Nhấn Ctrl+Space để chèn): ${suggestion.substring(0, 30)}...`);
+                            logDebug(`Gi  (Nhn Ctrl+Space chn): ${suggestion.substring(0, 30)}...`);
                         }
                     } catch (e) { }
-                }, 1500); // Đợi 1.5s sau khi ngừng gõ
+                }, 1500); // i 1.5s sau khi ngng g
             });
 
             editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space, function () {
@@ -3841,12 +3888,12 @@
                 const res = await fetch('/api/workspace');
                 const data = await res.json();
                 document.getElementById('current-workspace-path').innerText = data.path;
-            } catch (e) { logDebug("Lỗi load workspace: " + e.message); }
+            } catch (e) { logDebug("L load workspace: " + e.message); }
         }
 
         async function changeWorkspace() {
             const current = document.getElementById('current-workspace-path').innerText;
-            const newPath = await customPrompt("Nhập đường dẫn Workspace mới:", current);
+            const newPath = await customPrompt("Nhp g dn Workspace m:", current);
             if (!newPath) return;
 
             try {
@@ -3857,47 +3904,25 @@
                 });
                 const data = await res.json();
                 if (data.status === "success") {
-                    logDebug("Đã chuyển sang Workspace mới: " + data.path);
+                    logDebug(" chuy sang Workspace m: " + data.path);
                     await loadWorkspaceInfo();
                     await loadFileExplorer();
                     await loadWorkflows();
                 } else {
-                    alert("Lỗi: " + data.error);
+                    alert("L: " + data.error);
                 }
             } catch (e) {
-                alert("Không thể kết nối tới Server: " + e.message);
-            }
-        }
-
-        async function installExtension() {
-            const sourcePath = await customPrompt("Nhập đường dẫn tới thư mục Extension:");
-            if (!sourcePath) return;
-
-            try {
-                const res = await fetch('/api/install_extension', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: sourcePath })
-                });
-                const data = await res.json();
-                if (data.status === "success") {
-                    alert(`Đã cài đặt thành công ${data.count} kỹ năng mới!`);
-                    await loadWorkflows();
-                } else {
-                    alert("Lỗi: " + data.error);
-                }
-            } catch (e) {
-                alert("Lỗi cài đặt: " + e.message);
+                alert("Khng thkt n t Server: " + e.message);
             }
         }
 
         function getFileIcon(name) {
-            if (name.endsWith('.js') || name.endsWith('.mjs')) return '📜';
-            if (name.endsWith('.html')) return '🌐';
-            if (name.endsWith('.css')) return '🎨';
-            if (name.endsWith('.md')) return '📝';
-            if (name.endsWith('.json')) return '⚙️';
-            return '📄';
+            if (name.endsWith('.js') || name.endsWith('.mjs')) return 'JS';
+            if (name.endsWith('.html')) return 'HTML';
+            if (name.endsWith('.css')) return 'CSS';
+            if (name.endsWith('.md')) return 'MD';
+            if (name.endsWith('.json')) return 'JSON';
+            return 'FILE';
         }
 
         let nimModels = [];
@@ -3908,11 +3933,11 @@
         }
 
         function sortModelsByPerformance() {
-            logDebug("Đang sắp xếp danh sách NIM theo hiệu suất & IQ...");
-            // Tiêu chí: 1. Status (0 < 1 < 2), 2. IQ (High > Low), 3. Tên
+            logDebug("ng sp xp danh sch NIM theo hi sut & IQ...");
+            // Tiu ch: 1. Status (0 < 1 < 2), 2. IQ (High > Low), 3. Tn
             nimModels.sort(compareModelPriority);
             renderModelDropdown();
-            // Tự động mở menu để user thấy kết quả
+            // T g mmenu user thy kt qu
             document.getElementById('model-dropdown-list').classList.add('active');
         }
 
@@ -4029,12 +4054,12 @@
         }
 
         async function refreshModelStatus() {
-            logDebug("Đang quét hạ tầng NVIDIA NIM thực tế...");
+            logDebug("ng qut h tng NVIDIA NIM thc t...");
             const btn = document.querySelector('.btn-refresh-models');
             if (btn) btn.style.opacity = "1";
 
             try {
-                // 1. Fetch danh sách model THỰC từ NVIDIA
+                // 1. Fetch danh sch model THC t NVIDIA
                 const res = await fetch('/api/models');
                 const data = await res.json();
                 if (data && data.data) {
@@ -4049,7 +4074,7 @@
                             ...m,
                             isNew: releaseInfo.isNew,
                             updateMonth: releaseInfo.updateMonth,
-                            traffic: 0, // Sẽ được cập nhật qua probe
+                            traffic: 0, // S c cp nht qua probe
                             score: scoreInfo.score,
                             scoreSource: scoreInfo.source,
                             latency: 0,
@@ -4058,8 +4083,8 @@
                         };
                     });
 
-                    // 3. Probe Heartbeat THỰC TẾ cho TOÀN BỘ danh sách (đảm bảo audit-ready)
-                    logDebug(`Đang xác thực TOÀN BỘ ${models.length} mô hình...`);
+                    // 3. Probe Heartbeat THC T cho TON Bdanh sch (m bo audit-ready)
+                    logDebug(`ng xc thc TON B${models.length} m hnh...`);
 
                     nimModels = models;
                     renderModelDropdown();
@@ -4086,11 +4111,11 @@
                             m.latency = probe.latency;
                             m.traffic = probe.latency < 1000 ? 0 : probe.latency < 4000 ? 1 : 2;
 
-                            // CHỈ ĐÁNH DẤU REMOVED NẾU LỖI 404/410 THẬT
+                            // CHH DU REMOVED NU L 404/410 THT
                             if (probe.code === 404 || probe.code === 410) {
                                 m.isDeprecated = true;
                             } else if (probe.status === 'timeout' || probe.status === 'error') {
-                                // Timeout hoặc lỗi khác thì là RED (Bận) chứ không phải bị gỡ
+                                // Timeout hoc l khc th l RED (Bn) ch khng phi bg
                                 m.traffic = 2;
                                 m.isDeprecated = false;
                             }
@@ -4101,10 +4126,10 @@
                     });
 
                     renderModelDropdown();
-                    logDebug(`Đã xác thực TOÀN BỘ ${models.length} mô hình NIM.`);
+                    logDebug(` xc thc TON B${models.length} m hnh NIM.`);
                 }
             } catch (e) {
-                logDebug("Lỗi đồng bộ mô hình: " + e.message);
+                logDebug("L g bm hnh: " + e.message);
             } finally {
                 if (btn) btn.style.opacity = "0.5";
             }
@@ -4115,18 +4140,18 @@
             let html = `
                 <div class="model-option ${selectedModelId === 'auto' ? 'active' : ''}" onclick="selectModel('auto')">
                     <div class="model-row-1">
-                        <span class="model-name">✨ Auto (Recommended)</span>
+                        <span class="model-name"> Auto (Recommended)</span>
                         <span class="model-badge badge-new" style="background:#fff">SMART</span>
                     </div>
                     <div class="model-row-2">
-                        <span>Tự động điều phối dựa trên độ khó công việc và traffic.</span>
+                        <span>T g  ph da trn kh cng vi v traffic.</span>
                     </div>
                 </div>
             `;
 
             nimModels.forEach(m => {
                 const trafficClass = m.traffic === 0 ? 'green' : m.traffic === 1 ? 'yellow' : 'red';
-                const trafficLabel = m.traffic === 0 ? 'Rảnh rỗi' : m.traffic === 1 ? 'Vừa phải' : 'Rất đông';
+                const trafficLabel = m.traffic === 0 ? 'Rnh r' : m.traffic === 1 ? 'Va phi' : 'Rt ng';
 
                 html += `
                     <div class="model-option ${selectedModelId === m.id ? 'active' : ''}" onclick="selectModel('${m.id}')">
@@ -4168,11 +4193,11 @@
         }
 
         // --- 4. Logic Auto-Orchestration ---
-        // AUDIT-FIX #4: Multi-tier orchestration — pick highest IQ within the best latency group
+        // AUDIT-FIX #4: Multi-tier orchestration pick highest IQ within the best latency group
         function getOptimalModel(userText) {
             if (selectedModelId !== 'auto') return selectedModelId;
 
-            // Phân loại độ khó — improved heuristics
+            // Phn loi kh improved heuristics
             const complexityIndicators = [
                 'fix bug', 'refactor', 'architecture', 'design', 'optimize',
                 'security', 'vulnerability', 'scale', 'migrate', 'implement',
@@ -4199,15 +4224,15 @@
 
             const isHard = difficultyScore >= 2;
 
-            // Lọc các model không bận (traffic < 2) và không bị loại bỏ
+            // L cc model khng bn (traffic < 2) v khng bloi b
             let candidates = nimModels.filter(m => m.traffic < 2 && !m.isDeprecated);
             if (candidates.length === 0) {
-                // Fallback: tất cả không bị removed, kể cả đang bận
+                // Fallback: tt c khng bremoved, kc ng bn
                 candidates = nimModels.filter(m => !m.isDeprecated);
             }
             if (candidates.length === 0) return 'meta/llama-3.1-8b-instruct';
 
-            // AUDIT-FIX #4: Multi-tier sort — prioritize latency class, then IQ within same class
+            // AUDIT-FIX #4: Multi-tier sort prioritize latency class, then IQ within same class
             candidates.sort((a, b) => {
                 // Primary: latency tier (0=green < 1=yellow < 2=red)
                 if (a.traffic !== b.traffic) return a.traffic - b.traffic;
@@ -4217,18 +4242,18 @@
                     return b.score - a.score;
                 } else {
                     // For simple tasks: highest IQ that's fast (green tier already prioritized above)
-                    // Still prefer higher IQ even for simple — don't pick the dumbest model
+                    // Still prefer higher IQ even for simple don't pick the dumbest model
                     return b.score - a.score;
                 }
             });
 
             const chosen = candidates[0];
-            logDebug(`Hệ thống Auto: ${isHard ? 'Công việc KHÓ' : 'Công việc ĐƠN GIẢN'} (điểm=${difficultyScore}) -> Chọn ${chosen.id} (IQ:${chosen.score}/100, Latency:${chosen.traffic === 0 ? 'Xanh' : chosen.traffic === 1 ? 'Vàng' : 'Đỏ'})`);
+            logDebug(`Auto selector: ${isHard ? 'HARD' : 'SIMPLE'} (score=${difficultyScore}) -> ${chosen.id} (IQ:${chosen.score}/100, Latency:${chosen.traffic === 0 ? 'Low' : chosen.traffic === 1 ? 'Medium' : 'High'})`);
             return chosen.id;
         }
 
         window.onload = async () => {
-            logDebug("Khởi tạo hệ thống...");
+            logDebug("Initializing system...");
             try {
                 await loadWorkspaceInfo();
                 await refreshTrustStatus();
@@ -4242,11 +4267,11 @@
                 } else {
                     loadSession(currentSessionId);
                 }
-                logDebug("Hệ thống đã sẵn sàng.");
+                logDebug("System ready.");
                 await refreshRateLimitStatus();
                 setInterval(refreshRateLimitStatus, 5000);
             } catch (globalErr) {
-                logDebug("LỖI KHỞI TẠO NGHIÊM TRỌNG: " + globalErr.message);
+                logDebug("CRITICAL INIT ERROR: " + globalErr.message);
                 console.error(globalErr);
                 if (!currentSessionId) createNewSession();
                 refreshRateLimitStatus();
@@ -4265,24 +4290,29 @@
             if (event.ctrlKey && event.altKey && event.shiftKey && (event.key === 'I' || event.key === 'i')) {
                 event.preventDefault();
                 await toggleUIMode();
+                return;
+            }
+            if (event.ctrlKey && event.shiftKey && (event.key === 'P' || event.key === 'p')) {
+                event.preventDefault();
+                openCommandPalette();
             }
         });
 
-        // --- HÀM HỖ TRỢ DIFF VIEW ---
+        // --- DIFF VIEW HELPERS ---
         async function renderDiffUI(container, path, newContent) {
             const diffDiv = document.createElement('div');
             diffDiv.className = 'diff-container';
             diffDiv.innerHTML = `
                 <div class="diff-header">
-                    <span style="color:#aaa; font-size:0.75rem;">Đề xuất sửa file: <b>${path.split(/[\\/]/).pop()}</b></span>
+                    <span style="color:#aaa; font-size:0.75rem;">Proposed file change: <b>${path.split(/[\\/]/).pop()}</b></span>
                     <button class="btn-small" data-path="${path.replace(/\\/g, '\\\\')}" onclick="applyFileChange(this.dataset.path, this)">Apply Change</button>
                 </div>
-                <div class="diff-body">Đang tính toán sự khác biệt...</div>
+                <div class="diff-body">Calculating diff...</div>
             `;
             container.appendChild(diffDiv);
 
             try {
-                // Đọc code cũ
+                //  code c
                 const res = await fetch('/api/read_file', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -4291,7 +4321,7 @@
                 const data = await res.json();
                 const oldContent = data.result || "";
 
-                // Tính toán Diff bằng thư viện jsdiff
+                // Tnh ton Diff bng th vi jsdiff
                 const diff = Diff.diffLines(oldContent, newContent);
                 const body = diffDiv.querySelector('.diff-body');
                 body.innerHTML = '';
@@ -4299,7 +4329,7 @@
                 diff.forEach(part => {
                     const colorClass = part.added ? 'added' : part.removed ? 'removed' : '';
                     const lines = part.value.split('\n');
-                    if (lines[lines.length - 1] === '') lines.pop(); // Xóa dòng trống thừa ở cuối
+                    if (lines[lines.length - 1] === '') lines.pop(); // Delete dng trg tha cu
 
                     lines.forEach(line => {
                         const lineDiv = document.createElement('div');
@@ -4309,11 +4339,11 @@
                     });
                 });
 
-                // Lưu code mới vào thuộc tính của nút để Apply
+                // Lu code m vo thu tnh ca nt Apply
                 diffDiv.querySelector('button').dataset.newContent = newContent;
 
             } catch (e) {
-                diffDiv.querySelector('.diff-body').innerText = "Lỗi load diff: " + e.message;
+                diffDiv.querySelector('.diff-body').innerText = "Diff load error: " + e.message;
             }
         }
 
@@ -4336,19 +4366,19 @@
                     const pendingEdit = data.result.pendingEdit;
                     renderPendingEdit(pendingEdit);
                     refreshPendingEdits();
-                    btn.innerText = "✅ Applied";
+                    btn.innerText = "Applied";
                     btn.style.borderColor = "#00ff00";
                     btn.style.color = "#00ff00";
                     btn.title = "A pending edit was created. Review and apply it from the pending edit card.";
-                    logDebug(`Đã cập nhật file: ${path}`);
-                    loadFileExplorer(); // Refresh lại file explorer nếu cần
+                    logDebug(`Updated file: ${path}`);
+                    loadFileExplorer(); // Refresh li file explorer nu cn
                 } else {
-                    alert("Lỗi apply: " + (data.error || "Unknown error"));
+                    alert("Apply error: " + (data.error || "Unknown error"));
                     btn.disabled = false;
                     btn.innerText = "Apply Change";
                 }
             } catch (e) {
-                alert("Lỗi kết nối: " + e.message);
+                alert("Connection error: " + e.message);
                 btn.disabled = false;
                 btn.innerText = "Apply Change";
             }
@@ -4367,7 +4397,7 @@
                 }
             }
 
-            btn.innerText = "✅ All Applied";
+            btn.innerText = "All Applied";
             btn.style.background = "#222";
             btn.style.color = 'var(--primary)';
         }
@@ -4375,3 +4405,4 @@
 </body>
 
 </html>
+
