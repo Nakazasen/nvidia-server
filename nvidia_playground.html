@@ -1861,6 +1861,7 @@
                 <div class="panel-tab active" id="tab-terminal" onclick="switchTab('terminal')">Terminal</div>
                 <div class="panel-tab" id="tab-jobs" onclick="switchTab('jobs')">Jobs</div>
                 <div class="panel-tab" id="tab-search" onclick="switchTab('search')">Search</div>
+                <div class="panel-tab" id="tab-problems" onclick="switchTab('problems')">Problems</div>
                 <div style="margin-left: auto; padding: 8px 15px; cursor: pointer; opacity: 0.5;"
                     onclick="toggleBottomPanel()">x</div>
             </div>
@@ -1895,6 +1896,21 @@
                 </div>
                 <div id="search-results-list" class="search-results" style="padding: 0 10px;">
                     <div style="opacity: 0.3; text-align: center; padding: 20px;">Enter keyword and press Enter.</div>
+                </div>
+            </div>
+
+            <div id="problems-view" class="panel-content" style="display:none; flex-direction: column; padding:0;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding: 10px; border-bottom: 1px solid var(--glass-border);">
+                    <div>
+                        <span id="problems-summary" style="font-size: 0.9rem;">0 errors, 0 warnings</span>
+                    </div>
+                    <div style="display:flex; gap:10px;">
+                        <button class="btn-small" onclick="refreshProblems()"><span style="color:#fff">↻</span> Check Workspace</button>
+                        <button class="btn-small" onclick="clearProblems()">Clear</button>
+                    </div>
+                </div>
+                <div id="problems-list" class="search-results" style="flex:1; overflow-y:auto; padding: 10px;">
+                    <div style="opacity: 0.3; text-align: center; padding: 20px;">No diagnostic problems found. Run "Check Workspace" to run tests.</div>
                 </div>
             </div>
         </div>
@@ -2012,7 +2028,7 @@
         let currentAgentController = null;
         let isAgentRunning = false;
         const UI_MODE_STORAGE_KEY = 'nvidia.uiMode';
-        const IDE_ONLY_TABS = new Set(['explorer', 'tasks', 'extensions', 'terminal', 'jobs', 'search']);
+        const IDE_ONLY_TABS = new Set(['explorer', 'tasks', 'extensions', 'terminal', 'jobs', 'search', 'problems']);
         let uiMode = 'enterprise';
 
         function logDebug(msg) {
@@ -3512,18 +3528,119 @@
             document.getElementById('terminal-view').style.display = 'none';
             document.getElementById('jobs-view').style.display = 'none';
             document.getElementById('search-view').style.display = 'none';
+            const problemsView = document.getElementById('problems-view');
+            if (problemsView) problemsView.style.display = 'none';
 
             const activeTab = document.getElementById(`tab-${tab}`);
             if (activeTab) activeTab.classList.add('active');
             
             const view = document.getElementById(`${tab}-view`);
-            if (view) view.style.display = (tab === 'terminal' || tab === 'search') ? 'flex' : 'block';
+            if (view) view.style.display = (tab === 'terminal' || tab === 'search' || tab === 'problems') ? 'flex' : 'block';
             
             if (tab === 'jobs') refreshJobManager();
+            if (tab === 'problems') fetchProblems();
         }
 
         let activeJobId = null;
         let jobPollers = new Map(); // jobId -> intervalId
+        const markerSyncDebouncers = new Map();
+
+        async function refreshProblems() {
+            if (!guardIdeOnlyAction('Refresh problems')) return;
+            try {
+                const list = document.getElementById('problems-list');
+                if (list) list.innerHTML = '<div style="opacity: 0.5; text-align: center; padding: 20px;">Running checks... (this may take a few seconds)</div>';
+                
+                const res = await fetch('/api/diagnostics/refresh', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' }
+                });
+                const data = await res.json();
+                renderProblems(data.diagnostics || data.result || []);
+            } catch(e) {
+                console.error("Failed to refresh problems", e);
+            }
+        }
+
+        async function clearProblems() {
+            if (!guardIdeOnlyAction('Clear problems')) return;
+            try {
+                await fetch('/api/diagnostics/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                renderProblems([]);
+            } catch(e) {
+                console.error("Failed to clear problems", e);
+            }
+        }
+
+        async function fetchProblems() {
+            try {
+                const res = await fetch('/api/diagnostics');
+                const data = await res.json();
+                renderProblems(data.diagnostics || data.result || []);
+            } catch(e) {
+                console.error("Failed to fetch problems", e);
+            }
+        }
+
+        function renderProblems(problems) {
+            const list = document.getElementById('problems-list');
+            const summary = document.getElementById('problems-summary');
+            if (!list || !summary) return;
+
+            if (!problems || problems.length === 0) {
+                list.innerHTML = '<div style="opacity: 0.3; text-align: center; padding: 20px;">No diagnostic problems found. Run "Check Workspace" to run tests.</div>';
+                summary.innerHTML = '<span style="color:#aaa">0 errors, 0 warnings</span>';
+                return;
+            }
+
+            let errors = 0;
+            let warnings = 0;
+            let infos = 0;
+
+            const html = problems.map((problem, idx) => {
+                const p = problem || {};
+                const filePath = String(p.filePath || p.file || '');
+                const line = Number.isFinite(Number(p.line)) ? Number(p.line) : '';
+                const column = Number.isFinite(Number(p.column)) ? Number(p.column) : '';
+                const severity = String(p.severity || 'info').toLowerCase();
+                const message = String(p.message || '(no message)');
+                const source = p.source ? String(p.source) : '';
+                let color = 'var(--primary)';
+                if (severity === 'error') { color = '#ff5555'; errors++; }
+                else if (severity === 'warning') { color = '#ffaa00'; warnings++; }
+                else { infos++; }
+
+                return `
+                    <div class="search-result-item problem-item" data-idx="${idx}" data-path="${escapeHtml(filePath)}" data-line="${line || ''}">
+                        <div style="color:${color}; margin-right:8px; font-weight:bold; min-width: 60px;">[${escapeHtml(severity.toUpperCase())}]</div>
+                        <div style="flex:1;">
+                            <div style="color:var(--primary); font-family:monospace; margin-bottom:4px;">${escapeHtml(filePath)}${line ? `:${line}${column ? `:${column}` : ''}` : ''}</div>
+                            <div style="font-size:0.8rem; color:#ccc;">${escapeHtml(message)}</div>
+                            ${source ? `<div style="font-size:0.7rem; color:#777; margin-top:2px;">Source: ${escapeHtml(source)}</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            list.innerHTML = html;
+            list.querySelectorAll('.problem-item').forEach(el => {
+                el.onclick = () => {
+                    const path = el.dataset.path || '';
+                    const line = el.dataset.line ? Number(el.dataset.line) : null;
+                    if (path) openCodeViewer(path, null, line);
+                };
+            });
+
+            const summaryHtml = [];
+            if (errors > 0) summaryHtml.push(`<span style="color:#ff5555"><b>${errors}</b> errors</span>`);
+            if (warnings > 0) summaryHtml.push(`<span style="color:#ffaa00"><b>${warnings}</b> warnings</span>`);
+            if (infos > 0) summaryHtml.push(`<span style="color:var(--primary)"><b>${infos}</b> infos</span>`);
+            
+            summary.innerHTML = summaryHtml.join(', ') || '<span style="color:#aaa">0 errors, 0 warnings</span>';
+        }
 
         async function runManualCommand() {
             if (!guardIdeOnlyAction('Terminal command')) return;
@@ -4045,6 +4162,18 @@
             await new Promise(resolve => {
                 require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } });
                 require(['vs/editor/editor.main'], function () {
+                    // Sprint 8: Enable cross-file intelligence defaults
+                    if (monaco.languages && monaco.languages.typescript) {
+                        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+                            noSemanticValidation: false,
+                            noSyntaxValidation: false,
+                        });
+                        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+                            noSemanticValidation: false,
+                            noSyntaxValidation: false,
+                        });
+                    }
+
                     editor = monaco.editor.create(document.getElementById('code-body'), {
                         value: initialValue || '',
                         language: language || 'plaintext',
@@ -4053,6 +4182,40 @@
                         fontSize: 14,
                         minimap: { enabled: false }
                     });
+                    
+                    // Sprint 8: LSP diagnostics sync (debounced + normalized)
+                    monaco.editor.onDidChangeMarkers((uris) => {
+                        if (!Array.isArray(uris) || !uris.length) return;
+                        for (const uri of uris) {
+                            if (!uri) continue;
+                            const uriKey = uri.toString();
+                            const timer = markerSyncDebouncers.get(uriKey);
+                            if (timer) clearTimeout(timer);
+                            markerSyncDebouncers.set(uriKey, setTimeout(() => {
+                                const model = monaco.editor.getModel(uri);
+                                if (!model) return;
+                                const markers = monaco.editor.getModelMarkers({ resource: uri }).slice(0, 200);
+                                fetch('/api/diagnostics/update', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        filePath: model.uri.fsPath || model.uri.path.replace(/^\/+/, ''),
+                                        markers: markers.map(m => ({
+                                            severity: m.severity,
+                                            startLineNumber: m.startLineNumber,
+                                            startColumn: m.startColumn,
+                                            message: String(m.message || '').slice(0, 2000),
+                                            code: m.code
+                                        }))
+                                    })
+                                }).then(() => {
+                                    const pView = document.getElementById('problems-view');
+                                    if (pView && pView.style.display !== 'none') fetchProblems();
+                                }).catch(e => console.error(e));
+                            }, 300));
+                        }
+                    });
+
                     setupAIAutocomplete();
                     editor.onDidChangeModelContent(() => {
                         if (isSwitchingEditorModel) return;
@@ -4075,7 +4238,7 @@
             renderEditorTabs();
         }
 
-        async function activateEditorTab(filePath) {
+        async function activateEditorTab(filePath, line) {
             const tab = editorTabs.find(item => item.path === filePath);
             if (!tab) return;
             activeEditorTabPath = tab.path;
@@ -4085,19 +4248,45 @@
             document.getElementById('code-body').style.display = 'block';
             document.getElementById('diff-body').style.display = 'none';
             await ensureEditorReady(tab.originalContent, getMonacoLanguage(tab.name));
+            
             isSwitchingEditorModel = true;
-            editor.setValue(tab.isDirty ? tab.workingContent : tab.originalContent);
-            monaco.editor.setModelLanguage(editor.getModel(), getMonacoLanguage(tab.name));
+            
+            // Sprint 8: Use separate models for cross-file LSP
+            const uri = monaco.Uri.file(tab.path);
+            let model = monaco.editor.getModel(uri);
+            const targetContent = tab.isDirty ? tab.workingContent : tab.originalContent;
+            const lang = getMonacoLanguage(tab.name);
+            
+            if (!model) {
+                model = monaco.editor.createModel(targetContent, lang, uri);
+            } else {
+                if (model.getValue() !== targetContent) {
+                    model.setValue(targetContent);
+                }
+                monaco.editor.setModelLanguage(model, lang);
+            }
+            editor.setModel(model);
+            
             isSwitchingEditorModel = false;
             renderEditorTabs();
+            
+            if (line && editor) {
+                // Parse line to integer in case it's a string
+                const lineNum = parseInt(line, 10);
+                if (!isNaN(lineNum)) {
+                    editor.revealLineInCenter(lineNum);
+                    editor.setPosition({ lineNumber: lineNum, column: 1 });
+                    editor.focus();
+                }
+            }
         }
 
-        async function openCodeViewer(path, name) {
+        async function openCodeViewer(path, name, line) {
             if (!guardIdeOnlyAction('File editor')) return;
             try {
                 const existing = editorTabs.find(tab => tab.path === path);
                 if (existing) {
-                    await activateEditorTab(path);
+                    await activateEditorTab(path, line);
                     trackRecentFile(path);
                     return;
                 }
@@ -4116,7 +4305,7 @@
                     workingContent: content,
                     isDirty: false
                 });
-                await activateEditorTab(path);
+                await activateEditorTab(path, line);
                 trackRecentFile(path);
             } catch (e) {
                 logDebug("Open file failed: " + e.message);
@@ -4140,7 +4329,7 @@
                     document.getElementById('code-filename').innerText = 'filename.js';
                     if (editor) {
                         isSwitchingEditorModel = true;
-                        editor.setValue('');
+                        editor.setModel(null);
                         isSwitchingEditorModel = false;
                     }
                     renderEditorTabs();
@@ -4148,6 +4337,10 @@
                 }
             } else {
                 renderEditorTabs();
+            }
+            if (window.monaco && tab.path) {
+                const model = monaco.editor.getModel(monaco.Uri.file(tab.path));
+                if (model) model.dispose();
             }
         }
 

@@ -22,6 +22,238 @@ const PROFILE_FILE = path.join(STATE_DIR, 'profile.json');
 const READ_ONLY_TOOLS = new Set(['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
 const DESTRUCTIVE_TOOLS = new Set(['write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job']);
 
+// --- Sprint 8: Diagnostics Model ---
+// In-memory diagnostics store. Not persisted to disk.
+let diagnosticsStore = [];
+let diagnosticsIdCounter = 0;
+let diagnosticsSources = [];
+const MAX_MARKER_MESSAGE_CHARS = 4000;
+const MAX_MARKERS_PER_UPDATE = 300;
+const MAX_DIAGNOSTICS_PER_REFRESH = 2000;
+
+function toSafeInt(value, min = 1, max = 1000000) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    const i = Math.trunc(n);
+    if (i < min || i > max) return null;
+    return i;
+}
+
+function stableDiagnosticId({ source, severity, filePath, line, column, message, code }) {
+    const key = [source || 'unknown', severity || 'info', filePath || '', line || 0, column || 0, message || '', code || ''].join('|');
+    let hash = 2166136261;
+    for (let i = 0; i < key.length; i++) {
+        hash ^= key.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `diag_${(hash >>> 0).toString(16)}`;
+}
+
+function createDiagnostic({ source, severity, filePath, line, column, message, code, rawOutput }) {
+    diagnosticsIdCounter++;
+    const normalizedSeverity = ['error', 'warning', 'info'].includes(severity) ? severity : 'info';
+    const normalizedLine = toSafeInt(line);
+    const normalizedColumn = toSafeInt(column, 1, 10000);
+    const normalizedMessage = String(message || '').trim().slice(0, MAX_MARKER_MESSAGE_CHARS);
+    const normalizedFilePath = filePath ? String(filePath).trim() : null;
+    const normalizedCode = code ? String(code).slice(0, 128) : null;
+    return {
+        id: stableDiagnosticId({
+            source: source || 'unknown',
+            severity: normalizedSeverity,
+            filePath: normalizedFilePath,
+            line: normalizedLine,
+            column: normalizedColumn,
+            message: normalizedMessage,
+            code: normalizedCode
+        }),
+        source: source || 'unknown',
+        severity: normalizedSeverity,
+        filePath: normalizedFilePath,
+        line: normalizedLine,
+        column: normalizedColumn,
+        message: normalizedMessage,
+        code: normalizedCode,
+        createdAt: new Date().toISOString(),
+        rawOutput: rawOutput ? String(rawOutput).slice(0, 2000) : null
+    };
+}
+
+function dedupeDiagnostics(list) {
+    const map = new Map();
+    for (const d of list) {
+        if (!d || !d.id || !d.message) continue;
+        if (!map.has(d.id)) map.set(d.id, d);
+    }
+    return Array.from(map.values()).slice(0, MAX_DIAGNOSTICS_PER_REFRESH);
+}
+
+function getDiagnosticsSummary() {
+    let errors = 0, warnings = 0, info = 0;
+    for (const d of diagnosticsStore) {
+        if (d.severity === 'error') errors++;
+        else if (d.severity === 'warning') warnings++;
+        else info++;
+    }
+    return { errors, warnings, info };
+}
+
+function clearDiagnostics() {
+    diagnosticsStore = [];
+    diagnosticsSources = [];
+    return { ok: true, cleared: true, diagnostics: [], summary: getDiagnosticsSummary(), sources: [], warnings: [] };
+}
+
+function parseDiagnosticsFromNodeCheck(stdout, stderr, filePath) {
+    const output = (stderr || '') + '\n' + (stdout || '');
+    const results = [];
+    // Node --check error pattern: filepath:line
+    let foundLine = null;
+    let foundCol = null;
+    const lineMatch = output.match(/:(\d+)(?::(\d+))?\b/);
+    if (lineMatch) {
+        foundLine = parseInt(lineMatch[1], 10);
+        foundCol = lineMatch[2] ? parseInt(lineMatch[2], 10) : null;
+    }
+    // Extract the core error message
+    const msgMatch = output.match(/SyntaxError:\s*(.+)/i) || output.match(/Error:\s*(.+)/i);
+    const message = msgMatch ? msgMatch[1].trim() : output.split('\n').filter(l => l.trim()).slice(-3).join(' ').trim();
+    if (message) {
+        results.push(createDiagnostic({
+            source: 'node --check',
+            severity: 'error',
+            filePath,
+            line: foundLine,
+            column: foundCol,
+            message,
+            code: 'SYNTAX_ERROR',
+            rawOutput: output.slice(0, 2000)
+        }));
+    }
+    return results;
+}
+
+function parseDiagnosticsFromJobOutput(job) {
+    if (!job || !job.stderr) return [];
+    const results = [];
+    const lines = String(job.stderr).split(/\r?\n/);
+    for (const line of lines) {
+        // Common error patterns: file:line:col: error: message
+        const match = line.match(/^(.+?):(\d+)(?::(\d+))?:\s*(error|warning|info|Error|Warning):\s*(.+)/i);
+        if (match) {
+            results.push(createDiagnostic({
+                source: `job:${job.id}`,
+                severity: match[4].toLowerCase() === 'error' ? 'error' : match[4].toLowerCase() === 'warning' ? 'warning' : 'info',
+                filePath: match[1],
+                line: parseInt(match[2], 10),
+                column: match[3] ? parseInt(match[3], 10) : null,
+                message: match[5].trim(),
+                code: null,
+                rawOutput: line
+            }));
+        }
+    }
+    return results;
+}
+
+async function refreshDiagnostics() {
+    const start = Date.now();
+    diagnosticsStore = [];
+    diagnosticsSources = [];
+    const warnings = [];
+
+    // Source 1: node --check for .js/.mjs files in workspace
+    try {
+        const files = getFilesFlat(currentWorkspace);
+        let checkableFiles = files.filter(f =>
+            (f.name.endsWith('.js') || f.name.endsWith('.mjs') || f.name.endsWith('.cjs')) &&
+            !f.relPath.includes('node_modules') &&
+            f.size < 500 * 1024
+        );
+        const diagTmpDir = path.join(currentWorkspace, '.nvidia-agent', 'tmp');
+        if (fs.existsSync(diagTmpDir)) {
+            for (const name of fs.readdirSync(diagTmpDir)) {
+                if (!/\.(mjs|js|cjs)$/i.test(name)) continue;
+                const abs = path.join(diagTmpDir, name);
+                try {
+                    const stat = fs.statSync(abs);
+                    if (!stat.isFile() || stat.size >= 500 * 1024) continue;
+                    checkableFiles.push({
+                        path: abs,
+                        relPath: path.relative(currentWorkspace, abs),
+                        name,
+                        size: stat.size
+                    });
+                } catch {
+                    // ignore unreadable tmp files
+                }
+            }
+        }
+        checkableFiles = checkableFiles.sort((a, b) => {
+            const aTmp = a.relPath.includes('.nvidia-agent\\tmp') || a.relPath.includes('.nvidia-agent/tmp');
+            const bTmp = b.relPath.includes('.nvidia-agent\\tmp') || b.relPath.includes('.nvidia-agent/tmp');
+            if (aTmp && !bTmp) return -1;
+            if (!aTmp && bTmp) return 1;
+            return a.relPath.localeCompare(b.relPath);
+        }).slice(0, 200); // Limit for safety while keeping temp smoke files discoverable
+
+        diagnosticsSources.push('node --check');
+        let checkedCount = 0;
+        for (const file of checkableFiles) {
+            try {
+                await new Promise((resolve) => {
+                    exec(`node --check ${JSON.stringify(file.path)}`, {
+                        cwd: currentWorkspace,
+                        timeout: 10000,
+                        windowsHide: true
+                    }, (err, stdout, stderr) => {
+                        if (err) {
+                            const diags = parseDiagnosticsFromNodeCheck(stdout, stderr, file.relPath);
+                            diagnosticsStore.push(...diags);
+                        }
+                        resolve();
+                    });
+                });
+                checkedCount++;
+            } catch {
+                // Skip files that fail to check
+            }
+        }
+        if (checkedCount > 0) {
+            console.log(`[DIAG] Checked ${checkedCount} JS/MJS files via node --check`);
+        }
+    } catch (e) {
+        warnings.push(`node --check source failed: ${e.message}`);
+    }
+
+    // Source 2: Parse recent failed command job outputs
+    try {
+        const jobs = Array.from(commandJobs.values())
+            .filter(j => j.status === 'failed' || (j.status === 'completed' && j.exitCode !== 0))
+            .slice(-10);
+        if (jobs.length > 0) {
+            diagnosticsSources.push('job-output');
+            for (const job of jobs) {
+                const diags = parseDiagnosticsFromJobOutput(job);
+                diagnosticsStore.push(...diags);
+            }
+        }
+    } catch (e) {
+        warnings.push(`Job output parsing failed: ${e.message}`);
+    }
+
+    diagnosticsStore = dedupeDiagnostics(diagnosticsStore);
+    const summary = getDiagnosticsSummary();
+    console.log(`[DIAG] Refresh complete: ${diagnosticsStore.length} diagnostics (${summary.errors}E/${summary.warnings}W/${summary.info}I) in ${Date.now() - start}ms`);
+    return {
+        ok: true,
+        diagnostics: diagnosticsStore,
+        summary,
+        sources: diagnosticsSources,
+        warnings
+    };
+}
+
 let currentWorkspace = process.cwd();
 const nimRequestLog = [];
 let lastNimRateLimitHit = null;
@@ -513,8 +745,15 @@ async function buildTerminalContext(jobId = null) {
 }
 
 function buildProblemsContext() {
-    // Sprint 2: Placeholder/Mock diagnostics
-    return `--- PROBLEMS CONTEXT ---\nNo critical diagnostics detected in the current workspace. (Placeholder)\n`;
+    // Sprint 8: Real diagnostics context from in-memory store
+    if (diagnosticsStore.length === 0) {
+        return `--- PROBLEMS CONTEXT ---\nNo diagnostics detected in the current workspace.\n`;
+    }
+    const summary = getDiagnosticsSummary();
+    const lines = diagnosticsStore.slice(0, 30).map(d =>
+        `[${d.severity.toUpperCase()}] ${d.filePath || '(no file)'}${d.line ? ':' + d.line : ''}${d.column ? ':' + d.column : ''} - ${d.message}${d.source ? ' (source: ' + d.source + ')' : ''}`
+    );
+    return `--- PROBLEMS CONTEXT ---\nSummary: ${summary.errors} error(s), ${summary.warnings} warning(s), ${summary.info} info\n${lines.join('\n')}\n${diagnosticsStore.length > 30 ? `[${diagnosticsStore.length - 30} more diagnostics truncated]\n` : ''}`;
 }
 
 async function buildFolderContext(folders) {
@@ -1667,6 +1906,19 @@ const server = http.createServer(async (req, res) => {
             if (req.url === '/api/command_jobs') return sendJSON(res, 200, { jobs: workspaceCore.commandJobStatusTool({}) });
             if (req.url === '/api/tools') return sendJSON(res, 200, { tools: getAgentTools() });
             if (req.url === '/api/rate_limit') return sendJSON(res, 200, getRateLimitStatus());
+
+            // Sprint 8: Diagnostics API (read-only, safe for enterprise mode)
+            if (req.url === '/api/diagnostics') {
+                return sendJSON(res, 200, {
+                    ok: true,
+                    diagnostics: diagnosticsStore,
+                    result: diagnosticsStore,
+                    summary: getDiagnosticsSummary(),
+                    sources: diagnosticsSources,
+                    warnings: []
+                });
+            }
+
             if (req.url === '/api/index/status') return sendJSON(res, 200, await workspaceCore.indexStatusTool());
             if (requestUrl.pathname === '/api/index/search') {
                 const query = requestUrl.searchParams.get('q') || requestUrl.searchParams.get('query') || '';
@@ -1817,6 +2069,50 @@ const server = http.createServer(async (req, res) => {
                 ? String(provider.runTemplate).replaceAll('{prompt}', quotedPrompt)
                 : `${provider.command} ${quotedPrompt}`;
             return sendJSON(res, 200, { status: 'success', job: await workspaceCore.startCommandJobTool({ command, timeoutMs: body.timeoutMs || 3600000 }) });
+        }
+
+        // Sprint 8: Diagnostics refresh (runs safe read-only checks; IDE mode only)
+        if (req.url === '/api/diagnostics/refresh') {
+            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'diagnostics refresh requires explicit UI approval.' });
+            return sendJSON(res, 200, await refreshDiagnostics());
+        }
+
+        // Sprint 8: Diagnostics clear (safe, just clears in-memory store)
+        if (req.url === '/api/diagnostics/clear') {
+            return sendJSON(res, 200, clearDiagnostics());
+        }
+
+        // Sprint 8: Update from local IDE (Monaco LSP markers)
+        if (req.url === '/api/diagnostics/update') {
+            const body = await getBody(req);
+            const { filePath, markers } = body;
+            if (!filePath) return sendJSON(res, 400, { error: 'filePath is required' });
+            if (typeof filePath !== 'string' || filePath.length > 2000) return sendJSON(res, 400, { error: 'filePath must be a safe string' });
+            if (markers !== undefined && !Array.isArray(markers)) return sendJSON(res, 400, { error: 'markers must be an array' });
+            if (Array.isArray(markers) && markers.length > MAX_MARKERS_PER_UPDATE) {
+                return sendJSON(res, 413, { error: `Too many markers. Max ${MAX_MARKERS_PER_UPDATE}` });
+            }
+            
+            // Remove old monaco diagnostics for this file
+            diagnosticsStore = diagnosticsStore.filter(d => !(d.source === 'monaco' && d.filePath === filePath));
+            
+            if (markers && Array.isArray(markers)) {
+                for (const m of markers) {
+                    if (!m || typeof m !== 'object') continue;
+                    diagnosticsStore.push(createDiagnostic({
+                        source: 'monaco',
+                        severity: m.severity === 8 ? 'error' : m.severity === 4 ? 'warning' : 'info',
+                        filePath: filePath,
+                        line: toSafeInt(m.startLineNumber),
+                        column: toSafeInt(m.startColumn, 1, 10000),
+                        message: m.message,
+                        code: m.code || 'LSP'
+                    }));
+                }
+            }
+            diagnosticsStore = dedupeDiagnostics(diagnosticsStore);
+            if (!diagnosticsSources.includes('monaco')) diagnosticsSources.push('monaco');
+            return sendJSON(res, 200, { ok: true, summary: getDiagnosticsSummary() });
         }
 
         if (req.url === '/api/index/build') {

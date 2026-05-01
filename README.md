@@ -472,13 +472,13 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 7: Semantic Index Cache / Context Engine",
+  "last_completed_sprint": "Sprint 8: LSP Diagnostics / Problems Panel",
   "last_implementer": "Gemini 3 Flash",
   "last_auditor": "Codex",
-  "last_audit_result": "Codex audited Sprint 7 and verified index cache/runtime isolation under .nvidia-agent/index, index status/build/refresh/search APIs, lexical-offline fallback with no external provider requirement, search ranking outputs (path/score/snippet/line range/language), incremental add/delete refresh behavior, enterprise-mode IDE guards for index controls, and Sprint 1/2/3/4/5/6 static regression paths. Codex fixed metadata accounting so skippedFiles reflects skip-rule exclusions (plus unreadable files). Node syntax checks passed (server/cli/extension-host/core), npm run agent:audit passed 25/25, inline HTML parse passed, mojibake scan patterns remained zero, and index files remained unstaged runtime artifacts. Limitation: no full browser E2E visual validation.",
-  "next_sprint": "Sprint 8: LSP Diagnostics / Problems Panel",
-  "next_prompt_instruction": "Ask Gemini 3 Flash to start from README.md Sprint 8 only, keep Sprint 1/2/3/4/5/6/7 behavior intact, then send results back to Codex for audit/fix",
-  "status_marker_version": 1
+  "last_audit_result": "Sprint 8 audited and fixed as a minimal diagnostics layer (not full LSP server). Codex fixed Problems panel data binding (`diagnostics` vs `result`), safe rendering/click behavior, marker-sync debounce, marker payload normalization/limits, diagnostics endpoint validation, dedupe/stable diagnostic IDs, and Sprint 3 regression in terminal command execution. Diagnostics refresh/clear/update API smoke passed, malformed marker payload was safely normalized, syntax-error refresh/remove smoke passed, node syntax checks passed, and `npm run agent:audit` passed 25/25. Enterprise/IDE guards remain enforced for refresh actions; diagnostics read endpoint remains read-only.",
+  "next_sprint": "Sprint 9: Browser E2E Smoke Harness",
+  "next_prompt_instruction": "Ask Gemini 3 Flash to implement Sprint 9 only, then return to Codex for audit/fix.",
+  "status_marker_version": 2
 }
 ```
 
