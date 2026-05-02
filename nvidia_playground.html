@@ -2182,6 +2182,25 @@
                     <button class="btn-small" onclick="clearProviderKeyFromSettings()">Clear Key</button>
                     <button class="btn-small" onclick="resetSettingsForm()">Reset Form</button>
                 </div>
+                <div style="margin:10px 0; border-top:1px solid #333;"></div>
+                <div id="security-permissions-section" style="margin-top:10px;">
+                    <div style="font-size:0.75rem; opacity:0.8; margin-bottom:6px;">Sprint 14: Security / Permissions</div>
+                    <div id="security-basic-warning" style="font-size:0.72rem; color:#ffd166; margin-bottom:8px;">This is a basic permission model, not full sandboxing.</div>
+                    <div id="security-context-summary" style="font-size:0.72rem; opacity:0.8; margin-bottom:8px;">Loading permission context...</div>
+                    <div style="display:grid; grid-template-columns: 1fr auto auto; gap:6px; margin-bottom:8px;">
+                        <input id="permission-check-action" type="text" placeholder="actionType (e.g. git.stage)" style="background:#111; border:1px solid #333; color:#fff; padding:8px; border-radius:4px;">
+                        <label style="display:flex; align-items:center; gap:4px; font-size:0.72rem;"><input id="permission-check-confirm" type="checkbox">confirm</label>
+                        <button class="btn-small" onclick="runPermissionCheck()">Check</button>
+                    </div>
+                    <div id="permission-check-result" style="font-size:0.72rem; opacity:0.8; margin-bottom:8px;"></div>
+                    <div style="font-size:0.72rem; opacity:0.7; margin-bottom:4px;">Known permissions</div>
+                    <div id="permissions-list" style="max-height:120px; overflow-y:auto; border:1px solid #2b3647; border-radius:6px; padding:6px; margin-bottom:8px; font-size:0.7rem;"></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <span style="font-size:0.72rem; opacity:0.7;">Recent permission decisions</span>
+                        <button class="btn-small" onclick="refreshPermissionSecurity()">Refresh</button>
+                    </div>
+                    <div id="permission-audit-list" style="max-height:100px; overflow-y:auto; border:1px solid #2b3647; border-radius:6px; padding:6px; font-size:0.68rem;"></div>
+                </div>
                 <div id="settings-warning-box" style="font-size:0.74rem; color:#ffd166; line-height:1.35;"></div>
             </div>
             <div class="btn-group">
@@ -3674,6 +3693,7 @@
             modal.classList.add('active');
 
             loadSettingsPayload().catch(err => updateSettingsWarningBox([`Load settings failed: ${err.message}`]));
+            refreshPermissionSecurity().catch(() => {});
 
             document.getElementById('setting-default-provider').onchange = (ev) => {
                 const nextId = ev.target.value;
@@ -3716,6 +3736,80 @@
         let extensionSearchTimer = null;
         let providerSettings = { settings: {}, providers: [], warnings: [] };
         let activeSettingsProviderId = 'nvidia';
+        let permissionCatalog = [];
+        let permissionAuditEntries = [];
+
+        function renderPermissionList() {
+            const el = document.getElementById('permissions-list');
+            if (!el) return;
+            if (!permissionCatalog.length) {
+                el.innerHTML = '<div style="opacity:0.5;">No permission data.</div>';
+                return;
+            }
+            el.innerHTML = permissionCatalog.map(p => {
+                return `<div style="padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                    <strong>${escapeHtml(p.actionType)}</strong> | risk=${escapeHtml(p.riskLevel)} | mode=${escapeHtml(p.modeAllowed)} | approval=${p.requiresApproval ? 'yes' : 'no'} | trusted=${p.requiresTrustedWorkspace ? 'yes' : 'no'}
+                </div>`;
+            }).join('');
+        }
+
+        function renderPermissionAudit() {
+            const el = document.getElementById('permission-audit-list');
+            if (!el) return;
+            if (!permissionAuditEntries.length) {
+                el.innerHTML = '<div style="opacity:0.5;">No permission decisions logged yet.</div>';
+                return;
+            }
+            el.innerHTML = permissionAuditEntries.slice(-20).reverse().map(entry => {
+                const color = entry.decision === 'allow' ? '#4caf50' : '#ff7777';
+                return `<div style="padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                    <span style="color:${color}; font-weight:bold;">${escapeHtml(entry.decision || 'deny')}</span>
+                    <span> ${escapeHtml(entry.actionType || '')}</span>
+                    <div style="opacity:0.75;">${escapeHtml(entry.reason || '')}</div>
+                </div>`;
+            }).join('');
+        }
+
+        async function refreshPermissionSecurity() {
+            const summaryEl = document.getElementById('security-context-summary');
+            try {
+                const permissionsPayload = await fetchJsonOrThrow('/api/permissions');
+                permissionCatalog = permissionsPayload.permissions || [];
+                renderPermissionList();
+                if (summaryEl) summaryEl.innerText = `Mode=${permissionsPayload.uiMode || 'unknown'} | trustedWorkspace=${permissionsPayload.trustedWorkspace === true ? 'true' : 'false'}`;
+            } catch (e) {
+                if (summaryEl) summaryEl.innerText = `Permissions load failed: ${e.message}`;
+            }
+            try {
+                const auditPayload = await fetchJsonOrThrow('/api/security/audit_log?limit=50');
+                permissionAuditEntries = auditPayload.entries || [];
+                renderPermissionAudit();
+            } catch {
+                permissionAuditEntries = [];
+                renderPermissionAudit();
+            }
+        }
+
+        async function runPermissionCheck() {
+            const actionType = (document.getElementById('permission-check-action')?.value || '').trim();
+            const confirm = document.getElementById('permission-check-confirm')?.checked === true;
+            const output = document.getElementById('permission-check-result');
+            if (!actionType) {
+                if (output) output.innerText = 'actionType is required.';
+                return;
+            }
+            try {
+                const result = await fetchJsonOrThrow('/api/permissions/check', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ actionType, confirm, confirmationRequired: actionType === 'git.discard', targetSummary: 'ui.permission.check' })
+                });
+                if (output) output.innerText = `ALLOW: ${result.permission?.reason || 'allowed'}`;
+            } catch (e) {
+                if (output) output.innerText = `DENY/ERROR: ${e.message}`;
+            }
+            await refreshPermissionSecurity();
+        }
 
         function normalizeExtensionForUi(ext) {
             const fallbackId = [ext.namespace || ext.publisher || 'local', ext.extension || ext.name || ext.displayName || 'extension'].join('.');

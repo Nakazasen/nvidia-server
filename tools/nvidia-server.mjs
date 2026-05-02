@@ -17,6 +17,8 @@ const DEFAULT_MAX_ITERATIONS = Number(process.env.NVIDIA_AGENT_MAX_ITERATIONS ||
 const EXEC_TIMEOUT_MS = 120000;
 const HOST = process.env.HOST || process.env.NVIDIA_SERVER_HOST || '127.0.0.1';
 const STATE_DIR = path.join(APP_DIR, '.nvidia-agent');
+const SECURITY_DIR = path.join(STATE_DIR, 'security');
+const PERMISSION_AUDIT_LOG = path.join(SECURITY_DIR, 'permission-audit.jsonl');
 const TRUST_FILE = path.join(STATE_DIR, 'trusted-workspaces.json');
 const PROFILE_FILE = path.join(STATE_DIR, 'profile.json');
 const PROVIDERS_FILE = path.join(STATE_DIR, 'providers.json');
@@ -760,13 +762,114 @@ function getSettingsPayload() {
 }
 
 function ensureIdeMutationAllowed(req) {
-    if (req.headers['x-agent-approved'] !== 'true') {
-        throw new Error('This mutation endpoint requires X-Agent-Approved=true.');
+    enforcePermission(req, 'file.write');
+}
+
+function toPermissionStatusCode(reason = '') {
+    const lowered = String(reason || '').toLowerCase();
+    if (lowered.includes('unknown action type')) return 400;
+    if (lowered.includes('requires x-agent-approved') || lowered.includes('requires ide mode') || lowered.includes('trusted workspace') || lowered.includes('reserved')) return 403;
+    if (lowered.includes('confirm') || lowered.includes('outside workspace') || lowered.includes('invalid')) return 400;
+    return 403;
+}
+
+function summarizePermissionTarget(targetSummary = '') {
+    const summary = String(targetSummary || '').replace(/\s+/g, ' ').trim();
+    return redactSecrets(summary).slice(0, 200);
+}
+
+function appendPermissionAudit(entry = {}) {
+    try {
+        fs.mkdirSync(SECURITY_DIR, { recursive: true });
+        const safeEntry = {
+            timestamp: nowIso(),
+            actionType: String(entry.actionType || ''),
+            decision: entry.decision === 'allow' ? 'allow' : 'deny',
+            reason: redactSecrets(String(entry.reason || '')).slice(0, 300),
+            uiMode: entry.uiMode === 'ide' ? 'ide' : 'enterprise',
+            trustedWorkspace: entry.trustedWorkspace === true,
+            hasApprovalHeader: entry.hasApprovalHeader === true,
+            riskLevel: String(entry.riskLevel || 'unknown'),
+            targetSummary: summarizePermissionTarget(entry.targetSummary),
+            requestId: entry.requestId ? String(entry.requestId).slice(0, 100) : null
+        };
+        fs.appendFileSync(PERMISSION_AUDIT_LOG, `${JSON.stringify(safeEntry)}\n`, 'utf8');
+    } catch {
+        // Non-fatal: do not break the request path if audit logging fails.
     }
+}
+
+function readPermissionAuditTail(limit = 50) {
+    try {
+        if (!fs.existsSync(PERMISSION_AUDIT_LOG)) return [];
+        const lines = fs.readFileSync(PERMISSION_AUDIT_LOG, 'utf8').split(/\r?\n/).filter(Boolean);
+        const slice = lines.slice(Math.max(0, lines.length - Math.max(1, Math.min(Number(limit) || 50, 200))));
+        return slice.map(line => {
+            try { return JSON.parse(line); } catch { return null; }
+        }).filter(Boolean);
+    } catch {
+        return [];
+    }
+}
+
+function checkPermission(req, actionType, options = {}) {
     const profile = loadProfile();
-    if (profile.uiMode !== 'ide') {
-        throw new Error('This mutation endpoint is IDE-mode only.');
+    const hasApproval = req?.headers?.['x-agent-approved'] === 'true';
+    const isTrusted = isWorkspaceTrusted();
+    const targetSummary = summarizePermissionTarget(options.targetSummary);
+    const reservedActions = new Set(['abw.bridge.reserved', 'git.commit', 'git.push']);
+    const result = workspaceCore.checkPermission({
+        actionType,
+        uiMode: profile.uiMode,
+        hasApproval,
+        isTrusted,
+        isReservedAction: reservedActions.has(actionType)
+    });
+    const requiresConfirmation = options.requiresConfirmation === true;
+    const hasConfirmation = options.hasConfirmation === true;
+    if (result.allow && requiresConfirmation && !hasConfirmation) {
+        result.allow = false;
+        result.reason = `Action ${actionType} requires explicit confirmation.`;
     }
+    appendPermissionAudit({
+        actionType,
+        decision: result.allow ? 'allow' : 'deny',
+        reason: result.reason,
+        uiMode: profile.uiMode,
+        trustedWorkspace: isTrusted,
+        hasApprovalHeader: hasApproval,
+        riskLevel: result.riskLevel || 'unknown',
+        targetSummary,
+        requestId: req?.headers?.['x-request-id'] || null
+    });
+    return { ...result, uiMode: profile.uiMode, trustedWorkspace: isTrusted, hasApprovalHeader: hasApproval };
+}
+
+function enforcePermission(req, actionType, options = {}) {
+    const result = checkPermission(req, actionType, options);
+    if (!result.allow) {
+        const err = new Error(result.reason || `Permission denied for ${actionType}`);
+        err.statusCode = toPermissionStatusCode(result.reason);
+        err.permission = result;
+        throw err;
+    }
+    return result;
+}
+
+function actionTypeForTool(toolName = '') {
+    const map = {
+        write_file: 'file.write',
+        apply_patch: 'file.apply_edit',
+        apply_pending_edit: 'file.apply_edit',
+        discard_pending_edit: 'file.apply_edit',
+        execute_command: 'terminal.run',
+        start_command_job: 'terminal.run',
+        cancel_command_job: 'job.cancel',
+        git_stage: 'git.stage',
+        git_unstage: 'git.unstage',
+        git_discard: 'git.discard'
+    };
+    return map[String(toolName || '').trim()] || null;
 }
 
 function resolveProviderForChat(requestedModel = '') {
@@ -2432,6 +2535,34 @@ const server = http.createServer(async (req, res) => {
                 const payload = getSettingsPayload();
                 return sendJSON(res, 200, { ok: true, providers: payload.providers, warnings: payload.warnings });
             }
+            if (req.url === '/api/permissions') {
+                const profile = loadProfile();
+                return sendJSON(res, 200, {
+                    ok: true,
+                    uiMode: profile.uiMode,
+                    trustedWorkspace: isWorkspaceTrusted(),
+                    warning: 'This is a basic permission model, not full sandboxing.',
+                    permissions: workspaceCore.getAllPermissions()
+                });
+            }
+            if (requestUrl.pathname === '/api/security/summary') {
+                const profile = loadProfile();
+                const entries = readPermissionAuditTail(200);
+                const denied = entries.filter(e => e.decision === 'deny').length;
+                const allowed = entries.filter(e => e.decision === 'allow').length;
+                return sendJSON(res, 200, {
+                    ok: true,
+                    uiMode: profile.uiMode,
+                    trustedWorkspace: isWorkspaceTrusted(),
+                    warning: 'This is a basic permission model, not full sandboxing.',
+                    totals: { entries: entries.length, allowed, denied },
+                    recent: entries.slice(-20)
+                });
+            }
+            if (requestUrl.pathname === '/api/security/audit_log') {
+                const limit = Number(requestUrl.searchParams.get('limit') || 50);
+                return sendJSON(res, 200, { ok: true, entries: readPermissionAuditTail(limit) });
+            }
             if (req.url === '/api/pending_edits') return sendJSON(res, 200, { edits: workspaceCore.listPendingEditsTool() });
             if (req.url === '/api/command_jobs') return sendJSON(res, 200, { jobs: workspaceCore.commandJobStatusTool({}) });
             if (req.url === '/api/tools') return sendJSON(res, 200, { tools: getAgentTools() });
@@ -2567,9 +2698,30 @@ const server = http.createServer(async (req, res) => {
             return sendJSON(res, 200, saveProfile(body));
         }
 
+        if (req.url === '/api/permissions/check') {
+            const body = await getBody(req);
+            const actionType = String(body.actionType || '').trim();
+            if (!actionType) return sendJSON(res, 400, { ok: false, error: 'actionType is required' });
+            const result = checkPermission(req, actionType, {
+                requiresConfirmation: body.confirmationRequired === true,
+                hasConfirmation: body.confirm === true,
+                targetSummary: body.targetSummary || ''
+            });
+            if (!workspaceCore.getPermission(actionType)) {
+                return sendJSON(res, 400, { ok: false, error: result.reason, permission: result });
+            }
+            const status = result.allow ? 200 : toPermissionStatusCode(result.reason);
+            return sendJSON(res, status, {
+                ok: result.allow,
+                actionType,
+                permission: result,
+                warning: 'This is a basic permission model, not full sandboxing.'
+            });
+        }
+
         if (req.url === '/api/settings') {
             try {
-                ensureIdeMutationAllowed(req);
+                enforcePermission(req, 'provider.mutate', { targetSummary: 'settings.defaultProvider/defaultModel' });
                 const body = await getBody(req);
                 const state = loadProviderState();
                 const requestedDefaultProviderId = body?.settings?.defaultProviderId || body?.defaultProviderId || state.defaultProviderId;
@@ -2587,13 +2739,14 @@ const server = http.createServer(async (req, res) => {
                 saveProviderState(state);
                 return sendJSON(res, 200, getSettingsPayload());
             } catch (e) {
-                return sendJSON(res, 403, { ok: false, error: redactSecrets(e.message) });
+                const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 403;
+                return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
             }
         }
 
         if (req.url === '/api/providers') {
             try {
-                ensureIdeMutationAllowed(req);
+                enforcePermission(req, 'provider.mutate', { targetSummary: 'providers.upsert' });
                 const body = await getBody(req);
                 const inputProvider = body.provider && typeof body.provider === 'object' ? body.provider : body;
                 const state = loadProviderState();
@@ -2608,13 +2761,14 @@ const server = http.createServer(async (req, res) => {
                 saveProviderState(state);
                 return sendJSON(res, 200, { ok: true, provider: providerToClientRecord(provider), providers: state.providers.map(providerToClientRecord), warnings: [] });
             } catch (e) {
-                return sendJSON(res, 400, { ok: false, error: redactSecrets(e.message) });
+                const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 400;
+                return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
             }
         }
 
         if (req.url === '/api/providers/default') {
             try {
-                ensureIdeMutationAllowed(req);
+                enforcePermission(req, 'provider.mutate', { targetSummary: 'providers.default' });
                 const body = await getBody(req);
                 const providerId = normalizeProviderId(body.id || body.providerId);
                 const state = loadProviderState();
@@ -2625,13 +2779,14 @@ const server = http.createServer(async (req, res) => {
                 saveProviderState(state);
                 return sendJSON(res, 200, { ok: true, settings: { defaultProviderId: providerId }, providers: state.providers.map(providerToClientRecord), warnings: [] });
             } catch (e) {
-                return sendJSON(res, 400, { ok: false, error: redactSecrets(e.message) });
+                const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 400;
+                return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
             }
         }
 
         if (req.url === '/api/providers/clear_key') {
             try {
-                ensureIdeMutationAllowed(req);
+                enforcePermission(req, 'provider.mutate', { targetSummary: 'providers.clear_key' });
                 const body = await getBody(req);
                 const providerId = normalizeProviderId(body.id || body.providerId);
                 const state = loadProviderState();
@@ -2645,13 +2800,14 @@ const server = http.createServer(async (req, res) => {
                 saveProviderState(state);
                 return sendJSON(res, 200, { ok: true, provider: providerToClientRecord(state.providers.find(p => p.id === providerId)), warnings: [] });
             } catch (e) {
-                return sendJSON(res, 400, { ok: false, error: redactSecrets(e.message) });
+                const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 400;
+                return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
             }
         }
 
         if (req.url === '/api/providers/test') {
             try {
-                ensureIdeMutationAllowed(req);
+                enforcePermission(req, 'provider.mutate', { targetSummary: 'providers.test' });
                 const body = await getBody(req);
                 const providerId = normalizeProviderId(body.id || body.providerId);
                 const state = loadProviderState();
@@ -2702,32 +2858,33 @@ const server = http.createServer(async (req, res) => {
                     reason: status === 'untested' ? 'not implemented' : undefined
                 });
             } catch (e) {
-                return sendJSON(res, 400, { ok: false, status: 'failed', error: redactSecrets(e.message), warnings: [] });
+                const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 400;
+                return sendJSON(res, status, { ok: false, status: 'failed', error: redactSecrets(e.message), warnings: [] });
             }
         }
 
         if (req.url === '/api/apply_pending_edit') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'apply_pending_edit requires explicit UI approval.' });
+            enforcePermission(req, 'file.apply_edit', { targetSummary: `apply_pending_edit:${String(body.id || '').slice(0, 60)}` });
             return sendJSON(res, 200, { result: workspaceCore.applyPendingEditTool(body) });
         }
 
         if (req.url === '/api/write_file') {
             const body = await getBody(req);
-            ensureIdeMutationAllowed(req);
+            enforcePermission(req, 'file.write', { targetSummary: `write_file:${String(body.path || '').slice(0, 120)}` });
             const result = await routeApiTool('write_file', { filePath: body.path, content: body.content, reason: 'Manual UI Save' });
             return sendJSON(res, 200, { ok: true, result });
         }
 
         if (req.url === '/api/discard_pending_edit') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'discard_pending_edit requires explicit UI approval.' });
+            enforcePermission(req, 'file.apply_edit', { targetSummary: `discard_pending_edit:${String(body.id || '').slice(0, 60)}` });
             return sendJSON(res, 200, { result: workspaceCore.discardPendingEditTool(body) });
         }
 
         if (req.url === '/api/inline_edit') {
             try {
-                ensureIdeMutationAllowed(req);
+                enforcePermission(req, 'inline_edit.generate', { targetSummary: 'inline_edit.generate' });
                 const body = await getBody(req);
                 const { filePath, instruction, selectedCode, startLine, endLine } = body;
                 if (!filePath || !instruction || !selectedCode) {
@@ -2786,6 +2943,9 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
 
                 return sendJSON(res, 200, { ok: true, pendingEdit: result.pendingEdit || result });
             } catch (e) {
+                if (e && Number.isInteger(e.statusCode)) {
+                    return sendJSON(res, e.statusCode, { ok: false, status: 'failed', error: redactSecrets(e.message) });
+                }
                 const safeMessage = redactSecrets(e.message);
                 const lowered = String(safeMessage || '').toLowerCase();
                 const statusCode = lowered.includes('x-agent-approved') || lowered.includes('ide-mode only')
@@ -2799,44 +2959,44 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
 
         if (req.url === '/api/install_extension') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'install_extension requires explicit UI approval.' });
+            enforcePermission(req, 'extension.install', { targetSummary: `install_extension:${String(body.path || '').slice(0, 120)}` });
             const installed = extensionHost.installFromFolder(body.path);
             return sendJSON(res, 200, { status: 'success', extension: installed });
         }
 
         if (req.url === '/api/extensions/install_folder') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/install_folder requires explicit UI approval.' });
+            enforcePermission(req, 'extension.install', { targetSummary: `extensions.install_folder:${String(body.path || '').slice(0, 120)}` });
             return sendJSON(res, 200, { status: 'success', extension: extensionHost.installFromFolder(body.path) });
         }
 
         if (req.url === '/api/extensions/install_vsix') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/install_vsix requires explicit UI approval.' });
+            enforcePermission(req, 'extension.install', { targetSummary: `extensions.install_vsix:${String(body.path || '').slice(0, 120)}` });
             return sendJSON(res, 200, { status: 'success', extension: extensionHost.installFromVsix(body.path) });
         }
 
         if (req.url === '/api/extensions/install_openvsx') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/install_openvsx requires explicit UI approval.' });
+            enforcePermission(req, 'extension.install', { targetSummary: `extensions.install_openvsx:${String(body.id || body.name || '').slice(0, 120)}` });
             return sendJSON(res, 200, { status: 'success', extension: await extensionHost.installFromOpenVsx(body) });
         }
 
         if (req.url === '/api/extensions/enable') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/enable requires explicit UI approval.' });
+            enforcePermission(req, 'extension.mutate', { targetSummary: `extensions.enable:${String(body.id || '').slice(0, 120)}` });
             return sendJSON(res, 200, { status: 'success', extension: extensionHost.setEnabled(body.id, body.enabled === true) });
         }
 
         if (req.url === '/api/extensions/uninstall') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/uninstall requires explicit UI approval.' });
+            enforcePermission(req, 'extension.mutate', { targetSummary: `extensions.uninstall:${String(body.id || '').slice(0, 120)}` });
             return sendJSON(res, 200, { status: 'success', result: extensionHost.uninstall(body.id) });
         }
 
         if (req.url === '/api/extensions/activate') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/activate requires explicit UI approval.' });
+            enforcePermission(req, 'extension.mutate', { targetSummary: `extensions.activate:${String(body.id || body.event || '').slice(0, 120)}` });
             const result = body.event
                 ? await extensionHost.activateByEvent(body.event)
                 : await extensionHost.activateExtension(body.id, body.activationEvent || 'manual');
@@ -2845,14 +3005,14 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
 
         if (req.url === '/api/extensions/run_command') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'extensions/run_command requires explicit UI approval.' });
+            enforcePermission(req, 'extension.mutate', { targetSummary: `extensions.run_command:${String(body.command || '').slice(0, 120)}` });
             const result = await extensionHost.executeCommand(body.command, body.args || []);
             return sendJSON(res, 200, { status: 'success', result });
         }
 
         if (req.url === '/api/agent_providers/run') {
             const body = await getBody(req);
-            if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'agent provider run requires explicit UI approval.' });
+            enforcePermission(req, 'terminal.run', { targetSummary: `agent_provider.run:${String(body.id || '').slice(0, 60)}` });
             const provider = extensionHost.getAgentProviders().find(item => item.id === body.id);
             if (!provider) return sendJSON(res, 404, { error: `Agent provider not found: ${body.id}` });
             if (provider.installed === false) return sendJSON(res, 400, { error: `${provider.name || provider.id} is not installed or not on PATH.` });
@@ -2867,6 +3027,7 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         // Sprint 8: Diagnostics refresh (runs safe read-only checks; IDE mode only)
         if (req.url === '/api/diagnostics/refresh') {
             if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'diagnostics refresh requires explicit UI approval.' });
+            enforcePermission(req, 'file.read', { targetSummary: 'diagnostics.refresh' });
             return sendJSON(res, 200, await refreshDiagnostics());
         }
 
@@ -2911,17 +3072,19 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         if (req.url === '/api/index/build') {
             const body = await getBody(req);
             if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'index build requires explicit UI approval.' });
+            enforcePermission(req, 'file.read', { targetSummary: 'index.build' });
             return sendJSON(res, 200, await workspaceCore.buildIndexCache({ maxFiles: body.maxFiles || 1200, full: true }));
         }
 
         if (req.url === '/api/index/refresh') {
             const body = await getBody(req);
             if (req.headers['x-agent-approved'] !== 'true') return sendJSON(res, 403, { error: 'index refresh requires explicit UI approval.' });
+            enforcePermission(req, 'file.read', { targetSummary: 'index.refresh' });
             return sendJSON(res, 200, await workspaceCore.refreshIndexCache({ maxFiles: body.maxFiles || 1200 }));
         }
 
         if (req.url === '/api/tasks/start') {
-            ensureIdeMutationAllowed(req);
+            enforcePermission(req, 'task.mutate', { targetSummary: 'tasks.start' });
             const body = await getBody(req);
             if (JSON.stringify(body).length > 20_000) return sendJSON(res, 413, { error: 'Task start payload too large' });
             const title = sanitizeTaskText(body.title || 'Task', MAX_TASK_TITLE_CHARS);
@@ -2931,7 +3094,7 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         }
 
         if (req.url === '/api/tasks/event') {
-            ensureIdeMutationAllowed(req);
+            enforcePermission(req, 'task.mutate', { targetSummary: 'tasks.event' });
             const body = await getBody(req);
             if (JSON.stringify(body).length > 30_000) return sendJSON(res, 413, { error: 'Task event payload too large' });
             const taskId = String(body.id || body.taskId || '');
@@ -2945,7 +3108,7 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         }
 
         if (req.url === '/api/tasks/pause') {
-            ensureIdeMutationAllowed(req);
+            enforcePermission(req, 'task.mutate', { targetSummary: 'tasks.pause' });
             const body = await getBody(req);
             const taskId = String(body.id || body.taskId || '');
             const task = taskStore.get(taskId);
@@ -2956,7 +3119,7 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         }
 
         if (req.url === '/api/tasks/cancel') {
-            ensureIdeMutationAllowed(req);
+            enforcePermission(req, 'task.mutate', { targetSummary: 'tasks.cancel' });
             const body = await getBody(req);
             const taskId = String(body.id || body.taskId || '');
             const task = taskStore.get(taskId);
@@ -2966,7 +3129,7 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         }
 
         if (req.url === '/api/tasks/resume') {
-            ensureIdeMutationAllowed(req);
+            enforcePermission(req, 'task.mutate', { targetSummary: 'tasks.resume' });
             const body = await getBody(req);
             const taskId = String(body.id || body.taskId || '');
             const task = taskStore.get(taskId);
@@ -2986,7 +3149,7 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         }
 
         if (req.url === '/api/tasks/clear_completed') {
-            ensureIdeMutationAllowed(req);
+            enforcePermission(req, 'task.mutate', { targetSummary: 'tasks.clear_completed' });
             const toDelete = [];
             for (const [id, task] of taskStore.entries()) {
                 if (['completed', 'cancelled', 'failed'].includes(task.status)) {
@@ -3002,7 +3165,7 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         // Sprint 13: Git / SCM Panel - Mutation endpoints
         if (req.url === '/api/git/stage') {
           try {
-            ensureIdeMutationAllowed(req);
+            enforcePermission(req, 'git.stage', { targetSummary: 'git.stage' });
             const body = await getBody(req);
             const files = Array.isArray(body.files) ? body.files.map(f => String(f).trim()).filter(Boolean) : [];
             const all = body.all === true;
@@ -3010,6 +3173,9 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
             const result = await workspaceCore.callTool('git_stage', { files: files.length > 0 ? files : undefined, all });
             return sendJSON(res, 200, result);
           } catch (e) {
+            if (e && Number.isInteger(e.statusCode)) {
+              return sendJSON(res, e.statusCode, { ok: false, error: redactSecrets(e.message) });
+            }
             const lowered = String(e.message || '').toLowerCase();
             const statusCode = lowered.includes('x-agent-approved') || lowered.includes('ide-mode only') ? 403
               : lowered.includes('trusted') ? 403 : 400;
@@ -3019,7 +3185,7 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
 
         if (req.url === '/api/git/unstage') {
           try {
-            ensureIdeMutationAllowed(req);
+            enforcePermission(req, 'git.unstage', { targetSummary: 'git.unstage' });
             const body = await getBody(req);
             const files = Array.isArray(body.files) ? body.files.map(f => String(f).trim()).filter(Boolean) : [];
             const all = body.all === true;
@@ -3027,6 +3193,9 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
             const result = await workspaceCore.callTool('git_unstage', { files: files.length > 0 ? files : undefined, all });
             return sendJSON(res, 200, result);
           } catch (e) {
+            if (e && Number.isInteger(e.statusCode)) {
+              return sendJSON(res, e.statusCode, { ok: false, error: redactSecrets(e.message) });
+            }
             const lowered = String(e.message || '').toLowerCase();
             const statusCode = lowered.includes('x-agent-approved') || lowered.includes('ide-mode only') ? 403
               : lowered.includes('trusted') ? 403 : 400;
@@ -3036,8 +3205,12 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
 
         if (req.url === '/api/git/discard') {
           try {
-            ensureIdeMutationAllowed(req);
             const body = await getBody(req);
+            enforcePermission(req, 'git.discard', {
+                targetSummary: 'git.discard',
+                requiresConfirmation: true,
+                hasConfirmation: body.confirm === true
+            });
             const filePath = body.filePath ? String(body.filePath).trim() : '';
             const files = Array.isArray(body.files) ? body.files.map(f => String(f).trim()).filter(Boolean) : [];
             const confirm = body.confirm === true;
@@ -3045,6 +3218,9 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
             const result = await workspaceCore.callTool('git_discard', { filePath: filePath || undefined, files: files.length > 0 ? files : undefined, confirm });
             return sendJSON(res, 200, result);
           } catch (e) {
+            if (e && Number.isInteger(e.statusCode)) {
+              return sendJSON(res, e.statusCode, { ok: false, error: redactSecrets(e.message) });
+            }
             const lowered = String(e.message || '').toLowerCase();
             const statusCode = lowered.includes('x-agent-approved') || lowered.includes('ide-mode only') ? 403
               : lowered.includes('trusted') ? 403 : 400;
@@ -3054,6 +3230,7 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
 
         if (req.url === '/api/git/commit_draft') {
           try {
+            enforcePermission(req, 'git.commit_draft', { targetSummary: 'git.commit_draft' });
             const body = await getBody(req);
             const style = ['conventional', 'simple'].includes(body.style) ? body.style : 'conventional';
             const draft = await workspaceCore.callTool('git_commit_draft', { style });
@@ -3066,6 +3243,15 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         if (req.url.startsWith('/api/')) {
             const toolName = req.url.split('/')[2];
             const args = await getBody(req);
+            const mappedAction = actionTypeForTool(toolName);
+            if (mappedAction) {
+                const confirm = args && typeof args === 'object' && args.confirm === true;
+                enforcePermission(req, mappedAction, {
+                    targetSummary: `tool:${toolName}`,
+                    requiresConfirmation: mappedAction === 'git.discard',
+                    hasConfirmation: confirm
+                });
+            }
             if (DESTRUCTIVE_TOOLS.has(toolName) && !isWorkspaceTrusted()) {
                 return sendJSON(res, 403, { error: `${toolName} requires trusted workspace.` });
             }
@@ -3081,6 +3267,13 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
         res.end();
     } catch (e) {
         console.error(`[ERR] ${req.method} ${req.url}`, e);
+        if (e && Number.isInteger(e.statusCode) && e.statusCode >= 400 && e.statusCode < 600) {
+            return sendJSON(res, e.statusCode, {
+                ok: false,
+                error: redactSecrets(e.message || 'Permission denied'),
+                permission: e.permission || null
+            });
+        }
         if (e.name === 'AbortError') {
             if (req.url === '/proxy/chat' && !res.headersSent && !res.writableEnded) {
                 return sendJSON(res, 499, { error: 'Request aborted by user.' });

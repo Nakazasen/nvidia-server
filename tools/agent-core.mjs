@@ -938,6 +938,64 @@ export function createWorkspaceCore({
     throw new Error(`Unknown workspace core tool: ${name}`);
   }
 
+  // --- Sprint 14: Security Permission Model ---
+  const PERMISSION_DEFINITIONS = [
+    { permissionId: 'file.read', actionType: 'file.read', riskLevel: 'low', modeAllowed: 'both-readonly', requiresApproval: false, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Read a file from the workspace.', exampleActions: ['read_file', 'read_file_paged', 'search_files'] },
+    { permissionId: 'file.write', actionType: 'file.write', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Write or create a file in the workspace.', exampleActions: ['write_file'] },
+    { permissionId: 'file.apply_edit', actionType: 'file.apply_edit', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Apply or discard a pending file edit.', exampleActions: ['apply_pending_edit', 'discard_pending_edit', 'apply_patch'] },
+    { permissionId: 'terminal.run', actionType: 'terminal.run', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Execute a shell command in the workspace.', exampleActions: ['execute_command', 'start_command_job'] },
+    { permissionId: 'job.cancel', actionType: 'job.cancel', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Cancel a running command job.', exampleActions: ['cancel_command_job'] },
+    { permissionId: 'provider.mutate', actionType: 'provider.mutate', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Create, update, or delete API provider configuration.', exampleActions: ['POST /api/providers', 'POST /api/providers/default', 'POST /api/providers/clear_key', 'POST /api/settings'] },
+    { permissionId: 'extension.install', actionType: 'extension.install', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Install an extension from folder, VSIX, or marketplace.', exampleActions: ['install_folder', 'install_vsix', 'install_openvsx'] },
+    { permissionId: 'extension.mutate', actionType: 'extension.mutate', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Enable, disable, activate, or uninstall an extension.', exampleActions: ['extensions/enable', 'extensions/uninstall', 'extensions/activate'] },
+    { permissionId: 'inline_edit.generate', actionType: 'inline_edit.generate', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Generate code via inline edit (no file write yet).', exampleActions: ['POST /api/inline_edit (generate phase)'] },
+    { permissionId: 'inline_edit.apply', actionType: 'inline_edit.apply', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Apply the inline edit generated code as a pending edit.', exampleActions: ['POST /api/inline_edit (apply phase)'] },
+    { permissionId: 'task.mutate', actionType: 'task.mutate', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Start, pause, resume, cancel, or clear a task.', exampleActions: ['tasks/start', 'tasks/event', 'tasks/pause', 'tasks/resume', 'tasks/cancel', 'tasks/clear_completed'] },
+    { permissionId: 'git.read', actionType: 'git.read', riskLevel: 'low', modeAllowed: 'both-readonly', requiresApproval: false, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Read git status, diff, or log.', exampleActions: ['git_status', 'git_diff', 'git_log'] },
+    { permissionId: 'git.stage', actionType: 'git.stage', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Stage files for commit.', exampleActions: ['git_stage'] },
+    { permissionId: 'git.unstage', actionType: 'git.unstage', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Unstage files from the index.', exampleActions: ['git_unstage'] },
+    { permissionId: 'git.discard', actionType: 'git.discard', riskLevel: 'destructive', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: true, description: 'Discard working-tree changes permanently.', exampleActions: ['git_discard'] },
+    { permissionId: 'git.commit_draft', actionType: 'git.commit_draft', riskLevel: 'low', modeAllowed: 'both-readonly', requiresApproval: false, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Generate a commit message draft.', exampleActions: ['git_commit_draft'] },
+    { permissionId: 'git.commit', actionType: 'git.commit', riskLevel: 'high', modeAllowed: 'enterprise-readonly', requiresApproval: false, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'RESERVED: git commit product flow is not implemented and this action is always denied.', exampleActions: ['git_commit'] },
+    { permissionId: 'git.push', actionType: 'git.push', riskLevel: 'destructive', modeAllowed: 'enterprise-readonly', requiresApproval: false, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'RESERVED: git push product flow is not implemented and this action is always denied.', exampleActions: ['git_push'] },
+    { permissionId: 'abw.bridge.reserved', actionType: 'abw.bridge.reserved', riskLevel: 'destructive', modeAllowed: 'enterprise-readonly', requiresApproval: false, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'RESERVED: ABW bridge actions are not implemented yet. This action is always denied.', exampleActions: ['abw.*'] }
+  ];
+
+  function getPermission(actionType) {
+    return PERMISSION_DEFINITIONS.find(p => p.actionType === actionType) || null;
+  }
+
+  function getAllPermissions() {
+    return PERMISSION_DEFINITIONS;
+  }
+
+  function checkPermission({ actionType, uiMode = 'enterprise', hasApproval = false, isTrusted = false, isReservedAction = false } = {}) {
+    const perm = getPermission(actionType);
+    if (!perm) return { allow: false, reason: `Unknown action type: ${actionType}`, permissionId: null, riskLevel: 'unknown' };
+    const reservedActions = new Set(['abw.bridge.reserved', 'git.commit', 'git.push']);
+    if (isReservedAction || reservedActions.has(actionType)) return { allow: false, reason: `Action ${actionType} is reserved or not yet supported.`, permissionId: perm.permissionId, riskLevel: perm.riskLevel };
+    if (perm.modeAllowed === 'ide' && uiMode !== 'ide') return { allow: false, reason: `Action ${actionType} requires IDE mode. Currently in ${uiMode} mode.`, permissionId: perm.permissionId, riskLevel: perm.riskLevel };
+    if (perm.modeAllowed === 'enterprise-readonly' && uiMode === 'ide') return { allow: false, reason: `Action ${actionType} is reserved/read-only and not executable in IDE mode.`, permissionId: perm.permissionId, riskLevel: perm.riskLevel };
+    if (perm.requiresApproval && !hasApproval) return { allow: false, reason: `Action ${actionType} requires X-Agent-Approved=true.`, permissionId: perm.permissionId, riskLevel: perm.riskLevel };
+    if (perm.requiresTrustedWorkspace && !isTrusted) return { allow: false, reason: `Action ${actionType} requires a trusted workspace.`, permissionId: perm.permissionId, riskLevel: perm.riskLevel };
+    return { allow: true, reason: `${actionType} is allowed.`, permissionId: perm.permissionId, riskLevel: perm.riskLevel, requiresConfirmation: perm.requiresConfirmation || false };
+  }
+
+  function enforcePermission(reqOrOptions, actionType, { extraReturn = false } = {}) {
+    const options = (typeof reqOrOptions === 'object' && reqOrOptions !== null) ? reqOrOptions : {};
+    const uiMode = options.uiMode || 'enterprise';
+    const hasApproval = options.hasApproval === true;
+    const isTrusted = options.isTrusted === true;
+    const result = checkPermission({ actionType, uiMode, hasApproval, isTrusted });
+    if (!result.allow) {
+      const err = new Error(result.reason);
+      Object.assign(err, { permissionId: result.permissionId, riskLevel: result.riskLevel, allow: false, reason: result.reason });
+      throw err;
+    }
+    if (extraReturn) return result;
+    return true;
+  }
+
   return {
     setWorkspace, getWorkspace, truncate, redactSecrets, toolResult, isPathInside,
     resolveWorkspacePath, isLikelyTextFile, shouldSkipDir, getFilesFlat, getFileTree,
@@ -948,6 +1006,7 @@ export function createWorkspaceCore({
     gitStageTool, gitUnstageTool, gitDiscardTool, gitCommitMessageDraftTool,
     createPendingEdit, applyPatchTool, applyPendingEditTool, discardPendingEditTool,
     listPendingEditsTool, executeCommandTool, startCommandJobTool, commandJobStatusTool,
-    cancelCommandJobTool, callTool
+    cancelCommandJobTool, callTool,
+    PERMISSION_DEFINITIONS, getPermission, getAllPermissions, checkPermission, enforcePermission
   };
 }

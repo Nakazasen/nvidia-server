@@ -132,6 +132,40 @@ function fetchText(url, timeoutMs = 10000) {
   });
 }
 
+function requestJson(url, { method = 'GET', headers = {}, body, timeoutMs = 10000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const lib = u.protocol === 'https:' ? https : http;
+    const payload = body === undefined ? '' : JSON.stringify(body);
+    const req = lib.request({
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: `${u.pathname || '/'}${u.search || ''}`,
+      method,
+      timeout: timeoutMs,
+      headers: {
+        'User-Agent': 'nvidia-browser-smoke/14',
+        Accept: 'application/json',
+        ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+        ...headers
+      }
+    }, res => {
+      let raw = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { raw += chunk; });
+      res.on('end', () => {
+        let json = {};
+        try { json = raw ? JSON.parse(raw) : {}; } catch {}
+        resolve({ statusCode: res.statusCode || 0, json, raw });
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error(`Timeout after ${timeoutMs}ms`)));
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
 async function waitForServer(url, timeoutMs = SERVER_READY_TIMEOUT_MS) {
   const started = Date.now();
   while ((Date.now() - started) < timeoutMs) {
@@ -551,6 +585,9 @@ async function runRealBrowserSmoke(url) {
       add('Settings API key input exists', apiKeyInputOk, 'provider key input selector found', true);
       add('Enterprise mode hides settings mutation surface', enterpriseBlocksSettingsEdit, 'settings button hidden/blocked in enterprise mode', true);
 
+      const securitySectionOk = exists('#security-permissions-section') && exists('#permissions-list');
+      add('Security/Permissions UI exists', securitySectionOk, '#security-permissions-section + #permissions-list', true);
+
       return { checks };
     });
 
@@ -566,6 +603,49 @@ async function runRealBrowserSmoke(url) {
     addCheck('Page request failures', nonTrivialFailures.length === 0 ? 'pass' : 'warn', nonTrivialFailures.length ? nonTrivialFailures.slice(0, 3).join(' ; ') : 'none', false);
 
     addCheck('Page runtime errors', pageErrors.length === 0 ? 'pass' : 'fail', pageErrors.length ? pageErrors.slice(0, 3).join(' ; ') : 'none', true);
+
+    const profileEnterprise = await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: 'enterprise', trustedWorkspace: false } });
+    addCheck('Permissions precheck profile enterprise set', profileEnterprise.statusCode === 200 ? 'pass' : 'fail', `status=${profileEnterprise.statusCode}`, true);
+
+    const permissionsRes = await requestJson(`${url}/api/permissions`);
+    const permissionsOk = permissionsRes.statusCode === 200 && Array.isArray(permissionsRes.json.permissions) && permissionsRes.json.permissions.length > 0;
+    addCheck('Permissions API returns structured list', permissionsOk ? 'pass' : 'fail', `status=${permissionsRes.statusCode}`, true);
+
+    const checkUnknown = await requestJson(`${url}/api/permissions/check`, {
+      method: 'POST',
+      headers: { 'X-Agent-Approved': 'true' },
+      body: { actionType: 'unknown.action', targetSummary: 'browser-smoke' }
+    });
+    addCheck('Permissions check rejects unknown action', checkUnknown.statusCode === 400 ? 'pass' : 'fail', `status=${checkUnknown.statusCode}`, true);
+
+    const checkKnownRead = await requestJson(`${url}/api/permissions/check`, {
+      method: 'POST',
+      headers: { 'X-Agent-Approved': 'true' },
+      body: { actionType: 'file.read', targetSummary: 'browser-smoke' }
+    });
+    addCheck('Permissions check allows known read action', (checkKnownRead.statusCode === 200 && checkKnownRead.json?.ok === true) ? 'pass' : 'fail', `status=${checkKnownRead.statusCode}`, true);
+
+    const checkReserved = await requestJson(`${url}/api/permissions/check`, {
+      method: 'POST',
+      headers: { 'X-Agent-Approved': 'true' },
+      body: { actionType: 'abw.bridge.reserved', targetSummary: 'browser-smoke' }
+    });
+    addCheck('Permissions check denies reserved ABW action', (checkReserved.statusCode >= 400 && checkReserved.json?.ok === false) ? 'pass' : 'fail', `status=${checkReserved.statusCode}`, true);
+
+    const stageEnterpriseApproved = await requestJson(`${url}/api/git/stage`, {
+      method: 'POST',
+      headers: { 'X-Agent-Approved': 'true' },
+      body: { files: ['README.md'] }
+    });
+    addCheck('Enterprise mode mutation denied even with approval', stageEnterpriseApproved.statusCode === 403 ? 'pass' : 'fail', `status=${stageEnterpriseApproved.statusCode}`, true);
+
+    const profileIde = await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: 'ide', trustedWorkspace: false } });
+    addCheck('Permissions precheck profile ide set', profileIde.statusCode === 200 ? 'pass' : 'warn', `status=${profileIde.statusCode}`, false);
+    const stageIdeNoApproval = await requestJson(`${url}/api/git/stage`, {
+      method: 'POST',
+      body: { files: ['README.md'] }
+    });
+    addCheck('IDE mode mutation denied without approval', stageIdeNoApproval.statusCode === 403 ? 'pass' : 'fail', `status=${stageIdeNoApproval.statusCode}`, true);
 
     const screenshotPath = path.join(REPORTS_DIR, `browser-smoke-${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
     ensureReportsDir();
