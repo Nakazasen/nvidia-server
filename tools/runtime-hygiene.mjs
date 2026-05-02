@@ -50,8 +50,78 @@ async function getSortedFiles(dirPath) {
     return files.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
+async function getSecurityLogDetails(dirPath) {
+    const result = {
+        securityLogStatus: 'OK',
+        securityLogBytes: 0,
+        securityLogLines: 0,
+        securityLogFiles: 0,
+        securityLogErrors: [],
+        files: []
+    };
+    if (!fs.existsSync(dirPath)) return result;
+
+    let items = [];
+    try {
+        items = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    } catch (e) {
+        result.securityLogStatus = 'UNREADABLE';
+        result.securityLogErrors.push(`readdir failed: ${e.message}`);
+        return result;
+    }
+    for (const item of items) {
+        if (!item.isFile()) continue;
+        const fullPath = path.join(dirPath, item.name);
+        let stat;
+        try {
+            stat = await fs.promises.stat(fullPath);
+        } catch (e) {
+            result.securityLogErrors.push(`stat failed for ${item.name}: ${e.message}`);
+            continue;
+        }
+        result.securityLogBytes += stat.size;
+        result.securityLogFiles++;
+
+        let lines = 0;
+        const isJsonl = item.name.toLowerCase().endsWith('.jsonl');
+        if (isJsonl) {
+            try {
+                const content = await fs.promises.readFile(fullPath, 'utf-8');
+                lines = content.length === 0 ? 0 : content.split(/\r?\n/).filter(Boolean).length;
+            } catch (e) {
+                lines = -1;
+                result.securityLogErrors.push(`read failed for ${item.name}: ${e.message}`);
+            }
+        }
+        result.securityLogLines += Math.max(0, lines);
+
+        result.files.push({
+            name: item.name,
+            sizeBytes: stat.size,
+            isJsonl,
+            lines: Math.max(0, lines),
+            mtimeMs: stat.mtimeMs
+        });
+    }
+
+    result.files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    if (result.securityLogErrors.length > 0) {
+        result.securityLogStatus = 'PARTIAL';
+    } else if (result.securityLogBytes > SECURITY_ROTATION_WARN_BYTES) {
+        result.securityLogStatus = 'LARGE';
+    } else if (result.securityLogBytes > 0) {
+        result.securityLogStatus = 'OK';
+    } else {
+        result.securityLogStatus = 'EMPTY';
+    }
+    return result;
+}
+
 async function runHygiene(dryRun = true) {
     console.log(`Running runtime hygiene (${dryRun ? 'DRY-RUN' : 'APPLY'})...`);
+
+    const securityDetails = await getSecurityLogDetails(path.join(STATE_DIR, 'security'));
 
     const summary = {
         boundaryRoot: REAL_STATE_DIR,
@@ -62,7 +132,13 @@ async function runHygiene(dryRun = true) {
         preserved: 0,
         boundaryRejected: 0,
         securityRotation: 'NOT_ROTATED_YET',
-        securityRotationCandidates: []
+        securityRotationCandidates: [],
+        securityRotationReason: 'Automatic rotation not implemented. Only detection/reporting is active.',
+        securityLogStatus: securityDetails.securityLogStatus,
+        securityLogBytes: securityDetails.securityLogBytes,
+        securityLogLines: securityDetails.securityLogLines,
+        securityLogFiles: securityDetails.securityLogFiles,
+        securityLogErrors: securityDetails.securityLogErrors
     };
 
     for (const [key, rule] of Object.entries(HYGIENE_RULES)) {
@@ -129,6 +205,27 @@ async function runHygiene(dryRun = true) {
                 summary.securityRotation = 'NOT_ROTATED_YET';
                 console.log('  [LIMITATION] Oversized .jsonl file(s) detected; file-count cap does not rotate a single growing file.');
             }
+
+            if (securityDetails.securityLogFiles > 0) {
+                console.log(`  Security log total bytes: ${(securityDetails.securityLogBytes / 1024).toFixed(2)} KB`);
+                console.log(`  Security log total lines: ${securityDetails.securityLogLines}`);
+                console.log(`  Security log status: ${securityDetails.securityLogStatus}`);
+            }
+            if (securityDetails.securityLogErrors.length > 0) {
+                for (const err of securityDetails.securityLogErrors.slice(0, 5)) {
+                    console.log(`  [WARN] Security log read issue: ${err}`);
+                }
+            }
+            if (summary.securityRotation === 'NOT_ROTATED_YET') {
+                console.log(`  Security rotation: NOT_ROTATED_YET (${summary.securityRotationReason})`);
+            }
+            for (const detail of securityDetails.files.slice(0, 5)) {
+                const kb = (detail.sizeBytes / 1024).toFixed(2);
+                console.log(`    - ${detail.name}: ${kb} KB, ${detail.lines} lines`);
+            }
+            if (securityDetails.files.length > 5) {
+                console.log(`    ... ${securityDetails.files.length - 5} more security log file(s)`);
+            }
         }
     }
 
@@ -144,6 +241,11 @@ async function runHygiene(dryRun = true) {
     
     // Safety check - ensuring we never delete source files
     console.log('\nSafety Check: All operations were strictly confined to .nvidia-agent runtime directories.');
+    console.log(`Security rotation: ${summary.securityRotation}`);
+    if (summary.securityRotation === 'NOT_ROTATED_YET') {
+        console.log(`Security rotation reason: ${summary.securityRotationReason}`);
+    }
+    console.log(`Security log: ${summary.securityLogBytes} bytes, ${summary.securityLogLines} lines, status=${summary.securityLogStatus}`);
     console.log('Hygiene summary JSON:', JSON.stringify(summary));
 }
 

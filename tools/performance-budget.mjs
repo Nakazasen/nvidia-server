@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import http from 'http';
 import { once } from 'events';
 
@@ -52,6 +52,63 @@ function checkReachability(port) {
             resolve(false);
         });
     });
+}
+
+function measureProcessMemory(pid) {
+    if (!pid || !Number.isInteger(pid) || pid <= 0) {
+        return {
+            idleMemoryEstimateMb: 'NOT_MEASURED_YET',
+            idleMemoryStatus: 'UNAVAILABLE',
+            idleMemoryReason: 'Invalid or missing PID',
+            idleMemoryMethod: null,
+            idleMemoryPid: pid || null
+        };
+    }
+    try {
+        const raw = execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
+            encoding: 'ascii',
+            timeout: 3000,
+            windowsHide: true
+        }).trim();
+        const match = raw.match(/"[^"]*","[^"]*","[^"]*","[^"]*","([0-9,.]+)\s*K"/i);
+        if (match) {
+            const kb = parseFloat(match[1].replace(/,/g, ''));
+            if (Number.isFinite(kb) && kb > 0) {
+                const mb = Math.round((kb / 1024) * 100) / 100;
+                return {
+                    idleMemoryEstimateMb: mb,
+                    idleMemoryStatus: 'MEASURED',
+                    idleMemoryReason: null,
+                    idleMemoryMethod: 'tasklist /FI (Windows) working-set K -> MB',
+                    idleMemoryPid: pid
+                };
+            }
+        }
+        if (raw.toLowerCase().includes('no tasks')) {
+            return {
+                idleMemoryEstimateMb: 'NOT_MEASURED_YET',
+                idleMemoryStatus: 'UNAVAILABLE',
+                idleMemoryReason: 'Process PID not found in tasklist (possibly exited)',
+                idleMemoryMethod: 'tasklist /FI (attempted)',
+                idleMemoryPid: pid
+            };
+        }
+        return {
+            idleMemoryEstimateMb: 'NOT_MEASURED_YET',
+            idleMemoryStatus: 'UNAVAILABLE',
+            idleMemoryReason: `tasklist parse failed: output did not match expected K pattern`,
+            idleMemoryMethod: 'tasklist /FI (attempted)',
+            idleMemoryPid: pid
+        };
+    } catch (e) {
+        return {
+            idleMemoryEstimateMb: 'NOT_MEASURED_YET',
+            idleMemoryStatus: 'UNAVAILABLE',
+            idleMemoryReason: `Measurement error: ${e.message.slice(0, 200)}`,
+            idleMemoryMethod: 'tasklist /FI (attempted)',
+            idleMemoryPid: pid
+        };
+    }
 }
 
 async function measureServerStart() {
@@ -113,10 +170,11 @@ async function measureServerStart() {
                 reachabilityTime = Date.now() - startTime;
                 clearInterval(poll);
                 clearTimeout(timeout);
+                const mem = measureProcessMemory(serverProcess.pid);
                 finish({
                     coldStartTimeMs: coldStartTime || reachabilityTime,
                     reachabilityTimeMs: reachabilityTime,
-                    idleMemoryEstimateMb: 'NOT_MEASURED_YET'
+                    ...mem
                 });
             }
         }, 100);
@@ -181,12 +239,19 @@ async function main() {
     fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2));
 
     const mdPath = path.join(REPORTS_DIR, 'performance-budget.md');
+    const memDisplay = typeof serverStats.idleMemoryEstimateMb === 'number'
+        ? `${serverStats.idleMemoryEstimateMb} MB`
+        : String(serverStats.idleMemoryEstimateMb);
     const mdContent = `# Performance Budget Baseline
 
 ## Server Metrics
 - Cold Start Time: ${serverStats.coldStartTimeMs} ms
 - Reachability Time: ${serverStats.reachabilityTimeMs} ms
-- Idle Memory Estimate: ${serverStats.idleMemoryEstimateMb}
+- Idle Memory: ${memDisplay}
+- Memory Status: ${serverStats.idleMemoryStatus || 'N/A'}
+- Memory Method: ${serverStats.idleMemoryMethod || 'N/A'}
+${serverStats.idleMemoryReason ? `- Memory Note: ${serverStats.idleMemoryReason}` : ''}
+${serverStats.idleMemoryPid ? `- Server PID: ${serverStats.idleMemoryPid}` : ''}
 
 ## Source Files
 ${Object.entries(fileStats).map(([name, stat]) => `- ${name}: ${stat.size} bytes / ${stat.lines} lines`).join('\n')}
