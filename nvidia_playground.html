@@ -2201,6 +2201,61 @@
                     </div>
                     <div id="permission-audit-list" style="max-height:100px; overflow-y:auto; border:1px solid #2b3647; border-radius:6px; padding:6px; font-size:0.68rem;"></div>
                 </div>
+                <div style="margin:10px 0; border-top:1px solid #333;"></div>
+                <div id="project-rules-section" style="margin-top:10px;">
+                    <div style="font-size:0.75rem; opacity:0.8; margin-bottom:6px;">Sprint 15: Project Rules / Memory</div>
+                    <div id="rules-warning-1" style="font-size:0.72rem; color:#ffd166; margin-bottom:4px;">Project rules guide the agent. They are not a proof system and not ABW governance.</div>
+                    <div id="rules-warning-2" style="font-size:0.72rem; color:#ffd166; margin-bottom:8px;">No automatic self-learning. Rules are only saved when user explicitly saves.</div>
+
+                    <!-- Rules list -->
+                    <div style="font-size:0.72rem; opacity:0.7; margin-bottom:4px;">Rules</div>
+                    <div id="project-rules-list" style="max-height:140px; overflow-y:auto; border:1px solid #2b3647; border-radius:6px; padding:6px; margin-bottom:8px; font-size:0.7rem;"></div>
+
+                    <!-- Memory list -->
+                    <div style="font-size:0.72rem; opacity:0.7; margin-bottom:4px;">Memory Notes</div>
+                    <div id="project-memory-list" style="max-height:100px; overflow-y:auto; border:1px solid #2b3647; border-radius:6px; padding:6px; margin-bottom:8px; font-size:0.7rem;"></div>
+
+                    <!-- Add/Edit form -->
+                    <div style="display:none;" id="rules-form-toggle-area">
+                        <div style="font-size:0.72rem; opacity:0.7; margin-bottom:4px;" id="rules-form-title">Add Rule</div>
+                        <div style="display:flex; gap:6px; margin-bottom:4px;">
+                            <select id="rule-item-type" onchange="onRuleFormTypeChange()" style="background:#111; border:1px solid #333; color:#fff; padding:6px; border-radius:4px; font-size:0.72rem;">
+                                <option value="rule">Rule</option>
+                                <option value="memory">Memory Note</option>
+                            </select>
+                            <input id="rule-title-input" type="text" placeholder="Title" style="flex:1; background:#111; border:1px solid #333; color:#fff; padding:6px; border-radius:4px; font-size:0.72rem;">
+                        </div>
+                        <textarea id="rule-content-input" placeholder="Content" rows="2" style="width:100%; box-sizing:border-box; background:#111; border:1px solid #333; color:#fff; padding:6px; border-radius:4px; font-size:0.72rem; margin-bottom:4px; resize:vertical;"></textarea>
+                        <div style="display:flex; gap:6px; margin-bottom:4px; flex-wrap:wrap;" id="rules-category-priority-row">
+                            <select id="rule-category-select" style="background:#111; border:1px solid #333; color:#fff; padding:6px; border-radius:4px; font-size:0.72rem;">
+                                <option value="project">project</option><option value="coding">coding</option><option value="architecture">architecture</option><option value="safety">safety</option><option value="workflow">workflow</option><option value="testing">testing</option><option value="translation">translation</option><option value="other">other</option>
+                            </select>
+                            <select id="rule-priority-select" style="background:#111; border:1px solid #333; color:#fff; padding:6px; border-radius:4px; font-size:0.72rem;">
+                                <option value="normal">normal</option><option value="low">low</option><option value="high">high</option><option value="critical">critical</option>
+                            </select>
+                            <label style="display:flex; align-items:center; gap:4px; font-size:0.72rem; color:#ccc;"><input id="rule-enabled-check" type="checkbox" checked>enabled</label>
+                        </div>
+                        <input type="hidden" id="rule-edit-id" value="">
+                        <div style="display:flex; gap:6px;">
+                            <button class="btn-small" onclick="saveProjectRuleItem()">Save</button>
+                            <button class="btn-small" onclick="resetProjectRuleForm()">Cancel</button>
+                        </div>
+                        <div id="rules-form-error" style="font-size:0.68rem; color:#ff5555; margin-top:4px;"></div>
+                    </div>
+                    <button class="btn-small" onclick="showProjectRuleForm()" style="margin-bottom:8px;">+ Add Rule / Memory</button>
+
+                    <!-- Protected Paths / Ignored Paths -->
+                    <div style="font-size:0.72rem; opacity:0.7; margin-bottom:4px;">Protected Paths (one per line)</div>
+                    <textarea id="rules-protected-paths" placeholder="path/to/protected/file.js" rows="2" style="width:100%; box-sizing:border-box; background:#111; border:1px solid #333; color:#fff; padding:6px; border-radius:4px; font-size:0.72rem; margin-bottom:6px; resize:vertical;"></textarea>
+                    <div style="font-size:0.72rem; opacity:0.7; margin-bottom:4px;">Ignored Paths (one per line)</div>
+                    <textarea id="rules-ignored-paths" placeholder="node_modules/" rows="2" style="width:100%; box-sizing:border-box; background:#111; border:1px solid #333; color:#fff; padding:6px; border-radius:4px; font-size:0.72rem; margin-bottom:6px; resize:vertical;"></textarea>
+
+                    <div style="display:flex; gap:6px; margin-bottom:8px;">
+                        <button class="btn-small" onclick="refreshProjectRules()">Refresh</button>
+                        <button class="btn-small" onclick="saveProjectRulesPaths()">Save Paths</button>
+                    </div>
+                    <div id="rules-status-msg" style="font-size:0.68rem; opacity:0.8;"></div>
+                </div>
                 <div id="settings-warning-box" style="font-size:0.74rem; color:#ffd166; line-height:1.35;"></div>
             </div>
             <div class="btn-group">
@@ -3810,6 +3865,225 @@
             }
             await refreshPermissionSecurity();
         }
+
+        // --- Sprint 15: Project Rules / Memory UI ---
+        let projectRulesData = null;
+        let projectRulesEditId = '';
+
+        async function refreshProjectRules() {
+            const statusEl = document.getElementById('rules-status-msg');
+            try {
+                const data = await fetchJsonOrThrow('/api/project_rules');
+                projectRulesData = data;
+                renderProjectRulesList();
+                renderProjectMemoryList();
+                document.getElementById('rules-protected-paths').value = (data.protectedPaths || []).join('\n');
+                document.getElementById('rules-ignored-paths').value = (data.ignoredPaths || []).join('\n');
+                if (statusEl) statusEl.innerText = `Loaded: ${data.summary?.rulesCount || 0} rules, ${data.summary?.memoryCount || 0} memory notes.`;
+            } catch (e) {
+                if (statusEl) statusEl.innerText = `Error loading rules: ${e.message}`;
+            }
+        }
+
+        function renderProjectRulesList() {
+            const el = document.getElementById('project-rules-list');
+            if (!el) return;
+            const rules = (projectRulesData?.rules || []);
+            if (!rules.length) { el.innerHTML = '<div style="opacity:0.5;">No project rules defined.</div>'; return; }
+            el.innerHTML = rules.map(rule => {
+                const catColors = { coding: '#76b900', architecture: '#569cd6', safety: '#ff5555', workflow: '#f5b942', testing: '#4ec9b0', translation: '#c586c0', project: '#aaa', other: '#888' };
+                const priColors = { low: '#888', normal: '#aaa', high: '#f5b942', critical: '#ff5555' };
+                return `<div style="padding:4px 0; border-bottom:1px solid #1a1d2e; display:flex; justify-content:space-between; align-items:center; gap:4px;">
+                    <div style="flex:1; min-width:0;">
+                        <span style="color:${catColors[rule.category] || '#aaa'}; font-size:0.65rem;">[${rule.category}]</span>
+                        <span style="color:${priColors[rule.priority] || '#aaa'}; font-size:0.65rem;">[${rule.priority}]</span>
+                        <span style="font-weight:bold;${rule.enabled === false ? 'opacity:0.4;' : ''}">${escapeHtml(rule.title)}</span>
+                        <span style="opacity:0.5; font-size:0.65rem;">${escapeHtml((rule.content || '').slice(0, 50))}</span>
+                    </div>
+                    <div style="display:flex; gap:3px; flex-shrink:0;">
+                        <button class="btn-small" style="padding:1px 5px; font-size:0.6rem;" onclick="event.stopPropagation(); editProjectRule('${escapeHtml(rule.id)}')">edit</button>
+                        <button class="btn-small" style="padding:1px 5px; font-size:0.6rem;" onclick="event.stopPropagation(); toggleProjectRule('${escapeHtml(rule.id)}')">${rule.enabled !== false ? 'on' : 'off'}</button>
+                        <button class="btn-small" style="padding:1px 5px; font-size:0.6rem; color:#ff5555;" onclick="event.stopPropagation(); deleteProjectRule('${escapeHtml(rule.id)}')">x</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function renderProjectMemoryList() {
+            const el = document.getElementById('project-memory-list');
+            if (!el) return;
+            const memory = (projectRulesData?.memory || []);
+            if (!memory.length) { el.innerHTML = '<div style="opacity:0.5;">No memory notes defined.</div>'; return; }
+            el.innerHTML = memory.map(mem => {
+                const catColors = { coding: '#76b900', architecture: '#569cd6', safety: '#ff5555', workflow: '#f5b942', testing: '#4ec9b0', translation: '#c586c0', project: '#aaa', other: '#888' };
+                return `<div style="padding:4px 0; border-bottom:1px solid #1a1d2e; display:flex; justify-content:space-between; align-items:center; gap:4px;">
+                    <div style="flex:1; min-width:0;">
+                        <span style="color:${catColors[mem.category] || '#aaa'}; font-size:0.65rem;">[${mem.category}]</span>
+                        ${mem.visibility === 'local-only' ? '<span style="color:#f5b942; font-size:0.65rem;">[local]</span>' : ''}
+                        <span style="font-weight:bold;${mem.enabled === false ? 'opacity:0.4;' : ''}">${escapeHtml(mem.title)}</span>
+                        <span style="opacity:0.5; font-size:0.65rem;">${escapeHtml((mem.content || '').slice(0, 50))}</span>
+                    </div>
+                    <div style="display:flex; gap:3px; flex-shrink:0;">
+                        <button class="btn-small" style="padding:1px 5px; font-size:0.6rem;" onclick="event.stopPropagation(); editProjectRule('${escapeHtml(mem.id)}', 'memory')">edit</button>
+                        <button class="btn-small" style="padding:1px 5px; font-size:0.6rem;" onclick="event.stopPropagation(); toggleProjectRule('${escapeHtml(mem.id)}', 'memory')">${mem.enabled !== false ? 'on' : 'off'}</button>
+                        <button class="btn-small" style="padding:1px 5px; font-size:0.6rem; color:#ff5555;" onclick="event.stopPropagation(); deleteProjectRule('${escapeHtml(mem.id)}', 'memory')">x</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function showProjectRuleForm(type = 'rule') {
+            const area = document.getElementById('rules-form-toggle-area');
+            if (area) area.style.display = 'block';
+            document.getElementById('rule-item-type').value = type;
+            document.getElementById('rule-edit-id').value = '';
+            document.getElementById('rules-form-title').innerText = type === 'memory' ? 'Add Memory Note' : 'Add Rule';
+            onRuleFormTypeChange();
+            resetProjectRuleFormFields();
+        }
+
+        function onRuleFormTypeChange() {
+            const type = document.getElementById('rule-item-type').value;
+            document.getElementById('rules-form-title').innerText = (document.getElementById('rule-edit-id').value)
+                ? (type === 'memory' ? 'Edit Memory Note' : 'Edit Rule')
+                : (type === 'memory' ? 'Add Memory Note' : 'Add Rule');
+            const prioRow = document.getElementById('rules-category-priority-row');
+            if (prioRow) prioRow.style.display = type === 'memory' ? 'none' : 'flex';
+        }
+
+        function editProjectRule(id, type = 'rule') {
+            const data = projectRulesData;
+            if (!data) return;
+            const item = type === 'memory'
+                ? (data.memory || []).find(m => m.id === id)
+                : (data.rules || []).find(r => r.id === id);
+            if (!item) return;
+            const area = document.getElementById('rules-form-toggle-area');
+            if (area) area.style.display = 'block';
+            document.getElementById('rule-item-type').value = type;
+            document.getElementById('rule-edit-id').value = id;
+            document.getElementById('rule-title-input').value = item.title || '';
+            document.getElementById('rule-content-input').value = item.content || '';
+            document.getElementById('rule-category-select').value = item.category || 'project';
+            document.getElementById('rule-priority-select').value = item.priority || 'normal';
+            document.getElementById('rule-enabled-check').checked = item.enabled !== false;
+            document.getElementById('rules-form-error').innerText = '';
+            onRuleFormTypeChange();
+        }
+
+        function resetProjectRuleFormFields() {
+            document.getElementById('rule-title-input').value = '';
+            document.getElementById('rule-content-input').value = '';
+            document.getElementById('rule-category-select').value = 'project';
+            document.getElementById('rule-priority-select').value = 'normal';
+            document.getElementById('rule-enabled-check').checked = true;
+            document.getElementById('rules-form-error').innerText = '';
+        }
+
+        function resetProjectRuleForm() {
+            const area = document.getElementById('rules-form-toggle-area');
+            if (area) area.style.display = 'none';
+            document.getElementById('rule-edit-id').value = '';
+            resetProjectRuleFormFields();
+        }
+
+        async function saveProjectRuleItem() {
+            const errorEl = document.getElementById('rules-form-error');
+            const type = document.getElementById('rule-item-type').value;
+            const editId = document.getElementById('rule-edit-id').value;
+            const title = document.getElementById('rule-title-input').value.trim();
+            const content = document.getElementById('rule-content-input').value.trim();
+            if (type === 'memory' && !content) { errorEl.innerText = 'Content is required for memory.'; return; }
+            if (type !== 'memory' && !title) { errorEl.innerText = 'Title is required for rules.'; return; }
+            if (!guardIdeOnlyAction('saveProjectRule')) return;
+
+            const payload = {
+                type,
+                title: title || 'Untitled',
+                content,
+                category: document.getElementById('rule-category-select').value,
+                priority: document.getElementById('rule-priority-select').value,
+                enabled: document.getElementById('rule-enabled-check').checked
+            };
+
+            try {
+                let result;
+                if (editId) {
+                    payload.id = editId;
+                    result = await fetchJsonOrThrow('/api/project_rules/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                        body: JSON.stringify(payload)
+                    });
+                } else {
+                    result = await fetchJsonOrThrow('/api/project_rules/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                        body: JSON.stringify(payload)
+                    });
+                }
+                resetProjectRuleForm();
+                await refreshProjectRules();
+            } catch (e) {
+                errorEl.innerText = `Error: ${e.message}`;
+            }
+        }
+
+        async function toggleProjectRule(id, type = 'rule') {
+            if (!guardIdeOnlyAction('toggleProjectRule')) return;
+            try {
+                const item = type === 'memory'
+                    ? (projectRulesData?.memory || []).find(m => m.id === id)
+                    : (projectRulesData?.rules || []).find(r => r.id === id);
+                await fetchJsonOrThrow('/api/project_rules/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ id, type, enabled: !item || item.enabled !== false ? false : true })
+                });
+                await refreshProjectRules();
+            } catch (e) {
+                document.getElementById('rules-status-msg').innerText = `Toggle error: ${e.message}`;
+            }
+        }
+
+        async function deleteProjectRule(id, type = 'rule') {
+            if (!guardIdeOnlyAction('deleteProjectRule')) return;
+            const label = type === 'memory' ? 'memory note' : 'rule';
+            if (!confirm(`Delete this ${label}?`)) return;
+            try {
+                await fetchJsonOrThrow('/api/project_rules/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ id, type })
+                });
+                await refreshProjectRules();
+            } catch (e) {
+                document.getElementById('rules-status-msg').innerText = `Delete error: ${e.message}`;
+            }
+        }
+
+        async function saveProjectRulesPaths() {
+            if (!guardIdeOnlyAction('saveProjectRulesPaths')) return;
+            const protectedPaths = (document.getElementById('rules-protected-paths').value || '').split('\n').map(s => s.trim()).filter(Boolean);
+            const ignoredPaths = (document.getElementById('rules-ignored-paths').value || '').split('\n').map(s => s.trim()).filter(Boolean);
+            try {
+                await fetchJsonOrThrow('/api/project_rules', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                    body: JSON.stringify({ protectedPaths, ignoredPaths })
+                });
+                await refreshProjectRules();
+            } catch (e) {
+                document.getElementById('rules-status-msg').innerText = `Save paths error: ${e.message}`;
+            }
+        }
+
+        // Also load project rules when opening settings
+        const _origOpenSettings = openSettings;
+        openSettings = function() {
+            _origOpenSettings();
+            refreshProjectRules().catch(() => {});
+        };
 
         function normalizeExtensionForUi(ext) {
             const fallbackId = [ext.namespace || ext.publisher || 'local', ext.extension || ext.name || ext.displayName || 'extension'].join('.');

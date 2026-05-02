@@ -474,11 +474,11 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 14: Security Permission Model cơ bản",
-  "last_implementer": "GPT-5 Codex",
+  "last_completed_sprint": "Sprint 15: Project Rules / Memory UI tối thiểu",
+  "last_implementer": "DeepSeek-v4-pro",
   "last_auditor": "Codex",
-  "last_audit_result": "Sprint 14 audited/fixed by Codex: central permission model/check-enforce verified; /api/permissions, /api/permissions/check, /api/security/summary, /api/security/audit_log verified; git.commit/git.push/abw.bridge.reserved deny-reserved; unknown action fails closed; enterprise mutations denied server-side; IDE mutations denied without X-Agent-Approved; provider mutation catch blocks fixed to honor permission statusCode; permission audit log redacted and not staged; browser smoke passed 40/0 (real-browser); agent:audit passed 25/25.",
-  "next_sprint": "Sprint 15: Project Rules / Memory UI tối thiểu",
+  "last_audit_result": "Sprint 15 audited/fixed by Codex: enterprise mutation deny enforced; IDE mutation requires X-Agent-Approved; invalid category/priority/source/visibility rejected; oversized rule content returns 413; secret-like rules/memory payload rejected and not stored; disabled rules excluded from context; corrupted project-rules JSON falls back safely; memory.mutate permission enforced for memory mutations; project-rules save is temp-write+rename; browser smoke passed 52/0 (real-browser); agent:audit passed 25/25.",
+  "next_sprint": "Sprint 16: Daily-use hardening / E2E regression pack",
   "next_prompt_instruction": "Ask builder model to implement Sprint 15 only, then return to Codex for audit/fix.",
   "status_marker_version": 2
 }

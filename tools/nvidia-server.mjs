@@ -23,6 +23,27 @@ const TRUST_FILE = path.join(STATE_DIR, 'trusted-workspaces.json');
 const PROFILE_FILE = path.join(STATE_DIR, 'profile.json');
 const PROVIDERS_FILE = path.join(STATE_DIR, 'providers.json');
 const TASKS_DIR = path.join(STATE_DIR, 'tasks');
+const RULES_DIR = path.join(STATE_DIR, 'rules');
+const RULES_FILE = path.join(RULES_DIR, 'project-rules.json');
+
+const RULE_CATEGORIES = new Set(['coding', 'architecture', 'safety', 'workflow', 'testing', 'translation', 'project', 'other']);
+const RULE_PRIORITIES = new Set(['low', 'normal', 'high', 'critical']);
+const RULE_SOURCES = new Set(['user', 'imported', 'system']);
+const MAX_RULES_COUNT = 200;
+const MAX_MEMORY_COUNT = 100;
+const MAX_RULE_TITLE_CHARS = 160;
+const MAX_RULE_CONTENT_CHARS = 8000;
+const MAX_RULE_WARNING_CHARS = 400;
+const MAX_FILE_PATTERN_CHARS = 50;
+const MAX_PROJECT_RULES_PAYLOAD_CHARS = 500000;
+
+const SECRET_KEY_PATTERNS = [
+  /\b(sk|nvapi|nvidia|openai|anthropic|deepseek|gemini|openrouter)[-_][A-Za-z0-9._-]{12,}\b/gi,
+  /\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi,
+  /\b(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PRIVATE[_-]?KEY)\s*[:=]\s*.+/gim,
+  /[A-Za-z0-9+/]{40,}={0,2}/,
+  /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\b/
+];
 const READ_ONLY_TOOLS = new Set(['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
 const DESTRUCTIVE_TOOLS = new Set(['write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job', 'git_stage', 'git_unstage', 'git_discard']);
 
@@ -427,6 +448,238 @@ function recordTaskEvent(taskId, event) {
 }
 
 loadTasks();
+
+function detectSecretLikePatterns(text = '') {
+  const s = String(text || '');
+  const warnings = [];
+  for (const pattern of SECRET_KEY_PATTERNS) {
+    pattern.lastIndex = 0;
+    if (pattern.test(s)) {
+      warnings.push('Content may contain secret-like patterns (API key, token, JWT, or credential).');
+    }
+  }
+  return [...new Set(warnings)];
+}
+
+function validateRuleFields(input = {}, { requireTitle = true } = {}) {
+  const title = String(input.title || '').trim();
+  const content = String(input.content || '').trim();
+  const category = String(input.category || '').trim();
+  const priority = String(input.priority || '').trim();
+  const source = String(input.source || '').trim();
+  if (requireTitle && !title) return 'title is required.';
+  if (title.length > MAX_RULE_TITLE_CHARS) return `title too long. Max ${MAX_RULE_TITLE_CHARS} chars.`;
+  if (content.length > MAX_RULE_CONTENT_CHARS) return `content too long. Max ${MAX_RULE_CONTENT_CHARS} chars.`;
+  if (category && !RULE_CATEGORIES.has(category)) return `invalid category: ${category}`;
+  if (priority && !RULE_PRIORITIES.has(priority)) return `invalid priority: ${priority}`;
+  if (source && !RULE_SOURCES.has(source)) return `invalid source: ${source}`;
+  return null;
+}
+
+function validateMemoryFields(input = {}) {
+  const title = String(input.title || '').trim();
+  const content = String(input.content || '').trim();
+  const category = String(input.category || '').trim();
+  const source = String(input.source || '').trim();
+  const visibility = String(input.visibility || '').trim();
+  if (!content) return 'content is required for memory.';
+  if (title.length > MAX_RULE_TITLE_CHARS) return `title too long. Max ${MAX_RULE_TITLE_CHARS} chars.`;
+  if (content.length > MAX_RULE_CONTENT_CHARS) return `content too long. Max ${MAX_RULE_CONTENT_CHARS} chars.`;
+  if (category && !RULE_CATEGORIES.has(category)) return `invalid category: ${category}`;
+  if (source && !RULE_SOURCES.has(source)) return `invalid source: ${source}`;
+  if (visibility && visibility !== 'project' && visibility !== 'local-only') return `invalid visibility: ${visibility}`;
+  return null;
+}
+
+function validateProjectRulesContainer(input = {}) {
+  const allowed = new Set(['version', 'updatedAt', 'rules', 'memory', 'protectedPaths', 'ignoredPaths', 'codingConventions', 'agentBehavior', 'approvalPreferences', 'warnings']);
+  const extra = Object.keys(input || {}).filter(k => !allowed.has(k));
+  if (extra.length > 0) return `invalid schema keys: ${extra.join(', ')}`;
+  if (input.rules !== undefined && !Array.isArray(input.rules)) return 'invalid schema: rules must be an array.';
+  if (input.memory !== undefined && !Array.isArray(input.memory)) return 'invalid schema: memory must be an array.';
+  if (input.protectedPaths !== undefined && !Array.isArray(input.protectedPaths)) return 'invalid schema: protectedPaths must be an array.';
+  if (input.ignoredPaths !== undefined && !Array.isArray(input.ignoredPaths)) return 'invalid schema: ignoredPaths must be an array.';
+  if (input.codingConventions !== undefined && !Array.isArray(input.codingConventions)) return 'invalid schema: codingConventions must be an array.';
+  if (input.agentBehavior !== undefined && !Array.isArray(input.agentBehavior)) return 'invalid schema: agentBehavior must be an array.';
+  if (input.warnings !== undefined && !Array.isArray(input.warnings)) return 'invalid schema: warnings must be an array.';
+  if (input.approvalPreferences !== undefined && (typeof input.approvalPreferences !== 'object' || input.approvalPreferences === null || Array.isArray(input.approvalPreferences))) {
+    return 'invalid schema: approvalPreferences must be an object.';
+  }
+  for (const rule of Array.isArray(input.rules) ? input.rules : []) {
+    const err = validateRuleFields(rule, { requireTitle: true });
+    if (err) return err;
+  }
+  for (const mem of Array.isArray(input.memory) ? input.memory : []) {
+    const err = validateMemoryFields(mem);
+    if (err) return err;
+  }
+  return null;
+}
+
+function detectSecretsInRulesContainer(input = {}) {
+  const pieces = [];
+  for (const rule of Array.isArray(input.rules) ? input.rules : []) {
+    pieces.push(`${rule.title || ''}\n${rule.content || ''}`);
+  }
+  for (const mem of Array.isArray(input.memory) ? input.memory : []) {
+    pieces.push(`${mem.title || ''}\n${mem.content || ''}`);
+  }
+  for (const item of Array.isArray(input.codingConventions) ? input.codingConventions : []) {
+    pieces.push(String(item || ''));
+  }
+  for (const item of Array.isArray(input.agentBehavior) ? input.agentBehavior : []) {
+    pieces.push(String(item || ''));
+  }
+  return detectSecretLikePatterns(pieces.join('\n'));
+}
+
+function statusForValidationError(message = '') {
+  const text = String(message || '').toLowerCase();
+  return text.includes('too long') ? 413 : 400;
+}
+
+function sanitizeRuleObject(input = {}) {
+  const id = String(input.id || `rule-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`).slice(0, 120);
+  const title = String(input.title || 'Untitled Rule').trim().slice(0, MAX_RULE_TITLE_CHARS) || 'Untitled Rule';
+  const content = String(input.content || '').trim().slice(0, MAX_RULE_CONTENT_CHARS);
+  const category = RULE_CATEGORIES.has(input.category) ? input.category : 'project';
+  const priority = RULE_PRIORITIES.has(input.priority) ? input.priority : 'normal';
+  const source = RULE_SOURCES.has(input.source) ? input.source : 'user';
+  const enabled = input.enabled !== false;
+  const nowIso = new Date().toISOString();
+  return {
+    id,
+    title,
+    content,
+    category,
+    enabled,
+    priority,
+    createdAt: input.createdAt || nowIso,
+    updatedAt: input.updatedAt || nowIso,
+    source,
+    appliesTo: Array.isArray(input.appliesTo) ? input.appliesTo.map(p => String(p).trim().slice(0, MAX_FILE_PATTERN_CHARS)).filter(Boolean).slice(0, 30) : []
+  };
+}
+
+function sanitizeMemoryObject(input = {}) {
+  const id = String(input.id || `mem-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`).slice(0, 120);
+  const title = String(input.title || 'Untitled Note').trim().slice(0, MAX_RULE_TITLE_CHARS) || 'Untitled Note';
+  const content = String(input.content || '').trim().slice(0, MAX_RULE_CONTENT_CHARS);
+  const category = RULE_CATEGORIES.has(input.category) ? input.category : 'project';
+  const enabled = input.enabled !== false;
+  const source = RULE_SOURCES.has(input.source) ? input.source : 'user';
+  const visibility = input.visibility === 'local-only' ? 'local-only' : 'project';
+  const nowIso = new Date().toISOString();
+  return {
+    id,
+    title,
+    content,
+    category,
+    enabled,
+    createdAt: input.createdAt || nowIso,
+    updatedAt: input.updatedAt || nowIso,
+    source,
+    visibility
+  };
+}
+
+function sanitizeProjectRules(input = {}) {
+  const version = Number(input.version) || 1;
+  const nowIso = new Date().toISOString();
+  const rules = Array.isArray(input.rules) ? input.rules.map(sanitizeRuleObject).slice(0, MAX_RULES_COUNT) : [];
+  const memory = Array.isArray(input.memory) ? input.memory.map(sanitizeMemoryObject).slice(0, MAX_MEMORY_COUNT) : [];
+  const protectedPaths = Array.isArray(input.protectedPaths) ? input.protectedPaths.map(p => String(p).trim().slice(0, 300)).filter(Boolean).slice(0, 50) : [];
+  const ignoredPaths = Array.isArray(input.ignoredPaths) ? input.ignoredPaths.map(p => String(p).trim().slice(0, 300)).filter(Boolean).slice(0, 50) : [];
+  const codingConventions = Array.isArray(input.codingConventions) ? input.codingConventions.map(s => String(s).trim().slice(0, MAX_RULE_CONTENT_CHARS)).filter(Boolean).slice(0, 60) : [];
+  const agentBehavior = Array.isArray(input.agentBehavior) ? input.agentBehavior.map(s => String(s).trim().slice(0, MAX_RULE_CONTENT_CHARS)).filter(Boolean).slice(0, 60) : [];
+  const approvalPreferences = typeof input.approvalPreferences === 'object' && input.approvalPreferences ? {
+    autoApproveRead: input.approvalPreferences.autoApproveRead === true,
+    requireConfirmationForWrites: input.approvalPreferences.requireConfirmationForWrites !== false,
+    requireConfirmationForCommands: input.approvalPreferences.requireConfirmationForCommands !== false
+  } : { autoApproveRead: false, requireConfirmationForWrites: true, requireConfirmationForCommands: true };
+  const warnings = Array.isArray(input.warnings) ? input.warnings.map(w => String(w).trim().slice(0, MAX_RULE_WARNING_CHARS)).filter(Boolean).slice(0, 20) : [];
+  return {
+    version: Math.max(1, Math.min(version, 99)),
+    updatedAt: input.updatedAt || nowIso,
+    rules,
+    memory,
+    protectedPaths,
+    ignoredPaths,
+    codingConventions,
+    agentBehavior,
+    approvalPreferences,
+    warnings
+  };
+}
+
+function loadProjectRules() {
+  try {
+    if (!fs.existsSync(RULES_FILE)) return sanitizeProjectRules({});
+    const raw = fs.readFileSync(RULES_FILE, 'utf8');
+    if (!raw.trim()) return sanitizeProjectRules({});
+    const parsed = JSON.parse(raw);
+    return sanitizeProjectRules(parsed);
+  } catch (e) {
+    console.error(`[RULES] Failed to load project rules: ${e.message}`);
+    return sanitizeProjectRules({});
+  }
+}
+
+function saveProjectRules(rules) {
+  fs.mkdirSync(RULES_DIR, { recursive: true });
+  const safe = sanitizeProjectRules(rules);
+  const tmp = `${RULES_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(safe, null, 2));
+  fs.renameSync(tmp, RULES_FILE);
+  return safe;
+}
+
+function getEnabledRulesSummary(rules) {
+  const data = loadProjectRules();
+  const activeRules = data.rules.filter(r => r.enabled !== false);
+  const activeMemory = data.memory.filter(m => m.enabled !== false);
+  const parts = [];
+  if (activeRules.length > 0) {
+    parts.push('--- PROJECT RULES (enabled) ---');
+    for (const rule of activeRules.slice(0, 60)) {
+      parts.push(`[${rule.priority.toUpperCase()}] [${rule.category}] ${rule.title}: ${rule.content.slice(0, 600)}`);
+      if (rule.appliesTo.length > 0) parts.push(`  Applies to: ${rule.appliesTo.join(', ')}`);
+    }
+  }
+  if (activeMemory.length > 0) {
+    parts.push('--- PROJECT MEMORY NOTES (enabled) ---');
+    for (const mem of activeMemory.slice(0, 30)) {
+      parts.push(`[${mem.category}] ${mem.title}: ${mem.content.slice(0, 600)}${mem.visibility === 'local-only' ? ' [local-only]' : ''}`);
+    }
+  }
+  if (data.codingConventions.length > 0) {
+    parts.push('--- CODING CONVENTIONS ---');
+    for (const conv of data.codingConventions.slice(0, 20)) {
+      parts.push(`- ${conv.slice(0, 300)}`);
+    }
+  }
+  if (data.agentBehavior.length > 0) {
+    parts.push('--- AGENT BEHAVIOR RULES ---');
+    for (const ab of data.agentBehavior.slice(0, 20)) {
+      parts.push(`- ${ab.slice(0, 300)}`);
+    }
+  }
+  if (data.protectedPaths.length > 0) {
+    parts.push(`--- PROTECTED PATHS (do not write) ---\n${data.protectedPaths.slice(0, 20).join('\n')}`);
+  }
+  if (data.ignoredPaths.length > 0) {
+    parts.push(`--- IGNORED PATHS (do not read/index) ---\n${data.ignoredPaths.slice(0, 20).join('\n')}`);
+  }
+  if (parts.length === 0) return null;
+  const summary = parts.join('\n\n');
+  return summary.length > 18000 ? summary.slice(0, 18000) + '\n\n[PROJECT RULES SUMMARY TRUNCATED]' : summary;
+}
+
+function buildProjectRulesContext() {
+  const summary = getEnabledRulesSummary();
+  if (!summary) return null;
+  return summary;
+}
 
 const workspaceCore = createWorkspaceCore({
     workspace: currentWorkspace,
@@ -1957,8 +2210,10 @@ async function runToolCall(toolCall, options = {}) {
 }
 
 function buildAgentSystemPrompt() {
+    const rulesCtx = buildProjectRulesContext();
+    const rulesBlock = rulesCtx ? `\n\n${rulesCtx}\n` : '';
     return `You are the autonomous agent inside NVIDIA NIM Agent IDE.
-
+${rulesBlock}
 Architecture:
 - Brain: reason privately, form a concrete hypothesis, choose the next smallest useful action.
 - Hands: use JSON tools to inspect, modify, test, and verify workspace state.
@@ -2083,6 +2338,11 @@ async function prepareMessages(data) {
     if (data.contextProblems) {
         const context = buildProblemsContext();
         messages.unshift({ role: 'system', content: context });
+    }
+
+    if (data.contextRules) {
+        const context = buildProjectRulesContext();
+        if (context) messages.unshift({ role: 'system', content: context });
     }
 
     // Auto-context
@@ -2593,6 +2853,45 @@ const server = http.createServer(async (req, res) => {
                 const query = requestUrl.searchParams.get('q') || requestUrl.searchParams.get('query') || '';
                 const limit = Number(requestUrl.searchParams.get('limit') || 20);
                 return sendJSON(res, 200, await workspaceCore.searchIndexCache({ query, limit }));
+            }
+
+            // Sprint 15: Project Rules API (read-only, safe for enterprise mode)
+            if (req.url === '/api/project_rules') {
+                const data = loadProjectRules();
+                const payload = {
+                    ok: true,
+                    version: data.version,
+                    updatedAt: data.updatedAt,
+                    rules: data.rules,
+                    memory: data.memory,
+                    protectedPaths: data.protectedPaths,
+                    ignoredPaths: data.ignoredPaths,
+                    codingConventions: data.codingConventions,
+                    agentBehavior: data.agentBehavior,
+                    approvalPreferences: data.approvalPreferences,
+                    warnings: data.warnings,
+                    summary: {
+                        rulesCount: data.rules.length,
+                        memoryCount: data.memory.length,
+                        enabledRules: data.rules.filter(r => r.enabled !== false).length,
+                        enabledMemory: data.memory.filter(m => m.enabled !== false).length,
+                        protectedPathsCount: data.protectedPaths.length,
+                        ignoredPathsCount: data.ignoredPaths.length
+                    },
+                    _warning: 'Project rules guide the agent. They are not a proof system and not ABW governance.',
+                    _noSecrets: true
+                };
+                return sendJSON(res, 200, payload);
+            }
+
+            if (req.url === '/api/project_rules/context') {
+                const context = buildProjectRulesContext();
+                return sendJSON(res, 200, {
+                    ok: true,
+                    hasRules: !!context,
+                    context: context || null,
+                    _warning: 'Project rules guide the agent. They are not a proof system and not ABW governance.'
+                });
             }
 
             if (req.url === '/api/select_folder') {
@@ -3237,6 +3536,253 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
             return sendJSON(res, 200, draft);
           } catch (e) {
             return sendJSON(res, 500, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        // Sprint 15: Project Rules API - Mutation endpoints
+        if (req.url === '/api/project_rules') {
+          try {
+            enforcePermission(req, 'project_rules.mutate', { targetSummary: 'project_rules.full_save' });
+            const body = await getBody(req);
+            const payloadSize = JSON.stringify(body).length;
+            if (payloadSize > MAX_PROJECT_RULES_PAYLOAD_CHARS) {
+              return sendJSON(res, 413, { ok: false, error: `Payload too large. Max ${MAX_PROJECT_RULES_PAYLOAD_CHARS} characters.` });
+            }
+            const schemaError = validateProjectRulesContainer(body);
+            if (schemaError) return sendJSON(res, statusForValidationError(schemaError), { ok: false, error: schemaError });
+            const secretWarnings = detectSecretsInRulesContainer(body);
+            if (secretWarnings.length > 0) {
+              return sendJSON(res, 400, { ok: false, error: 'Secret-like content detected.', warnings: secretWarnings });
+            }
+            const saved = saveProjectRules(body);
+            return sendJSON(res, 200, {
+              ok: true,
+              version: saved.version,
+              updatedAt: saved.updatedAt,
+              summary: {
+                rulesCount: saved.rules.length,
+                memoryCount: saved.memory.length,
+                enabledRules: saved.rules.filter(r => r.enabled !== false).length,
+                enabledMemory: saved.memory.filter(m => m.enabled !== false).length
+              },
+              secretWarnings: secretWarnings.length > 0 ? secretWarnings : [],
+              _warning: 'No automatic self-learning. Rules are only saved when user explicitly saves.'
+            });
+          } catch (e) {
+            const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 403;
+            return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        if (req.url === '/api/project_rules/add') {
+          try {
+            const body = await getBody(req);
+            const isMemory = body.type === 'memory';
+            enforcePermission(req, isMemory ? 'memory.mutate' : 'project_rules.mutate', { targetSummary: 'project_rules.add' });
+            const payloadSize = JSON.stringify(body).length;
+            if (payloadSize > MAX_PROJECT_RULES_PAYLOAD_CHARS) {
+              return sendJSON(res, 413, { ok: false, error: `Payload too large. Max ${MAX_PROJECT_RULES_PAYLOAD_CHARS} characters.` });
+            }
+            const data = loadProjectRules();
+
+            if (isMemory) {
+              if (data.memory.length >= MAX_MEMORY_COUNT) {
+                return sendJSON(res, 400, { ok: false, error: `Max memory count reached (${MAX_MEMORY_COUNT}).` });
+              }
+              const validationError = validateMemoryFields(body);
+              if (validationError) return sendJSON(res, statusForValidationError(validationError), { ok: false, error: validationError });
+              const content = String(body.content || '').trim();
+              const secretWarnings = detectSecretLikePatterns(content);
+              if (secretWarnings.length > 0) {
+                return sendJSON(res, 400, { ok: false, error: 'Secret-like content detected.', warnings: secretWarnings });
+              }
+              const mem = sanitizeMemoryObject(body);
+              data.memory.push(mem);
+              const saved = saveProjectRules(data);
+              return sendJSON(res, 200, { ok: true, item: saved.memory.find(m => m.id === mem.id), type: 'memory' });
+            }
+
+            if (data.rules.length >= MAX_RULES_COUNT) {
+              return sendJSON(res, 400, { ok: false, error: `Max rules count reached (${MAX_RULES_COUNT}).` });
+            }
+            const validationError = validateRuleFields(body, { requireTitle: true });
+            if (validationError) return sendJSON(res, statusForValidationError(validationError), { ok: false, error: validationError });
+            const content = String(body.content || '').trim();
+            if (content.length > MAX_RULE_CONTENT_CHARS) return sendJSON(res, 413, { ok: false, error: `content too long. Max ${MAX_RULE_CONTENT_CHARS} chars.` });
+            const secretWarnings = detectSecretLikePatterns(content);
+            if (secretWarnings.length > 0) {
+              return sendJSON(res, 400, { ok: false, error: 'Secret-like content detected.', warnings: secretWarnings });
+            }
+            const rule = sanitizeRuleObject(body);
+            data.rules.push(rule);
+            const saved = saveProjectRules(data);
+            return sendJSON(res, 200, { ok: true, item: saved.rules.find(r => r.id === rule.id), type: 'rule' });
+          } catch (e) {
+            const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 403;
+            return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        if (req.url === '/api/project_rules/update') {
+          try {
+            const body = await getBody(req);
+            const id = String(body.id || '').trim();
+            if (!id) return sendJSON(res, 400, { ok: false, error: 'id is required.' });
+            const isMemory = body.type === 'memory';
+            enforcePermission(req, isMemory ? 'memory.mutate' : 'project_rules.mutate', { targetSummary: 'project_rules.update' });
+            const payloadSize = JSON.stringify(body).length;
+            if (payloadSize > MAX_PROJECT_RULES_PAYLOAD_CHARS) {
+              return sendJSON(res, 413, { ok: false, error: `Payload too large. Max ${MAX_PROJECT_RULES_PAYLOAD_CHARS} characters.` });
+            }
+            const data = loadProjectRules();
+            const list = isMemory ? data.memory : data.rules;
+            const idx = list.findIndex(item => item.id === id);
+            if (idx === -1) return sendJSON(res, 404, { ok: false, error: `${isMemory ? 'Memory' : 'Rule'} not found: ${id}` });
+
+            if (isMemory) {
+              const existing = data.memory[idx];
+              const mergedCandidate = { ...existing, ...body };
+              const validationError = validateMemoryFields(mergedCandidate);
+              if (validationError) return sendJSON(res, statusForValidationError(validationError), { ok: false, error: validationError });
+              const secretWarnings = detectSecretLikePatterns(String(mergedCandidate.content || '').trim());
+              if (secretWarnings.length > 0) {
+                return sendJSON(res, 400, { ok: false, error: 'Secret-like content detected.', warnings: secretWarnings });
+              }
+              const merged = sanitizeMemoryObject({ ...existing, ...body });
+              data.memory[idx] = merged;
+            } else {
+              const existing = data.rules[idx];
+              const mergedCandidate = { ...existing, ...body };
+              const validationError = validateRuleFields(mergedCandidate, { requireTitle: true });
+              if (validationError) return sendJSON(res, statusForValidationError(validationError), { ok: false, error: validationError });
+              const merged = sanitizeRuleObject({ ...existing, ...body });
+              const newContent = String(body.content !== undefined ? body.content : existing.content || '').trim();
+              if (newContent.length > MAX_RULE_CONTENT_CHARS) return sendJSON(res, 413, { ok: false, error: `content too long. Max ${MAX_RULE_CONTENT_CHARS} chars.` });
+              const secretWarnings = detectSecretLikePatterns(newContent);
+              if (secretWarnings.length > 0) {
+                return sendJSON(res, 400, { ok: false, error: 'Secret-like content detected.', warnings: secretWarnings });
+              }
+              data.rules[idx] = merged;
+            }
+            const saved = saveProjectRules(data);
+            const updated = isMemory ? saved.memory.find(m => m.id === id) : saved.rules.find(r => r.id === id);
+            return sendJSON(res, 200, { ok: true, item: updated, type: isMemory ? 'memory' : 'rule' });
+          } catch (e) {
+            const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 403;
+            return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        if (req.url === '/api/project_rules/delete') {
+          try {
+            const body = await getBody(req);
+            const id = String(body.id || '').trim();
+            if (!id) return sendJSON(res, 400, { ok: false, error: 'id is required.' });
+            const isMemory = body.type === 'memory';
+            enforcePermission(req, isMemory ? 'memory.mutate' : 'project_rules.mutate', { targetSummary: 'project_rules.delete' });
+            const data = loadProjectRules();
+            if (isMemory) {
+              const before = data.memory.length;
+              data.memory = data.memory.filter(m => m.id !== id);
+              if (data.memory.length === before) return sendJSON(res, 404, { ok: false, error: `Memory not found: ${id}` });
+            } else {
+              const before = data.rules.length;
+              data.rules = data.rules.filter(r => r.id !== id);
+              if (data.rules.length === before) return sendJSON(res, 404, { ok: false, error: `Rule not found: ${id}` });
+            }
+            saveProjectRules(data);
+            return sendJSON(res, 200, { ok: true, id, type: isMemory ? 'memory' : 'rule' });
+          } catch (e) {
+            const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 403;
+            return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        if (req.url === '/api/project_rules/toggle') {
+          try {
+            const body = await getBody(req);
+            const id = String(body.id || '').trim();
+            if (!id) return sendJSON(res, 400, { ok: false, error: 'id is required.' });
+            const isMemory = body.type === 'memory';
+            enforcePermission(req, isMemory ? 'memory.mutate' : 'project_rules.mutate', { targetSummary: 'project_rules.toggle' });
+            const data = loadProjectRules();
+            if (isMemory) {
+              const item = data.memory.find(m => m.id === id);
+              if (!item) return sendJSON(res, 404, { ok: false, error: `Memory not found: ${id}` });
+              item.enabled = body.enabled !== false;
+            } else {
+              const item = data.rules.find(r => r.id === id);
+              if (!item) return sendJSON(res, 404, { ok: false, error: `Rule not found: ${id}` });
+              item.enabled = body.enabled !== false;
+            }
+            const saved = saveProjectRules(data);
+            const updated = isMemory ? saved.memory.find(m => m.id === id) : saved.rules.find(r => r.id === id);
+            return sendJSON(res, 200, { ok: true, item: updated, type: isMemory ? 'memory' : 'rule' });
+          } catch (e) {
+            const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 403;
+            return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        if (req.url === '/api/project_rules/import') {
+          try {
+            enforcePermission(req, 'project_rules.mutate', { targetSummary: 'project_rules.import' });
+            const body = await getBody(req);
+            const payloadSize = JSON.stringify(body).length;
+            if (payloadSize > MAX_PROJECT_RULES_PAYLOAD_CHARS) {
+              return sendJSON(res, 413, { ok: false, error: `Payload too large. Max ${MAX_PROJECT_RULES_PAYLOAD_CHARS} characters.` });
+            }
+            if (!body.rules && !body.memory) {
+              return sendJSON(res, 400, { ok: false, error: 'Import payload must include rules or memory arrays.' });
+            }
+            const schemaError = validateProjectRulesContainer(body);
+            if (schemaError) return sendJSON(res, statusForValidationError(schemaError), { ok: false, error: schemaError });
+            const secretWarnings = detectSecretsInRulesContainer(body);
+            if (secretWarnings.length > 0) {
+              return sendJSON(res, 400, { ok: false, error: 'Secret-like content detected.', warnings: secretWarnings });
+            }
+            const imported = sanitizeProjectRules(body);
+            const existing = loadProjectRules();
+            const existingRuleIds = new Set(existing.rules.map(r => r.id));
+            const existingMemoryIds = new Set(existing.memory.map(m => m.id));
+            for (const rule of imported.rules) {
+              if (!existingRuleIds.has(rule.id)) { existing.rules.push(rule); existingRuleIds.add(rule.id); }
+            }
+            for (const mem of imported.memory) {
+              if (!existingMemoryIds.has(mem.id)) { existing.memory.push(mem); existingMemoryIds.add(mem.id); }
+            }
+            existing.rules = existing.rules.slice(0, MAX_RULES_COUNT);
+            existing.memory = existing.memory.slice(0, MAX_MEMORY_COUNT);
+            if (imported.codingConventions.length > 0) existing.codingConventions = [...new Set([...existing.codingConventions, ...imported.codingConventions])].slice(0, 60);
+            if (imported.agentBehavior.length > 0) existing.agentBehavior = [...new Set([...existing.agentBehavior, ...imported.agentBehavior])].slice(0, 60);
+            if (imported.protectedPaths.length > 0) existing.protectedPaths = [...new Set([...existing.protectedPaths, ...imported.protectedPaths])].slice(0, 50);
+            if (imported.ignoredPaths.length > 0) existing.ignoredPaths = [...new Set([...existing.ignoredPaths, ...imported.ignoredPaths])].slice(0, 50);
+            const saved = saveProjectRules(existing);
+            return sendJSON(res, 200, {
+              ok: true,
+              imported: { rules: imported.rules.length, memory: imported.memory.length },
+              summary: {
+                rulesCount: saved.rules.length,
+                memoryCount: saved.memory.length,
+                enabledRules: saved.rules.filter(r => r.enabled !== false).length,
+                enabledMemory: saved.memory.filter(m => m.enabled !== false).length
+              },
+              _warning: 'Import merges new items only. Existing items are not overwritten.'
+            });
+          } catch (e) {
+            const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 403;
+            return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        if (req.url === '/api/project_rules/export') {
+          try {
+            enforcePermission(req, 'project_rules.read', { targetSummary: 'project_rules.export' });
+            const data = loadProjectRules();
+            return sendJSON(res, 200, { ok: true, data });
+          } catch (e) {
+            const status = e && Number.isInteger(e.statusCode) ? e.statusCode : 403;
+            return sendJSON(res, status, { ok: false, error: redactSecrets(e.message) });
           }
         }
 

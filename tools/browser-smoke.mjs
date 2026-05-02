@@ -647,6 +647,108 @@ async function runRealBrowserSmoke(url) {
     });
     addCheck('IDE mode mutation denied without approval', stageIdeNoApproval.statusCode === 403 ? 'pass' : 'fail', `status=${stageIdeNoApproval.statusCode}`, true);
 
+    // Sprint 15: Project Rules API checks
+    const rulesReadRes = await requestJson(`${url}/api/project_rules`);
+    const rulesReadOk = rulesReadRes.statusCode === 200 && rulesReadRes.json?.ok === true && typeof rulesReadRes.json?.rules === 'object';
+    addCheck('GET /api/project_rules returns structured rules', rulesReadOk ? 'pass' : 'fail', `status=${rulesReadRes.statusCode} ok=${rulesReadRes.json?.ok}`, true);
+
+    const rulesContextRes = await requestJson(`${url}/api/project_rules/context`);
+    const rulesContextOk = rulesContextRes.statusCode === 200 && rulesContextRes.json?.ok === true;
+    addCheck('GET /api/project_rules/context returns context', rulesContextOk ? 'pass' : 'fail', `status=${rulesContextRes.statusCode}`, true);
+
+    // Enterprise mode - project rules mutation denied
+    const profileEnterpriseRules = await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: 'enterprise', trustedWorkspace: false } });
+    const rulesMutateEnterprise = await requestJson(`${url}/api/project_rules/add`, {
+      method: 'POST',
+      headers: { 'X-Agent-Approved': 'true' },
+      body: { title: 'Smoke Test Rule', content: 'Test content', category: 'project', priority: 'normal' }
+    });
+    addCheck('Enterprise mode project_rules mutation denied', rulesMutateEnterprise.statusCode === 403 ? 'pass' : 'fail', `status=${rulesMutateEnterprise.statusCode}`, true);
+
+    // IDE mode switch for mutation tests
+    await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: 'ide', trustedWorkspace: false } });
+
+    // IDE mode without approval - project rules mutation denied
+    const rulesMutateIdeNoApproval = await requestJson(`${url}/api/project_rules/add`, {
+      method: 'POST',
+      body: { title: 'Smoke Test No Approval', content: 'Test content', category: 'project', priority: 'normal' }
+    });
+    addCheck('IDE mode project_rules mutation denied without approval', rulesMutateIdeNoApproval.statusCode === 403 ? 'pass' : 'fail', `status=${rulesMutateIdeNoApproval.statusCode}`, true);
+
+    // IDE mode + approval - accept valid safe rule
+    const rulesMutateIdeApproved = await requestJson(`${url}/api/project_rules/add`, {
+      method: 'POST',
+      headers: { 'X-Agent-Approved': 'true' },
+      body: { title: 'Smoke Test Rule OK', content: 'Test content for smoke', category: 'coding', priority: 'low', enabled: true }
+    });
+    const rulesAddOk = rulesMutateIdeApproved.statusCode === 200 && rulesMutateIdeApproved.json?.ok === true && rulesMutateIdeApproved.json?.item;
+    addCheck('IDE + approval project_rules add valid rule accepted', rulesAddOk ? 'pass' : 'fail', `status=${rulesMutateIdeApproved.statusCode}`, true);
+
+    // Toggle rule test
+    let ruleId = '';
+    if (rulesAddOk && rulesMutateIdeApproved.json.item?.id) {
+      ruleId = rulesMutateIdeApproved.json.item.id;
+      const toggleRes = await requestJson(`${url}/api/project_rules/toggle`, {
+        method: 'POST',
+        headers: { 'X-Agent-Approved': 'true' },
+        body: { id: ruleId, enabled: false }
+      });
+      addCheck('Toggle project rule works', toggleRes.statusCode === 200 && toggleRes.json?.ok === true ? 'pass' : 'fail', `status=${toggleRes.statusCode}`, true);
+
+      // Delete rule test
+      const deleteRes = await requestJson(`${url}/api/project_rules/delete`, {
+        method: 'POST',
+        headers: { 'X-Agent-Approved': 'true' },
+        body: { id: ruleId }
+      });
+      addCheck('Delete project rule works', deleteRes.statusCode === 200 && deleteRes.json?.ok === true ? 'pass' : 'fail', `status=${deleteRes.statusCode}`, true);
+    }
+
+    // Invalid schema test - oversized content
+    const oversizedRes = await requestJson(`${url}/api/project_rules/add`, {
+      method: 'POST',
+      headers: { 'X-Agent-Approved': 'true' },
+      body: { title: 'Oversized', content: 'x'.repeat(10000), category: 'other', priority: 'low' }
+    });
+    addCheck('Oversized rule content rejected', oversizedRes.statusCode === 413 ? 'pass' : 'fail', `status=${oversizedRes.statusCode}`, true);
+
+    // Switch back to IDE mode for remaining UI checks
+    await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: 'ide', trustedWorkspace: false } });
+
+    // Project Rules UI DOM check
+    let rulesUiOk = false;
+    if (profileIde.statusCode === 200) {
+      rulesUiOk = rulesReadOk; // Proxy: if API works, UI can render. The DOM check below is more specific.
+    }
+
+    // Add DOM check for project-rules-section in page evaluate
+    const rulesDomChecks = await page.evaluate(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const exists = (selector) => !!document.querySelector(selector);
+
+      // Open settings to check rules section
+      if (typeof window.openSettings === 'function') {
+        await window.openSettings();
+        await sleep(200);
+      }
+      const section = exists('#project-rules-section');
+      const rulesList = exists('#project-rules-list');
+      const memoryList = exists('#project-memory-list');
+      const addBtn = [...document.querySelectorAll('button')].some(btn => btn.textContent?.includes('Add Rule'));
+      const warning1 = (document.querySelector('#rules-warning-1')?.textContent || '').includes('not a proof system');
+      const warning2 = (document.querySelector('#rules-warning-2')?.textContent || '').includes('No automatic self-learning');
+
+      const denyBtn = document.getElementById('btn-deny');
+      if (denyBtn) denyBtn.click();
+      await sleep(80);
+
+      return { section, rulesList, memoryList, addBtn, warning1, warning2 };
+    });
+    addCheck('Project Rules section exists in Settings', rulesDomChecks.section ? 'pass' : 'fail', `section=${rulesDomChecks.section}`, true);
+    addCheck('Project Rules list renders or empty state renders', rulesDomChecks.rulesList ? 'pass' : 'fail', `list=${rulesDomChecks.rulesList}`, true);
+    addCheck('Project Rules warning text visible', rulesDomChecks.warning1 && rulesDomChecks.warning2 ? 'pass' : 'fail', `w1=${rulesDomChecks.warning1} w2=${rulesDomChecks.warning2}`, true);
+    addCheck('Memory list renders', rulesDomChecks.memoryList ? 'pass' : 'fail', `memory=${rulesDomChecks.memoryList}`, true);
+
     const screenshotPath = path.join(REPORTS_DIR, `browser-smoke-${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
     ensureReportsDir();
     await page.screenshot({ path: screenshotPath, fullPage: false });
