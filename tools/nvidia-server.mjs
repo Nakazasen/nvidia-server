@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createWorkspaceCore } from './agent-core.mjs';
 import { createExtensionHost } from './extension-host.mjs';
+import { tryHandleHealthRoute } from './routes/health-routes.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.join(__dirname, '..');
@@ -2754,6 +2755,18 @@ const server = http.createServer(async (req, res) => {
 
     try {
         const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+
+        if (tryHandleHealthRoute(req, res, requestUrl, {
+            sendJSON,
+            getDiagnosticsSummary,
+            currentWorkspace,
+            port: PORT,
+            version: '1.0.0',
+            getAgentTools,
+            getRateLimitStatus,
+            workspaceCore
+        })) return;
+
         if (req.method === 'GET') {
             if (req.url === '/' || req.url === '/index.html') {
                 const htmlPath = path.join(APP_DIR, 'nvidia_playground.html');
@@ -2787,7 +2800,6 @@ const server = http.createServer(async (req, res) => {
             if (req.url === '/api/agent_providers') return sendJSON(res, 200, { providers: extensionHost.getAgentProviders() });
             if (req.url === '/api/files') return sendJSON(res, 200, { tree: workspaceCore.getFileTree(currentWorkspace) });
             if (req.url === '/api/files_flat') return sendJSON(res, 200, { files: workspaceCore.getFilesFlat(currentWorkspace) });
-            if (req.url === '/api/workspace') return sendJSON(res, 200, { path: currentWorkspace });
             if (req.url === '/api/trust') return sendJSON(res, 200, getWorkspaceTrustStatus());
             if (req.url === '/api/profile') return sendJSON(res, 200, loadProfile());
             if (req.url === '/api/settings') return sendJSON(res, 200, getSettingsPayload());
@@ -2823,10 +2835,7 @@ const server = http.createServer(async (req, res) => {
                 const limit = Number(requestUrl.searchParams.get('limit') || 50);
                 return sendJSON(res, 200, { ok: true, entries: readPermissionAuditTail(limit) });
             }
-            if (req.url === '/api/pending_edits') return sendJSON(res, 200, { edits: workspaceCore.listPendingEditsTool() });
             if (req.url === '/api/command_jobs') return sendJSON(res, 200, { jobs: workspaceCore.commandJobStatusTool({}) });
-            if (req.url === '/api/tools') return sendJSON(res, 200, { tools: getAgentTools() });
-            if (req.url === '/api/rate_limit') return sendJSON(res, 200, getRateLimitStatus());
 
             // Sprint 12: Tasks API
             if (req.url === '/api/tasks') {

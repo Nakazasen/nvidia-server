@@ -822,6 +822,17 @@ async function runRealBrowserSmoke(url) {
       }
     }
 
+    // Sprint 17: Health endpoint modularization smoke
+    try {
+      const healthRes = await requestJson(`${url}/api/health`, { timeoutMs: 8000 });
+      const healthOk = healthRes.statusCode === 200 && healthRes.json?.ok === true && healthRes.json?.status === 'running';
+      addCheck('API: GET /api/health returns running', healthOk ? 'pass' : 'fail', `status=${healthRes.statusCode} ok=${healthRes.json?.ok}`, true);
+      const hasFields = typeof healthRes.json?.uptime === 'number' && typeof healthRes.json?.workspace === 'string';
+      addCheck('API: /api/health contains uptime and workspace', hasFields ? 'pass' : 'fail', hasFields ? 'fields present' : 'missing uptime/workspace', true);
+    } catch (e) {
+      addCheck('API: GET /api/health', 'fail', `error: ${e.message}`, true);
+    }
+
     // Sprint 16: Permission / Guard Matrix
     const GUARD_MATRIX = [];
     const guardActions = [
