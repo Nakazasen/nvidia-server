@@ -1,9 +1,10 @@
-﻿import { spawn, execSync } from 'child_process';
+﻿import { sleep, fetchText, requestJson, waitForServer } from './smoke/core.mjs';
+import { runApiRegressionChecks } from './smoke/api-regression.mjs';
+import { runGuardMatrixChecks } from './smoke/guard-matrix.mjs';
+import { spawn, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import http from 'http';
-import https from 'https';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.join(__dirname, '..');
@@ -101,84 +102,7 @@ function addCheck(name, status, detail, required = true) {
   log(normalized, `${name} - ${detail}`);
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
-function fetchText(url, timeoutMs = 10000) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.request({
-      hostname: u.hostname,
-      port: u.port || (u.protocol === 'https:' ? 443 : 80),
-      path: `${u.pathname || '/'}${u.search || ''}`,
-      method: 'GET',
-      timeout: timeoutMs,
-      headers: {
-        'User-Agent': 'nvidia-browser-smoke/9',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      }
-    }, res => {
-      let body = '';
-      res.setEncoding('utf8');
-      res.on('data', chunk => { body += chunk; });
-      res.on('end', () => resolve({ statusCode: res.statusCode || 0, body }));
-    });
-
-    req.on('error', reject);
-    req.on('timeout', () => req.destroy(new Error(`Timeout after ${timeoutMs}ms`)));
-    req.end();
-  });
-}
-
-function requestJson(url, { method = 'GET', headers = {}, body, timeoutMs = 10000 } = {}) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const lib = u.protocol === 'https:' ? https : http;
-    const payload = body === undefined ? '' : JSON.stringify(body);
-    const req = lib.request({
-      hostname: u.hostname,
-      port: u.port || (u.protocol === 'https:' ? 443 : 80),
-      path: `${u.pathname || '/'}${u.search || ''}`,
-      method,
-      timeout: timeoutMs,
-      headers: {
-        'User-Agent': 'nvidia-browser-smoke/14',
-        Accept: 'application/json',
-        ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
-        ...headers
-      }
-    }, res => {
-      let raw = '';
-      res.setEncoding('utf8');
-      res.on('data', chunk => { raw += chunk; });
-      res.on('end', () => {
-        let json = {};
-        try { json = raw ? JSON.parse(raw) : {}; } catch {}
-        resolve({ statusCode: res.statusCode || 0, json, raw });
-      });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => req.destroy(new Error(`Timeout after ${timeoutMs}ms`)));
-    if (payload) req.write(payload);
-    req.end();
-  });
-}
-
-async function waitForServer(url, timeoutMs = SERVER_READY_TIMEOUT_MS) {
-  const started = Date.now();
-  while ((Date.now() - started) < timeoutMs) {
-    try {
-      const res = await fetchText(url, 2500);
-      if (res.statusCode >= 200 && res.statusCode < 500) return true;
-    } catch {
-      // retry
-    }
-    await sleep(400);
-  }
-  throw new Error(`Server not reachable at ${url} within ${timeoutMs}ms`);
-}
 
 function startLocalServer(port, host) {
   return new Promise((resolve, reject) => {
@@ -797,217 +721,12 @@ async function runRealBrowserSmoke(url) {
       addCheck(r.name, r.ok ? 'pass' : 'fail', r.detail, true);
     }
 
-    // Sprint 16: API regression pack
-    const apiRegressionChecks = [
-      { name: 'GET /api/permissions', url: '/api/permissions', expect200: true },
-      { name: 'GET /api/project_rules', url: '/api/project_rules', expect200: true },
-      { name: 'GET /api/git/status', url: '/api/git/status', expect200: true },
-      { name: 'GET /api/tasks', url: '/api/tasks', expect200: true },
-      { name: 'GET /api/extensions', url: '/api/extensions', expect200: true },
-      { name: 'GET /api/agent_providers', url: '/api/agent_providers', expect200: true },
-      { name: 'GET /api/settings', url: '/api/settings', expect200: true },
-      { name: 'GET /api/providers', url: '/api/providers', expect200: true },
-      { name: 'GET /api/security/summary', url: '/api/security/summary', expect200: true },
-      { name: 'GET /api/diagnostics', url: '/api/diagnostics', expect200: true },
-      { name: 'GET /api/index/search', url: '/api/index/search?q=test', expect200: true },
-      { name: 'GET /api/pending_edits', url: '/api/pending_edits', expect200: true },
-    ];
-    for (const check of apiRegressionChecks) {
-      try {
-        const res = await requestJson(`${url}${check.url}`, { timeoutMs: 8000 });
-        const ok = check.expect200 ? res.statusCode === 200 : res.statusCode >= 400;
-        addCheck(`API reg: ${check.name}`, ok ? 'pass' : 'fail', `status=${res.statusCode}`, true);
-      } catch (e) {
-        addCheck(`API reg: ${check.name}`, 'fail', `error: ${e.message}`, true);
-      }
-    }
+    await runApiRegressionChecks(url, addCheck, requestJson);
 
-    // Sprint 17: Health endpoint modularization smoke
-    try {
-      const healthRes = await requestJson(`${url}/api/health`, { timeoutMs: 8000 });
-      const healthOk = healthRes.statusCode === 200 && healthRes.json?.ok === true && healthRes.json?.status === 'running';
-      addCheck('API: GET /api/health returns running', healthOk ? 'pass' : 'fail', `status=${healthRes.statusCode} ok=${healthRes.json?.ok}`, true);
-      const hasFields = typeof healthRes.json?.uptime === 'number' && typeof healthRes.json?.workspace === 'string';
-      addCheck('API: /api/health contains uptime and workspace', hasFields ? 'pass' : 'fail', hasFields ? 'fields present' : 'missing uptime/workspace', true);
-    } catch (e) {
-      addCheck('API: GET /api/health', 'fail', `error: ${e.message}`, true);
-    }
-
-    // Sprint 16: Permission / Guard Matrix
-    const GUARD_MATRIX = [];
-    const guardActions = [
-      { action: 'file.write', mutation: true },
-      { action: 'file.apply_edit', mutation: true },
-      { action: 'inline_edit.generate', mutation: true },
-      { action: 'task.mutate', mutation: true },
-      { action: 'provider.mutate', mutation: true },
-      { action: 'extension.install', mutation: true },
-      { action: 'extension.mutate', mutation: true },
-      { action: 'git.stage', mutation: true },
-      { action: 'git.discard', mutation: true },
-      { action: 'terminal.run', mutation: true },
-      { action: 'project_rules.mutate', mutation: true },
-      { action: 'memory.mutate', mutation: true },
-      { action: 'git.commit', mutation: false, reserved: true },
-      { action: 'git.push', mutation: false, reserved: true },
-      { action: 'abw.bridge.reserved', mutation: false, reserved: true },
-      { action: 'unknown.action', mutation: false, unknown: true },
-    ];
-
-    for (const guard of guardActions) {
-      const row = { action: guard.action };
-      try {
-        // Case 1: Enterprise + approval -> denied (for mutations) or denied (for reserved)
-        await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: 'enterprise', trustedWorkspace: false } });
-        const r1 = await requestJson(`${url}/api/permissions/check`, {
-          method: 'POST',
-          headers: { 'X-Agent-Approved': 'true' },
-          body: { actionType: guard.action, targetSummary: 'guard-matrix-test' }
-        });
-        if (guard.reserved || guard.unknown) {
-          row.enterpriseApproved = r1.json?.ok === false ? 'denied-ok' : 'BYPA';
-        } else {
-          row.enterpriseApproved = r1.statusCode >= 400 ? 'denied-ok' : 'BYPA';
-        }
-
-        // Case 2: IDE without approval -> denied
-        await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: 'ide', trustedWorkspace: false } });
-        const r2 = await requestJson(`${url}/api/permissions/check`, {
-          method: 'POST',
-          body: { actionType: guard.action, targetSummary: 'guard-matrix-test' }
-        });
-        row.ideNoApproval = r2.statusCode >= 400 ? 'denied-ok' : 'BYPA';
-
-        // Case 3: IDE with approval -> allowed (for mutations) or denied (for reserved/unknown)
-        const r3 = await requestJson(`${url}/api/permissions/check`, {
-          method: 'POST',
-          headers: { 'X-Agent-Approved': 'true' },
-          body: { actionType: guard.action, targetSummary: 'guard-matrix-test' }
-        });
-        if (guard.reserved || guard.unknown) {
-          row.ideApproved = r3.json?.ok === false ? 'denied-ok' : 'BYPA';
-        } else {
-          row.ideApproved = r3.json?.ok === true ? 'allowed-ok' : 'DENY-ERROR';
-        }
-      } catch (e) {
-        row.error = e.message;
-      }
-      GUARD_MATRIX.push(row);
-    }
-
-    // Switch back to IDE mode
-    await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: 'ide', trustedWorkspace: false } });
-
-    // Verify guard matrix results
-    let guardPassed = 0;
-    let guardFailed = 0;
-    for (const row of GUARD_MATRIX) {
-      const enterpriseOk = !row.error && row.enterpriseApproved === 'denied-ok';
-      const ideNoApprovalOk = !row.error && row.ideNoApproval === 'denied-ok';
-      const ideApprovedOk = !row.error && (row.ideApproved === 'allowed-ok' || row.ideApproved === 'denied-ok');
-
-      if (enterpriseOk && ideNoApprovalOk && ideApprovedOk) {
-        guardPassed++;
-      } else {
-        guardFailed++;
-      }
-      const entries = [row.enterpriseApproved, row.ideNoApproval, row.ideApproved].join('/');
-      addCheck(`Guard: ${row.action}`, (enterpriseOk && ideNoApprovalOk && ideApprovedOk) ? 'pass' : 'fail', `ent=${row.enterpriseApproved} noapp=${row.ideNoApproval} app=${row.ideApproved}`, true);
-    }
-
+    const { GUARD_MATRIX, guardPassed, guardFailed } = await runGuardMatrixChecks(url, addCheck, requestJson);
     SUMMARY.guardMatrix = GUARD_MATRIX;
     SUMMARY.guardPassed = guardPassed;
     SUMMARY.guardFailed = guardFailed;
-
-    addCheck('Guard matrix overall', guardFailed === 0 ? 'pass' : 'fail', `${guardPassed}/${guardPassed + guardFailed} actions secure`, true);
-
-    // Sprint 16: Selected real endpoint mutation guard regression (not only /api/permissions/check)
-    try {
-      const realEndpointCases = [
-        {
-          name: 'Real guard: write_file enterprise denied',
-          mode: 'enterprise',
-          path: '/api/write_file',
-          body: { path: 'tmp_guard_probe.txt', content: 'probe' },
-          expectStatus: 403
-        },
-        {
-          name: 'Real guard: inline_edit enterprise denied',
-          mode: 'enterprise',
-          path: '/api/inline_edit',
-          body: { instruction: 'probe', selectedText: 'const a = 1;' },
-          expectStatus: 403
-        },
-        {
-          name: 'Real guard: task mutate enterprise denied',
-          mode: 'enterprise',
-          path: '/api/tasks/start',
-          body: { title: 'guard-probe' },
-          expectStatus: 403
-        },
-        {
-          name: 'Real guard: git stage enterprise denied',
-          mode: 'enterprise',
-          path: '/api/git/stage',
-          body: { files: ['README.md'] },
-          expectStatus: 403
-        },
-        {
-          name: 'Real guard: project_rules mutate enterprise denied',
-          mode: 'enterprise',
-          path: '/api/project_rules/add',
-          body: { type: 'rule', title: 'guard-probe', content: 'probe', category: 'workflow', priority: 'normal', source: 'user' },
-          expectStatus: 403
-        },
-        {
-          name: 'Real guard: write_file IDE no approval denied',
-          mode: 'ide',
-          path: '/api/write_file',
-          body: { path: 'tmp_guard_probe.txt', content: 'probe' },
-          expectStatus: 403
-        },
-        {
-          name: 'Real guard: inline_edit IDE no approval denied',
-          mode: 'ide',
-          path: '/api/inline_edit',
-          body: { instruction: 'probe', selectedText: 'const a = 1;' },
-          expectStatus: 403
-        },
-        {
-          name: 'Real guard: task mutate IDE no approval denied',
-          mode: 'ide',
-          path: '/api/tasks/start',
-          body: { title: 'guard-probe' },
-          expectStatus: 403
-        },
-        {
-          name: 'Real guard: git stage IDE no approval denied',
-          mode: 'ide',
-          path: '/api/git/stage',
-          body: { files: ['README.md'] },
-          expectStatus: 403
-        },
-        {
-          name: 'Real guard: project_rules mutate IDE no approval denied',
-          mode: 'ide',
-          path: '/api/project_rules/add',
-          body: { type: 'rule', title: 'guard-probe', content: 'probe', category: 'workflow', priority: 'normal', source: 'user' },
-          expectStatus: 403
-        }
-      ];
-
-      for (const c of realEndpointCases) {
-        await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: c.mode, trustedWorkspace: false } });
-        const res = await requestJson(`${url}${c.path}`, {
-          method: 'POST',
-          body: c.body
-        });
-        addCheck(c.name, res.statusCode === c.expectStatus ? 'pass' : 'fail', `status=${res.statusCode}`, true);
-      }
-      await requestJson(`${url}/api/profile`, { method: 'POST', body: { uiMode: 'ide', trustedWorkspace: false } });
-    } catch (e) {
-      addCheck('Real endpoint guard regression pack', 'fail', `error: ${e.message}`, true);
-    }
 
     // Sprint 16: Code hygiene scan
     try {
