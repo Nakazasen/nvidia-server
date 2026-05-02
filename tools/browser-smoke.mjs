@@ -426,6 +426,41 @@ async function runRealBrowserSmoke(url) {
       add('Terminal/Jobs panel renders', terminalOk && jobsOk, `terminal=${terminalOk}, jobs=${jobsOk}`, true);
       add('Problems panel renders', problemsOk, '#problems-view + #problems-list', true);
 
+      // Sprint 13: SCM Panel checks
+      const scmEntryOk = exists('#btn-scm') || exists('#sidebar-scm');
+      add('SCM panel entry exists', scmEntryOk, '#btn-scm or #sidebar-scm found', true);
+
+      let scmOpensOk = false;
+      let scmRendersOk = false;
+      let enterpriseBlocksSCMMutations = false;
+      try {
+        const scmBtn = document.querySelector('#btn-scm');
+        if (scmBtn && typeof scmBtn.click === 'function') {
+          scmBtn.click();
+          await sleep(250);
+          scmOpensOk = visible('#sidebar-scm') || exists('#scm-changed-list');
+          scmRendersOk = exists('#scm-branch-name') || exists('#scm-status-summary') || exists('#scm-not-repo-warning');
+        }
+        if (typeof window.setUIMode === 'function') {
+          await window.setUIMode('enterprise', { persist: false });
+          await sleep(120);
+          enterpriseBlocksSCMMutations = !visible('#scm-mutation-actions');
+          await window.setUIMode('ide', { persist: false });
+          await sleep(80);
+        }
+        // Switch back to explorer
+        const explorerBtn = document.querySelector('#btn-explorer');
+        if (explorerBtn && typeof explorerBtn.click === 'function') explorerBtn.click();
+        await sleep(80);
+      } catch {
+        scmOpensOk = false;
+        scmRendersOk = false;
+        enterpriseBlocksSCMMutations = false;
+      }
+      add('SCM panel opens on click', scmOpensOk, 'SCM sidebar visible', true);
+      add('SCM panel renders status or warning', scmRendersOk, 'SCM content rendered', true);
+      add('Enterprise mode blocks SCM mutation controls', enterpriseBlocksSCMMutations, 'SCM mutations hidden in enterprise mode', true);
+
       const monacoOk = exists('#code-body') || exists('#editor-tabs') || exists('.monaco-editor');
       add('Monaco/editor surface renders if safe', monacoOk, 'editor shell selectors found', false);
       let inlineEditActionOk = false;

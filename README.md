@@ -474,12 +474,12 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 12: Task Timeline + Recovery / Resume",
-  "last_implementer": "Builder model (external handoff)",
+  "last_completed_sprint": "Sprint 13: Git / SCM Panel tốt hơn",
+  "last_implementer": "DeepSeek-v4-pro",
   "last_auditor": "Codex",
-  "last_audit_result": "Sprint 12 audited/fixed by Codex: task API mutation guards enforce IDE mode + X-Agent-Approved, /api/tasks/event was added with status validation and payload bounds, task model was normalized/sanitized with secret-redacted summaries, clearCompleted now sends approval header, runAutonomousAgent toolResults loop bug was fixed, taskId wiring to /proxy/chat and abort-to-pause marker were added, browser smoke passed 27/0 (real-browser), and agent:audit passed 25/25.",
-  "next_sprint": "Sprint 13: Git / SCM Panel tốt hơn",
-  "next_prompt_instruction": "Ask builder model to implement Sprint 12 only, then return to Codex for audit/fix.",
+  "last_audit_result": "Sprint 13 audited/fixed by Codex: SCM panel and API smoke verified; browser smoke passed 31/0 (real-browser); enterprise and missing-approval mutation guards enforced; discard confirm:true enforced; commit helper remains draft-only; git status parser fixed for staged/worktree accuracy; workspace path validation added for git file operations.",
+  "next_sprint": "Sprint 14: Security Permission Model cơ bản",
+  "next_prompt_instruction": "Ask builder model to implement Sprint 14 only, then return to Codex for audit/fix.",
   "status_marker_version": 2
 }
 ```

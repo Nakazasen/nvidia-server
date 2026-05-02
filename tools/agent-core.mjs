@@ -526,6 +526,253 @@ export function createWorkspaceCore({
     ]).then(([status, diffStat, diff, log]) => ({ status, diffStat, diff, log }));
   }
 
+  function gitStatusTool() {
+    return new Promise(resolve => {
+      exec('git status --porcelain --branch -u', { cwd: currentWorkspace, timeout: 15000, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+        if (err && !stdout) {
+          resolve({
+            ok: false,
+            isRepo: false,
+            branch: null,
+            message: 'Not a git repository or git is not installed.',
+            error: redactSecrets(err.message),
+            changedFiles: [],
+            stagedFiles: [],
+            untrackedFiles: [],
+            statusRaw: ''
+          });
+          return;
+        }
+        const raw = redactSecrets(stdout || '');
+        const lines = raw.split(/\r?\n/).filter(Boolean);
+        const branchLine = lines.find(l => l.startsWith('##'));
+        const branch = branchLine ? branchLine.replace(/^##\s+/, '').split('...')[0].trim() : 'unknown';
+        const aheadBehind = branchLine ? (branchLine.match(/\[(ahead\s+\d+[,\s]*behind\s+\d+|ahead\s+\d+|behind\s+\d+)\]/i)?.[1] || null) : null;
+
+        const changedFiles = [];
+        const stagedFiles = [];
+        const untrackedFiles = [];
+
+        for (const line of lines) {
+          if (line.startsWith('##')) continue;
+          const status = line.slice(0, 2);
+          const file = line.slice(3).trim();
+          if (!file) continue;
+          const statusTrimmed = status.trim();
+
+          if (statusTrimmed === '??') {
+            untrackedFiles.push(file);
+          } else {
+            const isStaged = status[0] !== ' ';
+            const isWorktree = status[1] !== ' ';
+            const statusLabel = statusTrimmed.replace(/\s/g, '');
+
+            let label = 'modified';
+            if (statusLabel === 'M') label = 'modified';
+            else if (statusLabel === 'A') label = 'added';
+            else if (statusLabel === 'D') label = 'deleted';
+            else if (statusLabel === 'R') label = 'renamed';
+            else if (statusLabel === 'C') label = 'copied';
+            else if (statusLabel === 'AM' || statusLabel === 'MM') label = 'modified';
+
+            changedFiles.push({ file, status: statusLabel, staged: isStaged, worktree: isWorktree });
+            if (isStaged) stagedFiles.push({ file, status: statusLabel });
+          }
+        }
+
+        resolve({
+          ok: true,
+          isRepo: true,
+          branch,
+          aheadBehind,
+          changedFiles,
+          stagedFiles,
+          untrackedFiles,
+          totalChanges: changedFiles.length,
+          totalUntracked: untrackedFiles.length,
+          statusRaw: truncate(raw, 80000)
+        });
+      });
+    });
+  }
+
+  function normalizeGitFilePath(inputPath) {
+    const raw = String(inputPath || '').trim();
+    if (!raw) throw new Error('filePath is required');
+    const resolved = resolveWorkspacePath(raw);
+    return path.relative(currentWorkspace, resolved).replace(/\\/g, '/');
+  }
+
+  function normalizeGitFileList(files) {
+    if (!Array.isArray(files)) throw new Error('files must be an array');
+    const out = files.map(normalizeGitFilePath).filter(Boolean);
+    if (out.length === 0) throw new Error('files array must not be empty');
+    return out;
+  }
+
+  function gitDiffTool({ filePath, cached } = {}) {
+    return new Promise(resolve => {
+      const safePath = filePath ? normalizeGitFilePath(filePath) : '';
+      const pathArg = safePath ? ` -- ${JSON.stringify(safePath)}` : '';
+      const cacheFlag = cached ? ' --cached' : '';
+      const cmd = `git diff${cacheFlag} -- .${pathArg}`;
+      exec(cmd, { cwd: currentWorkspace, timeout: 30000, maxBuffer: 10 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+        const raw = redactSecrets(stdout || '');
+        resolve({
+          ok: !err,
+          command: cmd,
+          diff: truncate(raw, 200000),
+          stat: '',
+          error: err ? redactSecrets(err.message) : null
+        });
+      });
+    });
+  }
+
+  function gitFileDiffTool({ filePath, cached } = {}) {
+    if (!filePath || typeof filePath !== 'string') throw new Error('filePath is required');
+    return gitDiffTool({ filePath, cached });
+  }
+
+  function gitLogTool({ count = 10, branch, filePath } = {}) {
+    return new Promise(resolve => {
+      const n = Math.max(1, Math.min(Number(count) || 10, 100));
+      const branchArg = branch ? ` ${String(branch).trim()}` : '';
+      const safePath = filePath ? normalizeGitFilePath(filePath) : '';
+      const fileArg = safePath ? ` -- ${JSON.stringify(safePath)}` : '';
+      const cmd = `git log --oneline -n ${n}${branchArg}${fileArg}`;
+      exec(cmd, { cwd: currentWorkspace, timeout: 15000, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+        const raw = redactSecrets(stdout || '');
+        const entries = raw.split(/\r?\n/).filter(Boolean).map(line => {
+          const spaceIdx = line.indexOf(' ');
+          if (spaceIdx === -1) return { hash: line, message: '' };
+          return { hash: line.slice(0, spaceIdx), message: line.slice(spaceIdx + 1).trim() };
+        });
+        resolve({
+          ok: !err,
+          command: `git log oneline -n ${n}`,
+          entries,
+          entriesCount: entries.length,
+          logRaw: truncate(raw, 60000),
+          error: err ? redactSecrets(err.message) : null
+        });
+      });
+    });
+  }
+
+  function gitStageTool({ files, all = false } = {}) {
+    if (!isWorkspaceTrusted()) throw new Error('Workspace is not trusted. Trust it before staging files.');
+    if (!all && (!files || !Array.isArray(files) || files.length === 0)) throw new Error('files array or all=true is required for stage');
+    return new Promise((resolve, reject) => {
+      const safeFiles = all ? [] : normalizeGitFileList(files);
+      const fileArgs = all ? '-A' : safeFiles.map(f => JSON.stringify(f)).join(' ');
+      const cmd = all ? 'git add -A' : `git add ${fileArgs}`;
+      exec(cmd, { cwd: currentWorkspace, timeout: 30000, maxBuffer: 2 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+        if (err) {
+          resolve({
+            ok: false,
+            command: cmd,
+            staged: [],
+            error: redactSecrets(err.message),
+            stderr: truncate(redactSecrets(stderr || ''), 5000)
+          });
+          return;
+        }
+        resolve({
+          ok: true,
+          command: cmd,
+          staged: all ? ['all'] : safeFiles
+        });
+      });
+    });
+  }
+
+  function gitUnstageTool({ files, all = false } = {}) {
+    if (!isWorkspaceTrusted()) throw new Error('Workspace is not trusted. Trust it before unstaging files.');
+    if (!all && (!files || !Array.isArray(files) || files.length === 0)) throw new Error('files array or all=true is required for unstage');
+    return new Promise((resolve, reject) => {
+      const safeFiles = all ? [] : normalizeGitFileList(files);
+      const normalizedArgs = all ? '.' : safeFiles.map(f => JSON.stringify(f)).join(' ');
+      const cmd = `git reset HEAD -- ${normalizedArgs}`;
+      exec(cmd, { cwd: currentWorkspace, timeout: 30000, maxBuffer: 2 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+        if (err) {
+          resolve({
+            ok: false,
+            command: cmd,
+            unstaged: [],
+            error: redactSecrets(err.message),
+            stderr: truncate(redactSecrets(stderr || ''), 5000)
+          });
+          return;
+        }
+        resolve({
+          ok: true,
+          command: cmd,
+          unstaged: all ? ['all'] : safeFiles
+        });
+      });
+    });
+  }
+
+  function gitDiscardTool({ filePath, files, confirm } = {}) {
+    if (!isWorkspaceTrusted()) throw new Error('Workspace is not trusted. Trust it before discarding changes.');
+    if (confirm !== true) throw new Error('Discard requires explicit confirmation (confirm:true). This is a destructive operation.');
+    const fileList = filePath ? [normalizeGitFilePath(filePath)] : (Array.isArray(files) ? normalizeGitFileList(files) : []);
+    if (fileList.length === 0) throw new Error('filePath or files array is required for discard');
+    return new Promise((resolve, reject) => {
+      const fileArgs = fileList.map(f => JSON.stringify(f)).join(' ');
+      const cmd = `git checkout -- ${fileArgs}`;
+      exec(cmd, { cwd: currentWorkspace, timeout: 30000, maxBuffer: 2 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+        if (err) {
+          resolve({
+            ok: false,
+            command: cmd,
+            discarded: [],
+            error: redactSecrets(err.message),
+            stderr: truncate(redactSecrets(stderr || ''), 5000)
+          });
+          return;
+        }
+        resolve({
+          ok: true,
+          command: cmd,
+          discarded: fileList
+        });
+      });
+    });
+  }
+
+  async function gitCommitMessageDraftTool({ style = 'conventional' } = {}) {
+    try {
+      const diff = await gitDiffTool({});
+      const status = await gitStatusTool();
+      if (!status.isRepo) return { ok: false, message: 'Not a git repository.', draft: '' };
+      if (!status.changedFiles.length && !status.stagedFiles.length) {
+        return { ok: true, message: 'No changes to commit.', draft: '', empty: true };
+      }
+      const stagedSummary = status.stagedFiles.length
+        ? `Staged: ${status.stagedFiles.map(f => f.file).join(', ')}`
+        : 'No files staged';
+      const changedSummary = status.changedFiles.length
+        ? status.changedFiles.filter(f => !f.staged).map(f => `${f.file} (${f.status})`).join('; ')
+        : 'No working changes';
+      const diffStat = diff.diff
+        ? `\nDiff stats (lines changed): added ${(diff.diff.match(/\n\+/g) || []).length}, removed ${(diff.diff.match(/\n\-/g) || []).length}`
+        : '';
+      const draft = `[DRAFT] ${stagedSummary}\n\nChanges:\n${changedSummary}${diffStat}\n\n${style === 'conventional' ? 'Enter a descriptive commit message using conventional commits format (feat:, fix:, docs:, refactor:, etc.)' : 'Replace this with your commit message.'}`;
+      return {
+        ok: true,
+        draft,
+        branch: status.branch,
+        stagedSummary,
+        changedSummary,
+        diffStatPreview: truncate(diff.diff, 5000)
+      };
+    } catch (e) {
+      return { ok: false, error: e.message, draft: '' };
+    }
+  }
+
   function createPendingEdit({ filePath, path: inputPath, content, oldContent = null, reason = '' }) {
     if (!isWorkspaceTrusted()) throw new Error('Workspace is not trusted. Trust it before proposing edits.');
     if (typeof content !== 'string') throw new Error('content must be a string');
@@ -667,6 +914,14 @@ export function createWorkspaceCore({
     if (name === 'index_refresh') return refreshIndexCache(args);
     if (name === 'index_search') return searchIndexCache(args);
     if (name === 'git_context') return gitContextTool(args);
+    if (name === 'git_status') return gitStatusTool(args);
+    if (name === 'git_diff') return gitDiffTool(args);
+    if (name === 'git_file_diff') return gitFileDiffTool(args);
+    if (name === 'git_log') return gitLogTool(args);
+    if (name === 'git_stage') return gitStageTool(args);
+    if (name === 'git_unstage') return gitUnstageTool(args);
+    if (name === 'git_discard') return gitDiscardTool(args);
+    if (name === 'git_commit_draft') return gitCommitMessageDraftTool(args);
     if (name === 'list_dir') return listDirTool(args);
     if (name === 'read_file') return readFileTool(args);
     if (name === 'read_file_paged') return readFilePagedTool(args);
@@ -688,7 +943,10 @@ export function createWorkspaceCore({
     resolveWorkspacePath, isLikelyTextFile, shouldSkipDir, getFilesFlat, getFileTree,
     isWorkspaceTrusted, setWorkspaceTrust, getWorkspaceTrustStatus,
     fileHash, makeUnifiedDiff, makeLineHunks, readFileTool, readFilePagedTool, listDirTool, searchFiles,
-    projectIndexerTool, semanticIndexTool, indexStatusTool, buildIndexCache, refreshIndexCache, searchIndexCache, gitContextTool, createPendingEdit, applyPatchTool, applyPendingEditTool, discardPendingEditTool,
+    projectIndexerTool, semanticIndexTool, indexStatusTool, buildIndexCache, refreshIndexCache, searchIndexCache, gitContextTool,
+    gitStatusTool, gitDiffTool, gitFileDiffTool, gitLogTool,
+    gitStageTool, gitUnstageTool, gitDiscardTool, gitCommitMessageDraftTool,
+    createPendingEdit, applyPatchTool, applyPendingEditTool, discardPendingEditTool,
     listPendingEditsTool, executeCommandTool, startCommandJobTool, commandJobStatusTool,
     cancelCommandJobTool, callTool
   };

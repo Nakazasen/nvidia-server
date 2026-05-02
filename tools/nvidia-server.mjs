@@ -22,7 +22,7 @@ const PROFILE_FILE = path.join(STATE_DIR, 'profile.json');
 const PROVIDERS_FILE = path.join(STATE_DIR, 'providers.json');
 const TASKS_DIR = path.join(STATE_DIR, 'tasks');
 const READ_ONLY_TOOLS = new Set(['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
-const DESTRUCTIVE_TOOLS = new Set(['write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job']);
+const DESTRUCTIVE_TOOLS = new Set(['write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job', 'git_stage', 'git_unstage', 'git_discard']);
 
 // --- Sprint 8: Diagnostics Model ---
 // In-memory diagnostics store. Not persisted to disk.
@@ -1534,6 +1534,114 @@ function getAgentTools() {
         {
             type: 'function',
             function: {
+                name: 'git_status',
+                description: 'Get detailed git status: branch, staged/untracked/changed files with status labels.',
+                parameters: { type: 'object', properties: {} }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'git_diff',
+                description: 'Get git diff output. Returns full working tree diff or diff for a specific file.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        filePath: { type: 'string', description: 'Optional: workspace-relative file path for file-specific diff.' },
+                        cached: { type: 'boolean', description: 'Optional: show staged diff instead of working tree diff.' }
+                    }
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'git_file_diff',
+                description: 'Get git diff for a single file. Requires filePath.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        filePath: { type: 'string', description: 'Workspace-relative file path.' },
+                        cached: { type: 'boolean' }
+                    },
+                    required: ['filePath']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'git_log',
+                description: 'Get recent git commit log.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        count: { type: 'integer', minimum: 1, maximum: 100 },
+                        branch: { type: 'string' },
+                        filePath: { type: 'string' }
+                    }
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'git_stage',
+                description: 'Stage files for commit. Requires trusted workspace.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        files: { type: 'array', items: { type: 'string' }, description: 'File paths to stage.' },
+                        all: { type: 'boolean', description: 'Stage all changes.' }
+                    }
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'git_unstage',
+                description: 'Unstage files from the index. Requires trusted workspace.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        files: { type: 'array', items: { type: 'string' }, description: 'File paths to unstage.' },
+                        all: { type: 'boolean', description: 'Unstage all changes.' }
+                    }
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'git_discard',
+                description: 'Discard working-tree changes for files. DESTRUCTIVE - requires confirm:true.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        filePath: { type: 'string' },
+                        files: { type: 'array', items: { type: 'string' } },
+                        confirm: { type: 'boolean', description: 'Must be set to true to confirm the destructive operation.' }
+                    }
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'git_commit_draft',
+                description: 'Generate a commit message draft based on the current git diff and status.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        style: { type: 'string', enum: ['conventional', 'simple'] }
+                    }
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
                 name: 'read_file',
                 description: 'Read a text file from the current workspace.',
                 parameters: {
@@ -1735,7 +1843,7 @@ async function runToolCall(toolCall, options = {}) {
                 observation: 'Ask the user to enable Auto-Accept or approve the operation, then retry.'
             };
         }
-        if (['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'search_files', 'search', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job'].includes(name)) {
+        if (['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'git_status', 'git_diff', 'git_file_diff', 'git_log', 'git_stage', 'git_unstage', 'git_discard', 'git_commit_draft', 'list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'search_files', 'search', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job'].includes(name)) {
             return await workspaceCore.callTool(name, args);
         }
         if (name === 'load_skill') return await loadSkillTool(args);
@@ -2256,7 +2364,7 @@ async function probeModels(models, concurrency = 12, timeoutMs = 15000) {
 }
 
 async function routeApiTool(toolName, args) {
-    if (['list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'pending_edits', 'search', 'search_files', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job', 'project_indexer'].includes(toolName)) {
+    if (['list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'pending_edits', 'search', 'search_files', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'git_status', 'git_diff', 'git_file_diff', 'git_log', 'git_stage', 'git_unstage', 'git_discard', 'git_commit_draft', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job', 'project_indexer'].includes(toolName)) {
         const result = await workspaceCore.callTool(toolName, args);
         return toolName === 'read_file' ? result.content : result;
     }
@@ -2376,6 +2484,43 @@ const server = http.createServer(async (req, res) => {
                     sendJSON(res, 200, { path: stdout.trim() });
                 });
                 return;
+            }
+
+            // Sprint 13: Git / SCM Panel API (read-only)
+            if (req.url === '/api/git/status') {
+              try {
+                const status = await workspaceCore.callTool('git_status', {});
+                return sendJSON(res, 200, status);
+              } catch (e) {
+                return sendJSON(res, 500, { ok: false, isRepo: false, error: redactSecrets(e.message) });
+              }
+            }
+
+            if (requestUrl.pathname === '/api/git/diff') {
+              try {
+                const file = requestUrl.searchParams.get('file') || '';
+                const cached = requestUrl.searchParams.get('cached') === 'true';
+                const diff = await workspaceCore.callTool('git_diff', { filePath: file || undefined, cached });
+                return sendJSON(res, 200, diff);
+              } catch (e) {
+                return sendJSON(res, 500, { ok: false, error: redactSecrets(e.message) });
+              }
+            }
+
+            if (requestUrl.pathname === '/api/git/log') {
+              try {
+                const count = Number(requestUrl.searchParams.get('count') || 10);
+                const branch = requestUrl.searchParams.get('branch') || '';
+                const file = requestUrl.searchParams.get('file') || '';
+                const log = await workspaceCore.callTool('git_log', {
+                  count: Math.max(1, Math.min(count, 100)),
+                  branch: branch || undefined,
+                  filePath: file || undefined
+                });
+                return sendJSON(res, 200, log);
+              } catch (e) {
+                return sendJSON(res, 500, { ok: false, error: redactSecrets(e.message) });
+              }
             }
 
             res.writeHead(404);
@@ -2852,6 +2997,70 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
             }
             toDelete.forEach(id => taskStore.delete(id));
             return sendJSON(res, 200, { ok: true, deleted: toDelete.length });
+        }
+
+        // Sprint 13: Git / SCM Panel - Mutation endpoints
+        if (req.url === '/api/git/stage') {
+          try {
+            ensureIdeMutationAllowed(req);
+            const body = await getBody(req);
+            const files = Array.isArray(body.files) ? body.files.map(f => String(f).trim()).filter(Boolean) : [];
+            const all = body.all === true;
+            if (!all && files.length === 0) return sendJSON(res, 400, { ok: false, error: 'files array or all=true is required' });
+            const result = await workspaceCore.callTool('git_stage', { files: files.length > 0 ? files : undefined, all });
+            return sendJSON(res, 200, result);
+          } catch (e) {
+            const lowered = String(e.message || '').toLowerCase();
+            const statusCode = lowered.includes('x-agent-approved') || lowered.includes('ide-mode only') ? 403
+              : lowered.includes('trusted') ? 403 : 400;
+            return sendJSON(res, statusCode, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        if (req.url === '/api/git/unstage') {
+          try {
+            ensureIdeMutationAllowed(req);
+            const body = await getBody(req);
+            const files = Array.isArray(body.files) ? body.files.map(f => String(f).trim()).filter(Boolean) : [];
+            const all = body.all === true;
+            if (!all && files.length === 0) return sendJSON(res, 400, { ok: false, error: 'files array or all=true is required' });
+            const result = await workspaceCore.callTool('git_unstage', { files: files.length > 0 ? files : undefined, all });
+            return sendJSON(res, 200, result);
+          } catch (e) {
+            const lowered = String(e.message || '').toLowerCase();
+            const statusCode = lowered.includes('x-agent-approved') || lowered.includes('ide-mode only') ? 403
+              : lowered.includes('trusted') ? 403 : 400;
+            return sendJSON(res, statusCode, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        if (req.url === '/api/git/discard') {
+          try {
+            ensureIdeMutationAllowed(req);
+            const body = await getBody(req);
+            const filePath = body.filePath ? String(body.filePath).trim() : '';
+            const files = Array.isArray(body.files) ? body.files.map(f => String(f).trim()).filter(Boolean) : [];
+            const confirm = body.confirm === true;
+            if (!confirm) return sendJSON(res, 400, { ok: false, error: 'confirm:true is required for discard (destructive operation)' });
+            const result = await workspaceCore.callTool('git_discard', { filePath: filePath || undefined, files: files.length > 0 ? files : undefined, confirm });
+            return sendJSON(res, 200, result);
+          } catch (e) {
+            const lowered = String(e.message || '').toLowerCase();
+            const statusCode = lowered.includes('x-agent-approved') || lowered.includes('ide-mode only') ? 403
+              : lowered.includes('trusted') ? 403 : 400;
+            return sendJSON(res, statusCode, { ok: false, error: redactSecrets(e.message) });
+          }
+        }
+
+        if (req.url === '/api/git/commit_draft') {
+          try {
+            const body = await getBody(req);
+            const style = ['conventional', 'simple'].includes(body.style) ? body.style : 'conventional';
+            const draft = await workspaceCore.callTool('git_commit_draft', { style });
+            return sendJSON(res, 200, draft);
+          } catch (e) {
+            return sendJSON(res, 500, { ok: false, error: redactSecrets(e.message) });
+          }
         }
 
         if (req.url.startsWith('/api/')) {
