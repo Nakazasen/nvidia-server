@@ -474,12 +474,12 @@ Báo cáo audit được ghi vào:
 {
   "project": "NVIDIA NIM Agent IDE",
   "workflow": "Gemini 3 Flash implements roadmap items; Codex audits and fixes after each item",
-  "last_completed_sprint": "Sprint 15: Project Rules / Memory UI tối thiểu",
+  "last_completed_sprint": "Sprint 16: Daily-use hardening / E2E regression pack",
   "last_implementer": "DeepSeek-v4-pro",
   "last_auditor": "Codex",
-  "last_audit_result": "Sprint 15 audited/fixed by Codex: enterprise mutation deny enforced; IDE mutation requires X-Agent-Approved; invalid category/priority/source/visibility rejected; oversized rule content returns 413; secret-like rules/memory payload rejected and not stored; disabled rules excluded from context; corrupted project-rules JSON falls back safely; memory.mutate permission enforced for memory mutations; project-rules save is temp-write+rename; browser smoke passed 52/0 (real-browser); agent:audit passed 25/25.",
-  "next_sprint": "Sprint 16: Daily-use hardening / E2E regression pack",
-  "next_prompt_instruction": "Ask builder model to implement Sprint 15 only, then return to Codex for audit/fix.",
+  "last_audit_result": "Sprint 16 audited by Codex: browser smoke passed 87/0 in real-browser mode (orphan=false); node --check passed for server/cli/extension-host/core/smoke; agent:audit passed 25/25; API regression and permission/guard matrix verified; selected real endpoint mutation guards verified (enterprise deny + IDE-no-approval deny); readiness report generated under ignored runtime path with candidate-only limitations; no ABW bridge, no Cognitive OS claim, no VS Code parity claim, no full E2E claim.",
+  "next_sprint": "Phase 1 Gate Review before Sprint 17",
+  "next_prompt_instruction": "Run Phase 1 Gate Review and readiness decision before any Sprint 17 builder implementation.",
   "status_marker_version": 2
 }
 ```
