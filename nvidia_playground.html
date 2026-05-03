@@ -5685,6 +5685,7 @@
                         fontSize: 14,
                         minimap: { enabled: false }
                     });
+                    window.editor = editor;
                     
                     // Sprint 8: LSP diagnostics sync (debounced + normalized)
                     monaco.editor.onDidChangeMarkers((uris) => {
@@ -5928,6 +5929,7 @@
                     if (inlineEditWidget) {
                         ed.removeContentWidget(inlineEditWidget);
                         inlineEditWidget = null;
+                        window.inlineEditWidget = null;
                     }
 
                     inlineEditWidget = {
@@ -5935,6 +5937,8 @@
                         getDomNode: function() {
                             if (!this.domNode) {
                                 this.domNode = document.createElement('div');
+                                this.domNode.id = 'inline-edit-widget';
+                                this.domNode.dataset.testid = 'inline-edit-widget';
                                 this.domNode.style.background = '#1e1e1e';
                                 this.domNode.style.border = '1px solid #76b900';
                                 this.domNode.style.borderRadius = '4px';
@@ -5946,6 +5950,8 @@
 
                                 const input = document.createElement('input');
                                 input.type = 'text';
+                                input.id = 'inline-edit-instruction';
+                                input.dataset.testid = 'inline-edit-instruction';
                                 input.placeholder = 'Instruct the agent (e.g. Add error handling)';
                                 input.style.width = '300px';
                                 input.style.background = '#2d2d2d';
@@ -5955,11 +5961,15 @@
                                 input.style.outline = 'none';
 
                                 const submitBtn = document.createElement('button');
+                                submitBtn.id = 'inline-edit-submit';
+                                submitBtn.dataset.testid = 'inline-edit-submit';
                                 submitBtn.innerText = 'Ask';
                                 submitBtn.className = 'btn';
                                 submitBtn.style.padding = '4px 12px';
 
                                 const cancelBtn = document.createElement('button');
+                                cancelBtn.id = 'inline-edit-cancel';
+                                cancelBtn.dataset.testid = 'inline-edit-cancel';
                                 cancelBtn.innerText = 'Esc';
                                 cancelBtn.className = 'btn-secondary';
                                 cancelBtn.style.padding = '4px 8px';
@@ -6001,6 +6011,7 @@
                                         if (inlineEditWidget) {
                                             ed.removeContentWidget(inlineEditWidget);
                                             inlineEditWidget = null;
+                                            window.inlineEditWidget = null;
                                         }
                                         
                                         if (!res.ok || data.error) {
@@ -6017,6 +6028,7 @@
                                         if (inlineEditWidget) {
                                             ed.removeContentWidget(inlineEditWidget);
                                             inlineEditWidget = null;
+                                            window.inlineEditWidget = null;
                                         }
                                     }
                                 };
@@ -6024,6 +6036,7 @@
                                 cancelBtn.onclick = () => {
                                     ed.removeContentWidget(inlineEditWidget);
                                     inlineEditWidget = null;
+                                    window.inlineEditWidget = null;
                                     ed.focus();
                                 };
 
@@ -6049,6 +6062,7 @@
                         }
                     };
                     ed.addContentWidget(inlineEditWidget);
+                    window.inlineEditWidget = inlineEditWidget;
                 }
             });
         }

@@ -317,6 +317,18 @@ async function runRealBrowserSmoke(url) {
         if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
         return el.getClientRects().length > 0;
       };
+      const waitUntil = async (predicate, timeoutMs = 4000, intervalMs = 80) => {
+        const started = Date.now();
+        while ((Date.now() - started) < timeoutMs) {
+          try {
+            if (predicate()) return true;
+          } catch {
+            // Keep polling until the state is ready or timeout expires.
+          }
+          await sleep(intervalMs);
+        }
+        return false;
+      };
 
       add('Page loaded', document.readyState === 'complete' || document.readyState === 'interactive', `readyState=${document.readyState}`, true);
       add('Main chat input exists', exists('#user-input, #composer-input, textarea'), 'selector #user-input or textarea', true);
@@ -437,7 +449,7 @@ async function runRealBrowserSmoke(url) {
         }
         if (typeof window.openCodeViewer === 'function') {
           await window.openCodeViewer('package.json', 'package.json');
-          await sleep(250);
+          await waitUntil(() => !!window.editor && typeof window.editor.getAction === 'function' && !!window.editor.getModel(), 6000, 100);
         }
         workflowGuideOk = visible('#code-viewer') && visible('#edit-workflow-guide') && visible('#code-viewer-empty-state') === false;
         workflowGuideTextOk =
@@ -493,18 +505,19 @@ async function runRealBrowserSmoke(url) {
           pendingCard?.remove();
         }
         if (window.editor && typeof window.editor.getAction === 'function') {
-          inlineEditActionOk = !!window.editor.getAction('nvidia-inline-edit');
+          inlineEditActionOk = await waitUntil(() => !!window.editor.getAction('nvidia-inline-edit'), 3000, 80);
         }
         if (window.editor && typeof window.editor.getAction === 'function') {
           const action = window.editor.getAction('nvidia-inline-edit');
           const model = window.editor.getModel();
           if (action && model) {
+            window.editor.focus();
             const line1 = model.getLineMaxColumn(1);
             window.editor.setSelection(new window.monaco.Range(1, 1, 1, Math.max(2, line1)));
+            await sleep(80);
             await action.run();
-            await sleep(140);
-            inlineEditWidgetOk = !!document.querySelector('div[style*="border: 1px solid rgb(118, 185, 0)"], div[style*="border:1px solid #76b900"]');
-            const escBtn = [...document.querySelectorAll('button')].find(btn => btn.textContent?.trim() === 'Esc');
+            inlineEditWidgetOk = await waitUntil(() => visible('#inline-edit-widget') && visible('#inline-edit-instruction') && visible('#inline-edit-submit') && visible('#inline-edit-cancel'), 3000, 80);
+            const escBtn = document.getElementById('inline-edit-cancel') || [...document.querySelectorAll('button')].find(btn => btn.textContent?.trim() === 'Esc');
             if (escBtn) escBtn.click();
             await sleep(80);
           }
