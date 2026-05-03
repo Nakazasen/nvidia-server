@@ -11,6 +11,7 @@
     "agent:audit": "node tools/agent-capability-harness.mjs",
     "browser:smoke": "node tools/browser-smoke.mjs",
     "write:create:proof": "node tests/real-write-create-flow.test.mjs",
+    "apply:proof": "node tests/apply-pending-edit-to-disk.test.mjs",
     "budget:check": "node tools/performance-budget.mjs",
     "runtime:hygiene": "node tools/runtime-hygiene.mjs --dry-run",
     "bridge:preflight": "node tools/bridge-preflight.mjs",

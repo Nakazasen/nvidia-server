@@ -3315,14 +3315,25 @@ const server = http.createServer(async (req, res) => {
         if (req.url === '/api/apply_pending_edit') {
             const body = await getBody(req);
             enforcePermission(req, 'file.apply_edit', { targetSummary: `apply_pending_edit:${String(body.id || '').slice(0, 60)}` });
-            return sendJSON(res, 200, { result: workspaceCore.applyPendingEditTool(body) });
+            try {
+                return sendJSON(res, 200, { result: workspaceCore.applyPendingEditTool(body) });
+            } catch (e) {
+                const message = String(e.message || '');
+                const status = /pending edit not found/i.test(message) ? 400 : toPermissionStatusCode(message);
+                return sendJSON(res, status, { ok: false, error: redactSecrets(message) });
+            }
         }
 
         if (req.url === '/api/write_file') {
             const body = await getBody(req);
             enforcePermission(req, 'file.write', { targetSummary: `write_file:${String(body.path || '').slice(0, 120)}` });
-            const result = await routeApiTool('write_file', { filePath: body.path, content: body.content, reason: 'Manual UI Save' });
-            return sendJSON(res, 200, { ok: true, result });
+            try {
+                const result = await routeApiTool('write_file', { filePath: body.path, content: body.content, reason: 'Manual UI Save' });
+                return sendJSON(res, 200, { ok: true, result });
+            } catch (e) {
+                const message = String(e.message || '');
+                return sendJSON(res, toPermissionStatusCode(message), { ok: false, error: redactSecrets(message) });
+            }
         }
 
         if (req.url === '/api/discard_pending_edit') {
