@@ -43,7 +43,7 @@ const tests = [
   ['Performance', server.includes('read_file_paged') && server.includes('MAX_FILE_READ_CHARS')],
   ['Unit Test', pkg.scripts && (pkg.scripts.test || server.includes('execute_command'))],
   ['Dependency', exists('package-lock.json') && server.includes('execute_command')],
-  ['Diff Review', server.includes('pendingEdits') && ui.includes('Apply edit')],
+  ['Diff Review', server.includes('pendingEdits') && (ui.includes('Apply edit') || ui.includes('Review + Apply'))],
   ['Command Cancel', server.includes('cancel_command_job') && ui.includes('stopAgentResponse')],
   ['Workspace Trust', server.includes('trusted-workspaces') && ui.includes('setting-trust-workspace')],
   ['MCP Workspace Tools', mcp.includes('project_indexer') && mcp.includes('apply_patch') && mcp.includes('execute_command') && mcp.includes('start_command_job')],

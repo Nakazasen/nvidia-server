@@ -421,6 +421,11 @@ async function runRealBrowserSmoke(url) {
 
       const monacoOk = exists('#code-body') || exists('#editor-tabs') || exists('.monaco-editor');
       add('Monaco/editor surface renders if safe', monacoOk, 'editor shell selectors found', false);
+      let workflowGuideOk = false;
+      let workflowGuideTextOk = false;
+      let changedFilesGuideOk = false;
+      let diffReviewUiOk = false;
+      let pendingEditHonestyOk = false;
       let inlineEditActionOk = false;
       let inlineEditWidgetOk = false;
       let enterpriseBlocksInlineEdit = false;
@@ -431,8 +436,61 @@ async function runRealBrowserSmoke(url) {
           await sleep(120);
         }
         if (typeof window.openCodeViewer === 'function') {
-          await window.openCodeViewer();
+          await window.openCodeViewer('package.json', 'package.json');
           await sleep(250);
+        }
+        workflowGuideOk = visible('#code-viewer') && visible('#edit-workflow-guide') && visible('#code-viewer-empty-state') === false;
+        workflowGuideTextOk =
+          exists('#edit-workflow-file-context') &&
+          exists('#edit-workflow-proposal-status') &&
+          exists('#edit-workflow-apply-status') &&
+          exists('#edit-workflow-log-status') &&
+          /Current file:/i.test(document.querySelector('#edit-workflow-file-context')?.textContent || '') &&
+          /reviewable proposal|pending proposal/i.test(document.querySelector('#edit-workflow-proposal-status')?.textContent || '') &&
+          /approval|trust|review the diff first/i.test(document.querySelector('#edit-workflow-apply-status')?.textContent || '');
+
+        const tasksBtn = document.querySelector('#btn-tasks');
+        if (tasksBtn && typeof tasksBtn.click === 'function') {
+          tasksBtn.click();
+          await sleep(180);
+          changedFilesGuideOk = visible('#sidebar-tasks') && visible('#changed-files-guide');
+        }
+        const explorerBtn = document.querySelector('#btn-explorer');
+        if (explorerBtn && typeof explorerBtn.click === 'function') {
+          explorerBtn.click();
+          await sleep(80);
+        }
+
+        if (typeof window.renderDiffUI === 'function') {
+          const tempHost = document.createElement('div');
+          tempHost.id = 'smoke-diff-preview';
+          document.body.appendChild(tempHost);
+          await window.renderDiffUI(tempHost, 'package.json', '{\n  "name": "smoke-preview"\n}\n');
+          await sleep(220);
+          const diffButton = tempHost.querySelector('.diff-header button');
+          const diffNote = tempHost.querySelector('.workflow-diff-note');
+          diffReviewUiOk = !!diffButton && /Queue for Review/i.test(diffButton.textContent || '') && !!diffNote && /does not silently write/i.test(diffNote.textContent || '');
+          tempHost.remove();
+        }
+
+        if (typeof window.renderPendingEdit === 'function') {
+          window.renderPendingEdit({
+            id: 'smoke-preview-edit',
+            relPath: 'package.json',
+            diff: '--- a/package.json\n+++ b/package.json',
+            beforeContent: '{\n}\n',
+            content: '{\n  "name": "preview"\n}\n',
+            hunks: [{ id: 'hunk-1', preview: '+  \"name\": \"preview\"' }]
+          });
+          await sleep(120);
+          const pendingCard = document.getElementById('pending-smoke-preview-edit');
+          const pendingText = pendingCard?.textContent || '';
+          pendingEditHonestyOk =
+            !!pendingCard &&
+            /proposed change only/i.test(pendingText) &&
+            /Review \+ Apply/i.test(pendingText) &&
+            /Open Diff/i.test(pendingText);
+          pendingCard?.remove();
         }
         if (window.editor && typeof window.editor.getAction === 'function') {
           inlineEditActionOk = !!window.editor.getAction('nvidia-inline-edit');
@@ -464,6 +522,11 @@ async function runRealBrowserSmoke(url) {
         inlineEditWidgetOk = false;
         enterpriseBlocksInlineEdit = false;
       }
+      add('Edit workflow guide is visible', workflowGuideOk, 'code viewer workflow guide visible in IDE mode', true);
+      add('Edit workflow guide explains file/proposal/apply/log path', workflowGuideTextOk, 'workflow guide text is specific and honest', true);
+      add('Changed Files guide explains review/apply path', changedFilesGuideOk, 'tasks sidebar changed-files guide visible', true);
+      add('Diff review UI labels queue-for-review honestly', diffReviewUiOk, 'diff preview uses queue/review wording and no-silent-write note', true);
+      add('Pending edit card labels review/apply honestly', pendingEditHonestyOk, 'pending edit card shows proposed-only and review/apply wording', true);
       add('Inline edit action exists', inlineEditActionOk, inlineEditActionOk ? 'monaco action nvidia-inline-edit registered' : 'action not observable in current smoke state', false);
       add('Inline edit widget opens from selection', inlineEditWidgetOk, inlineEditWidgetOk ? 'inline widget opens with selection' : 'widget not observable in current smoke state', false);
       add('Enterprise mode blocks inline edit mutation surface', enterpriseBlocksInlineEdit, 'editor/inline-edit surface blocked in enterprise mode', true);

@@ -1600,6 +1600,68 @@
             overflow: hidden;
             position: relative;
         }
+        .workflow-guide {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            padding: 10px 20px;
+            background: #11161f;
+            border-bottom: 1px solid var(--glass-border);
+        }
+        .workflow-guide-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid #263041;
+            border-radius: 8px;
+            padding: 10px;
+            min-width: 0;
+        }
+        .workflow-guide-label {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--primary);
+            opacity: 0.85;
+            margin-bottom: 6px;
+        }
+        .workflow-guide-value {
+            font-size: 0.8rem;
+            line-height: 1.45;
+            color: #d7deea;
+        }
+        .code-viewer-empty-state {
+            margin: 18px 20px 0 20px;
+            padding: 14px 16px;
+            border: 1px dashed #2e394d;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.02);
+            color: #aeb8c8;
+            font-size: 0.82rem;
+            line-height: 1.55;
+        }
+        .code-viewer-empty-state strong {
+            color: #fff;
+        }
+        .workflow-diff-note {
+            padding: 10px 12px;
+            border-bottom: 1px solid #263041;
+            background: rgba(var(--primary-rgb), 0.06);
+            color: #ced6e4;
+            font-size: 0.78rem;
+            line-height: 1.45;
+        }
+        .workflow-diff-note strong {
+            color: var(--primary);
+        }
+        @media (max-width: 1100px) {
+            .workflow-guide {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+        @media (max-width: 640px) {
+            .workflow-guide {
+                grid-template-columns: 1fr;
+            }
+        }
 
         .activity-btn {
             font-size: 0.8rem;
@@ -2133,7 +2195,7 @@
         <button class="btn-small" onclick="clearCompletedTasks()" style="margin: -10px 0 15px 0;">Clear Completed</button>
 
         <div class="sidebar-section-title">Changed Files</div>
-        <div style="font-size: 0.7rem; opacity: 0.7; padding: 0 0 5px 0;">Review and apply changes from Chat.</div>
+        <div id="changed-files-guide" style="font-size: 0.7rem; opacity: 0.7; padding: 0 0 5px 0;">Workflow: open a file, queue a proposal, review the diff, then apply only after approval.</div>
         <div id="changed-files-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 5px;">
             <div style="opacity: 0.3; text-align: center; padding: 10px;">No changes yet</div>
         </div>
@@ -2248,7 +2310,33 @@
                         <button class="toggle-btn" onclick="closeCodeViewer()">Close</button>
                     </div>
                 </div>
+                <div id="edit-workflow-guide" class="workflow-guide">
+                    <div class="workflow-guide-card">
+                        <div class="workflow-guide-label">1. File Context</div>
+                        <div id="edit-workflow-file-context" class="workflow-guide-value">Open a file from Explorer or Recent Files to start.</div>
+                    </div>
+                    <div class="workflow-guide-card">
+                        <div class="workflow-guide-label">2. Proposal</div>
+                        <div id="edit-workflow-proposal-status" class="workflow-guide-value">Save and Inline Edit only queue reviewable proposals. No silent write.</div>
+                    </div>
+                    <div class="workflow-guide-card">
+                        <div class="workflow-guide-label">3. Review and Apply</div>
+                        <div id="edit-workflow-apply-status" class="workflow-guide-value">Review diffs first. Apply remains approval-guarded and trust-guarded.</div>
+                    </div>
+                    <div class="workflow-guide-card">
+                        <div class="workflow-guide-label">4. Result and Logs</div>
+                        <div id="edit-workflow-log-status" class="workflow-guide-value">Use Tasks, Changed Files, and Terminal/Jobs to verify what happened.</div>
+                    </div>
+                </div>
                 <div id="editor-tabs" class="editor-tabs mode-ide-only"></div>
+                <div id="code-viewer-empty-state" class="code-viewer-empty-state">
+                    <strong>Edit workflow</strong><br>
+                    1. Open a file from the Explorer.<br>
+                    2. Make changes or ask for an inline proposal.<br>
+                    3. Save to queue a pending edit, then review the diff.<br>
+                    4. Apply only after approval and trust checks pass.<br>
+                    5. Verify the result in Tasks, Changed Files, and logs.
+                </div>
                 <div id="code-body" class="code-content"></div>
                 <div id="diff-body" class="code-content" style="display:none;"></div>
             </div>
@@ -2616,6 +2704,7 @@
                 await saveProfileMode(nextMode);
             }
             if (nextMode === 'ide') await loadIndexStatus();
+            updateEditWorkflowGuide({ currentView: nextMode === 'ide' ? 'ide' : 'enterprise' });
             logDebug(`UI mode: ${nextMode}`);
         }
 
@@ -2680,7 +2769,8 @@
             const list = document.getElementById('changed-files-list');
             if (!list) return;
             if (edits.length === 0) {
-                list.innerHTML = '<div style="opacity: 0.3; text-align: center; padding: 10px;">No changes yet</div>';
+                list.innerHTML = '<div style="opacity: 0.45; text-align: center; padding: 10px;">No pending edits yet. Save or queue a proposal, then review it here before apply.</div>';
+                updateEditWorkflowGuide({ pendingCount: 0 });
                 return;
             }
             list.innerHTML = edits.map(edit => `
@@ -2692,8 +2782,49 @@
                     <span style="font-size:0.7rem; opacity:0.5;">${edit.hunks ? edit.hunks.length : 1} hunks</span>
                 </div>
             `).join('');
+            updateEditWorkflowGuide({ pendingCount: edits.length });
         }
 
+        function updateCodeViewerEmptyState() {
+            const emptyState = document.getElementById('code-viewer-empty-state');
+            const codeBody = document.getElementById('code-body');
+            const diffBody = document.getElementById('diff-body');
+            if (!emptyState || !codeBody || !diffBody) return;
+            const hasTabs = editorTabs.length > 0;
+            const diffVisible = diffBody.style.display !== 'none';
+            emptyState.style.display = (!hasTabs && !diffVisible) ? 'block' : 'none';
+            codeBody.style.display = diffVisible ? 'none' : 'block';
+        }
+        function updateEditWorkflowGuide({ pendingCount = null, currentView = '' } = {}) {
+            const fileEl = document.getElementById('edit-workflow-file-context');
+            const proposalEl = document.getElementById('edit-workflow-proposal-status');
+            const applyEl = document.getElementById('edit-workflow-apply-status');
+            const logEl = document.getElementById('edit-workflow-log-status');
+            const codeFilename = document.getElementById('code-filename');
+            if (!fileEl || !proposalEl || !applyEl || !logEl || !codeFilename) return;
+            const activeTab = getActiveEditorTab();
+            const diffVisible = document.getElementById('diff-body')?.style.display !== 'none';
+            const pendingValue = pendingCount === null ? document.querySelectorAll('#changed-files-list .file-item').length : pendingCount;
+            if (activeTab) {
+                fileEl.textContent = `Current file: ${activeTab.name}. Save queues a pending edit for review.`;
+            } else if (diffVisible) {
+                fileEl.textContent = `Reviewing diff: ${codeFilename.textContent || 'pending edit'}. Return to Explorer to open another file.`;
+            } else {
+                fileEl.textContent = 'Open a file from Explorer or Recent Files to start.';
+            }
+            proposalEl.textContent = pendingValue > 0
+                ? `${pendingValue} pending proposal(s) ready for diff review. Unsupported actions must stay labeled as unavailable or guarded.`
+                : 'No pending proposal yet. Save or Inline Edit should create a reviewable proposal, not a silent write.';
+            applyEl.textContent = diffVisible
+                ? 'You are in review mode. Apply remains approval-guarded and trust-guarded.'
+                : 'Apply is never silent. Review the diff first, then apply only after approval and trust checks pass.';
+            if (currentView === 'diff') {
+                logEl.textContent = 'After review/apply, verify the result in Changed Files, Tasks, and Terminal/Jobs.';
+            } else {
+                logEl.textContent = 'Use Tasks, Changed Files, and Terminal/Jobs to verify what happened.';
+            }
+            updateCodeViewerEmptyState();
+        }
         async function openDiffViewer(id) {
             if (!guardIdeOnlyAction('Diff viewer')) return;
             try {
@@ -2716,11 +2847,17 @@
                 editorContainer.style.display = 'none';
                 diffContainerHost.style.display = 'block';
                 diffContainerHost.innerHTML = '';
+                const note = document.createElement('div');
+                note.id = 'diff-review-note';
+                note.className = 'workflow-diff-note';
+                note.innerHTML = '<strong>Review first.</strong> This diff shows the proposed change before apply. Apply remains guarded and should only happen after approval.';
+                diffContainerHost.appendChild(note);
                 const diffContainer = document.createElement('div');
                 diffContainer.style.height = '100%';
                 diffContainerHost.appendChild(diffContainer);
                 
                 document.getElementById('code-viewer').classList.add('active');
+                updateEditWorkflowGuide({ currentView: 'diff' });
 
                 require(['vs/editor/editor.main'], function () {
                     const originalModel = monaco.editor.createModel(edit.beforeContent || '', 'javascript');
@@ -2801,7 +2938,7 @@
                 ? edit.hunks.map(hunk => `
                     <label style="display:block; margin:8px 0;">
                         <input type="checkbox" class="pending-hunk-${edit.id}" value="${hunk.id}" checked>
-                        <span>Accept ${escapeHtml(hunk.id)}</span>
+                        <span>Include ${escapeHtml(hunk.id)} in apply review</span>
                     </label>
                     <div class="pending-edit-diff" onclick="openDiffViewer('${edit.id}')">${escapeHtml(hunk.preview || '')}</div>
                 `).join('')
@@ -2809,15 +2946,17 @@
             div.innerHTML = `
                 <div class="pending-edit-card">
                     <div><b>Pending edit:</b> ${escapeHtml(edit.relPath)} (${escapeHtml(edit.id)})</div>
+                    <div style="font-size:0.76rem; opacity:0.8; margin-top:6px;">This is a proposed change only. Review the diff first. Apply still requires approval.</div>
                     ${hunkHtml}
                     <div style="display:flex; gap:10px; margin-top:10px;">
-                        <button class="btn-small" style="flex:1" onclick="applyPendingEdit('${edit.id}')">Apply edit</button>
-                        <button class="btn-small" style="flex:1; background:#333; color:#fff;" onclick="openDiffViewer('${edit.id}')">Xem Diff</button>
+                        <button class="btn-small" style="flex:1" onclick="applyPendingEdit('${edit.id}')">Review + Apply</button>
+                        <button class="btn-small" style="flex:1; background:#333; color:#fff;" onclick="openDiffViewer('${edit.id}')">Open Diff</button>
                     </div>
                 </div>
             `;
             chatBox.appendChild(div);
             chatBox.scrollTop = chatBox.scrollHeight;
+            updateEditWorkflowGuide({ pendingCount: document.querySelectorAll('#changed-files-list .file-item').length || 1 });
         }
 
         async function applyPendingEdit(id) {
@@ -3482,6 +3621,7 @@
 
             chatBox.appendChild(div);
             chatBox.scrollTop = chatBox.scrollHeight;
+            updateEditWorkflowGuide({ pendingCount: document.querySelectorAll('#changed-files-list .file-item').length || 1 });
             return div;
         }
 
@@ -5508,6 +5648,7 @@
             if (!tabs) return;
             if (!editorTabs.length) {
                 tabs.innerHTML = '<div style="opacity:0.45; font-size:0.75rem; padding:2px 4px;">No open files</div>';
+                updateCodeViewerEmptyState();
                 return;
             }
             tabs.innerHTML = editorTabs.map(tab => `
@@ -5516,6 +5657,7 @@
                     <button class="tab-close" data-path="${escapeHtml(tab.path)}" onclick="event.stopPropagation(); closeEditorTab(this.dataset.path)">x</button>
                 </div>
             `).join('');
+            updateCodeViewerEmptyState();
         }
 
         async function ensureEditorReady(initialValue, language) {
@@ -5609,6 +5751,7 @@
             document.getElementById('code-viewer').classList.add('active');
             document.getElementById('code-body').style.display = 'block';
             document.getElementById('diff-body').style.display = 'none';
+            updateEditWorkflowGuide({ currentView: 'editor' });
             await ensureEditorReady(tab.originalContent, getMonacoLanguage(tab.name));
             
             isSwitchingEditorModel = true;
@@ -5749,6 +5892,7 @@
                 logDebug(`Save queued as pending edit (review/apply required): ${tab.path}`);
                 if (data.result?.pendingEdit) renderPendingEdit(data.result.pendingEdit);
                 refreshPendingEdits();
+                updateEditWorkflowGuide({ currentView: 'pending-save' });
             } catch (e) {
                 alert(`Save failed for ${tab.name}: ${e.message}`);
             }
@@ -5867,6 +6011,7 @@
                                             renderPendingEdit(data.pendingEdit);
                                         }
                                         refreshPendingEdits();
+                                        updateEditWorkflowGuide({ currentView: 'inline-edit' });
                                     } catch(e) {
                                         alert("Inline Edit Error: " + e.message);
                                         if (inlineEditWidget) {
@@ -5974,6 +6119,7 @@
             document.getElementById('code-viewer').classList.remove('active');
             document.getElementById('code-body').style.display = 'block';
             document.getElementById('diff-body').style.display = 'none';
+            updateEditWorkflowGuide({ currentView: 'closed' });
         }
 
         async function loadWorkspaceInfo() {
@@ -6438,8 +6584,9 @@
             diffDiv.innerHTML = `
                 <div class="diff-header">
                     <span style="color:#aaa; font-size:0.75rem;">Proposed file change: <b>${path.split(/[\\/]/).pop()}</b></span>
-                    <button class="btn-small" data-path="${path.replace(/\\/g, '\\\\')}" onclick="applyFileChange(this.dataset.path, this)">Apply Change</button>
+                    <button class="btn-small" data-path="${path.replace(/\\/g, '\\\\')}" onclick="applyFileChange(this.dataset.path, this)">Queue for Review</button>
                 </div>
+                <div class="workflow-diff-note">This action creates a pending edit card first. It does not silently write the file.</div>
                 <div class="diff-body">Calculating diff...</div>
             `;
             container.appendChild(diffDiv);
@@ -6486,7 +6633,7 @@
             if (!newContent) return;
 
             btn.disabled = true;
-            btn.innerText = "Applying...";
+            btn.innerText = "Queueing...";
 
             try {
                 const res = await fetch('/api/write_file', {
@@ -6499,21 +6646,22 @@
                     const pendingEdit = data.result.pendingEdit;
                     renderPendingEdit(pendingEdit);
                     refreshPendingEdits();
-                    btn.innerText = "Applied";
+                    btn.innerText = "Queued";
                     btn.style.borderColor = "#00ff00";
                     btn.style.color = "#00ff00";
                     btn.title = "A pending edit was created. Review and apply it from the pending edit card.";
-                    logDebug(`Updated file: ${path}`);
+                    logDebug(`Queued pending edit for review: ${path}`);
                     loadFileExplorer(); // Refresh li file explorer nu cn
+                    updateEditWorkflowGuide({ currentView: 'queued' });
                 } else {
                     alert("Apply error: " + (data.error || "Unknown error"));
                     btn.disabled = false;
-                    btn.innerText = "Apply Change";
+                    btn.innerText = "Queue for Review";
                 }
             } catch (e) {
                 alert("Connection error: " + e.message);
                 btn.disabled = false;
-                btn.innerText = "Apply Change";
+                btn.innerText = "Queue for Review";
             }
         }
         async function applyAllComposerChanges(btn) {
@@ -6522,7 +6670,7 @@
             const subButtons = container.querySelectorAll('.diff-header button');
 
             btn.disabled = true;
-            btn.innerText = "Applying All...";
+            btn.innerText = "Queueing All...";
 
             for (let subBtn of subButtons) {
                 if (!subBtn.disabled) {
@@ -6530,7 +6678,7 @@
                 }
             }
 
-            btn.innerText = "All Applied";
+            btn.innerText = "All Queued";
             btn.style.background = "#222";
             btn.style.color = 'var(--primary)';
         }
@@ -6538,4 +6686,3 @@
 </body>
 
 </html>
-
