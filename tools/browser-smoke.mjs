@@ -1,4 +1,4 @@
-﻿import { sleep, fetchText, requestJson, waitForServer } from './smoke/core.mjs';
+import { sleep, fetchText, requestJson, waitForServer } from './smoke/core.mjs';
 import { runApiRegressionChecks } from './smoke/api-regression.mjs';
 import { runGuardMatrixChecks } from './smoke/guard-matrix.mjs';
 import { spawn, execSync } from 'child_process';
@@ -107,7 +107,7 @@ function addCheck(name, status, detail, required = true) {
 function startLocalServer(port, host) {
   return new Promise((resolve, reject) => {
     const serverScript = path.join(__dirname, 'nvidia-server.mjs');
-    const env = { ...process.env, PORT: String(port), HOST: host, NVIDIA_SERVER_HOST: host };
+    const env = { ...process.env, PORT: String(port), HOST: host, NVIDIA_SERVER_HOST: host, NVIDIA_WORKSPACE_TRUST: 'always' };
     const child = spawn('node', [serverScript], {
       cwd: APP_DIR,
       env,
@@ -746,7 +746,7 @@ async function runRealBrowserSmoke(url) {
         addCheck('Code hygiene: duplicate functions', duplicates.length === 0 ? 'pass' : 'warn', duplicates.length ? duplicates.slice(0, 5).map(([n]) => n).join(', ') : 'none', false);
 
         // Mojibake scan
-        const mojibakePattern = /[\uFF83\u862F\u76FB\u7B1E\uE05E\u00C3\u00C2\u00E2\uFFFD\u00E1\u00BA\u00C4\u00C6]/;
+        const mojibakePattern = new RegExp('[\uFF83\u862F\u76FB\u7B1E\uE05E\u00C3\u00C2\u00E2\uFFFD\u00E1\u00BA\u00C4\u00C6]');
         const hasBadChars = mojibakePattern.test(htmlContent);
         addCheck('Code hygiene: mojibake free', hasBadChars ? 'fail' : 'pass', hasBadChars ? 'garbled chars detected in playground HTML' : 'no garbled chars', true);
 

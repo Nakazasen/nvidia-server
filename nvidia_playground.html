@@ -1397,6 +1397,201 @@
             border-bottom: 1px solid var(--glass-border);
             display: flex;
             justify-content: space-between;
+}
+
+        .media-preview-item {
+            position: relative;
+            flex-shrink: 0;
+            animation: scaleIn 0.2s ease;
+        }
+
+        @keyframes scaleIn {
+            from {
+                transform: scale(0.8);
+                opacity: 0;
+            }
+
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .media-preview-item img {
+            height: 60px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            transition: 0.2s;
+        }
+
+        .media-preview-item:hover img {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+        }
+
+        .media-preview-item .remove-btn {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: #ff4444;
+            color: #fff;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            cursor: pointer;
+            border: 2px solid #000;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+        }
+
+        .media-preview-item .remove-btn:hover {
+            background: #ff0000;
+            transform: scale(1.1);
+        }
+
+        .slash-item .cmd {
+            color: var(--primary);
+            font-weight: bold;
+            font-family: monospace;
+            font-size: 0.95rem;
+        }
+
+        .slash-item .desc {
+            color: #aaa;
+            font-size: 0.8rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Responsive */
+        @media (max-width: 800px) {
+            .right-panel {
+                position: fixed;
+                right: -300px;
+                top: 0;
+                bottom: 0;
+                z-index: 1000;
+                box-shadow: -5px 0 15px rgba(0, 0, 0, 0.5);
+                width: 300px !important;
+                display: block !important;
+            }
+
+            .right-panel.open {
+                right: 0;
+            }
+
+            .header {
+                display: flex !important;
+            }
+
+            .mobile-only {
+                display: block !important;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .sidebar {
+                position: fixed;
+                left: -260px;
+                top: 0;
+                bottom: 0;
+                z-index: 1001;
+                box-shadow: 5px 0 15px rgba(0, 0, 0, 0.5);
+                transition: 0.3s;
+                width: 260px !important;
+            }
+
+            .sidebar.open {
+                left: 0;
+            }
+        }
+
+        /* File Explorer Styles */
+        .file-tree {
+            flex: 1.5;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            font-size: 0.85rem;
+            border-bottom: 1px solid #222;
+            padding-bottom: 15px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: 0.2s;
+            white-space: nowrap;
+        }
+
+        .file-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .file-item.folder {
+            font-weight: 500;
+            color: #ccc;
+        }
+
+        .file-item.file {
+            color: #888;
+        }
+
+        .file-item .icon {
+            width: 16px;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        .folder-content {
+            padding-left: 15px;
+            display: none;
+        }
+
+        .folder-content.open {
+            display: block;
+        }
+
+        .sidebar-section-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 10px;
+            color: var(--primary);
+            opacity: 0.8;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        /* Code Viewer Styles */
+        .code-viewer {
+            position: absolute;
+            inset: 0;
+            background: #0b0e14;
+            z-index: 100;
+            display: none;
+            flex-direction: column;
+            animation: slideUp 0.3s ease;
+        }
+
+        .code-viewer.active {
+            display: flex;
+        }
+
+        .code-header {
+            padding: 10px 20px;
+            background: #1a1d23;
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
             align-items: center;
         }
 
@@ -1404,6 +1599,22 @@
             flex: 1;
             overflow: hidden;
             position: relative;
+        }
+
+        .activity-btn {
+            font-size: 0.8rem;
+            font-weight: bold;
+            cursor: pointer;
+            opacity: 0.4;
+            transition: 0.2s;
+            color: #fff;
+            position: relative;
+            text-align: center;
+            width: 100%;
+        }
+
+        .activity-btn:hover {
+            opacity: 1;
         }
 
         .editor-tabs {
@@ -1594,14 +1805,22 @@
             position: fixed;
             bottom: 0;
             left: 350px;
-            right: 320px;
+            right: 300px;
             height: 250px;
             background: #0b0e14;
             border-top: 1px solid #333;
             z-index: 50;
             display: none;
             flex-direction: column;
-            transition: height 0.3s;
+            transition: left 0.3s, right 0.3s, height 0.3s;
+        }
+        
+        body.sidebar-collapsed .bottom-panel {
+            left: 50px;
+        }
+        
+        body.right-collapsed .bottom-panel {
+            right: 0;
         }
 
         .bottom-panel.active {
@@ -1813,27 +2032,23 @@
 
 <body>
     <div class="activity-bar">
-        <div class="activity-btn active" onclick="switchSidebarTab('explorer')" id="btn-explorer" title="Explorer">[EXP]
-        </div>
-        <div class="activity-btn" onclick="switchSidebarTab('tasks')" id="btn-tasks" title="Composer & Tasks">[TASK]
-        </div>
-        <div class="activity-btn" onclick="switchSidebarTab('scm')" id="btn-scm" title="Source Control (Git)">[SCM]
-        </div>
-        <div class="activity-btn" onclick="switchSidebarTab('extensions')" id="btn-extensions" title="Extensions">[EXT]
-        </div>
-        <div style="margin-top: auto;" class="activity-btn" onclick="openSettings()" title="Settings">[SET]</div>
+        <div class="activity-btn active" onclick="switchSidebarTab('explorer')" id="btn-explorer" title="File Explorer">EXP</div>
+        <div class="activity-btn" onclick="switchSidebarTab('tasks')" id="btn-tasks" title="Tasks and Composer">TASK</div>
+        <div class="activity-btn" onclick="switchSidebarTab('scm')" id="btn-scm" title="Source Control (Git)">SCM</div>
+        <div class="activity-btn" onclick="switchSidebarTab('extensions')" id="btn-extensions" title="Extensions">EXT</div>
+        <div style="margin-top: auto;" class="activity-btn" onclick="openSettings()" title="Settings">SET</div>
     </div>
 
     <div class="sidebar" id="sidebar-explorer">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h3 style="margin: 0; font-size: 1rem; color: var(--primary);">Explorer</h3>
+            <h3 style="margin: 0; font-size: 1rem; color: var(--primary);">Files and Folders</h3>
         </div>
 
         <div class="workspace-info">
             <div class="sidebar-section-title">Workspace</div>
             <div id="current-workspace-path" class="workspace-path">Loading...</div>
             <div style="display: flex; gap: 5px;">
-                <button class="btn-small" onclick="changeWorkspace()">Thay ...</button>
+                <button class="btn-small" onclick="changeWorkspace()">Change...</button>
             </div>
         </div>
 
@@ -1848,7 +2063,7 @@
         </div>
 
         <div class="mode-ide-only">
-            <div class="sidebar-section-title">Index Engine</div>
+            <div class="sidebar-section-title">Semantic Index</div>
             <div style="display:flex; gap:6px; margin-bottom:8px;">
                 <button class="btn-small" onclick="buildSemanticIndex()">Rebuild</button>
                 <button class="btn-small" onclick="refreshSemanticIndex()">Refresh</button>
@@ -1861,15 +2076,17 @@
             <div id="index-results" class="recent-files">
                 <div style="opacity:0.45; text-align:center; padding:8px;">No index results.</div>
             </div>
+
+
         </div>
 
-        <div class="sidebar-section-title">Sessions</div>
-        <button onclick="createNewSession()"
-            style="width:100%; padding:10px; background:rgba(var(--primary-rgb), 0.1); color:var(--primary); border:1px solid var(--primary); border-radius:8px; cursor:pointer; font-weight:bold; margin-bottom:15px; font-size: 0.8rem;">+
-            New Chat</button>
-        <div id="session-list" style="flex:1; overflow-y:auto; font-size: 0.85rem;"></div>
-
         <div style="margin-top:auto; padding-top:20px; border-top:1px solid #222;">
+            <div class="sidebar-section-title">Sessions</div>
+            <button onclick="createNewSession()"
+                style="width:100%; padding:10px; background:rgba(var(--primary-rgb), 0.1); color:var(--primary); border:1px solid var(--primary); border-radius:8px; cursor:pointer; font-weight:bold; margin-bottom:15px; font-size: 0.8rem;">+
+                New Chat</button>
+            <div id="session-list" style="flex:1; overflow-y:auto; font-size: 0.85rem;"></div>
+
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                 <label style="font-size:0.75rem; opacity:0.6;">NIM Model:</label>
                 <button class="btn-refresh-models" onclick="refreshModelStatus()" title="Refresh Status">Refresh</button>
@@ -1906,16 +2123,17 @@
 
     <div class="sidebar" id="sidebar-tasks" style="display:none;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h3 style="margin: 0; font-size: 1rem; color: var(--primary);">Task & Composer</h3>
+            <h3 style="margin: 0; font-size: 1rem; color: var(--primary);">Tasks and Composer</h3>
         </div>
 
         <div class="sidebar-section-title">Timeline</div>
         <div id="task-timeline" style="flex: 1; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 8px;">
-            <div style="opacity: 0.3; text-align: center; padding: 10px;">No active task</div>
+            <div style="opacity: 0.3; text-align: center; padding: 10px;">No active tasks</div>
         </div>
         <button class="btn-small" onclick="clearCompletedTasks()" style="margin: -10px 0 15px 0;">Clear Completed</button>
 
         <div class="sidebar-section-title">Changed Files</div>
+        <div style="font-size: 0.7rem; opacity: 0.7; padding: 0 0 5px 0;">Review and apply changes from Chat.</div>
         <div id="changed-files-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 5px;">
             <div style="opacity: 0.3; text-align: center; padding: 10px;">No changes yet</div>
         </div>
@@ -1949,7 +2167,7 @@
             <div class="sidebar-section-title">Agent Providers</div>
             <div id="agent-provider-list" class="ext-list" style="max-height: 18%; margin-bottom: 18px;"></div>
 
-            <div class="sidebar-section-title">Open VSX Results</div>
+            <div class="sidebar-section-title">VSX Results</div>
             <div id="marketplace-ext-list" class="ext-list"></div>
         </div>
     </div>
@@ -2106,7 +2324,7 @@
                         <span id="problems-summary" style="font-size: 0.9rem;">0 errors, 0 warnings</span>
                     </div>
                     <div style="display:flex; gap:10px;">
-                        <button class="btn-small" onclick="refreshProblems()"><span style="color:#fff">↻</span> Check Workspace</button>
+                        <button class="btn-small" onclick="refreshProblems()"><span style="color:#fff">R</span> Check Workspace</button>
                         <button class="btn-small" onclick="clearProblems()">Clear</button>
                     </div>
                 </div>
@@ -2594,7 +2812,7 @@
                     ${hunkHtml}
                     <div style="display:flex; gap:10px; margin-top:10px;">
                         <button class="btn-small" style="flex:1" onclick="applyPendingEdit('${edit.id}')">Apply edit</button>
-                        <button class="btn-small" style="flex:1; background:#333; color:#fff;" onclick="openDiffViewer('${edit.id}')">Review Diff</button>
+                        <button class="btn-small" style="flex:1; background:#333; color:#fff;" onclick="openDiffViewer('${edit.id}')">Xem Diff</button>
                     </div>
                 </div>
             `;
@@ -2619,7 +2837,7 @@
                     return;
                 }
                 const result = data.result || data;
-                logDebug(` apply pending edit ${id}: ${result.relPath}`);
+                logDebug(`Apply pending edit ${id}: ${result.relPath}`);
                 const appliedTab = editorTabs.find(tab => tab.path === result.relPath);
                 if (appliedTab && appliedTab.pendingSaveEditId === id) {
                     appliedTab.originalContent = appliedTab.workingContent;
@@ -2695,7 +2913,7 @@
                     <div class="task-timeline-mini" style="border-left: 2px solid #333; padding-left: 10px; margin-bottom: 10px;">
                         ${task.steps.slice(-3).map(step => `
                             <div style="font-size: 0.75rem; margin-bottom: 4px; color: ${step.status === 'failed' ? '#ff5555' : '#ccc'}">
-                                • ${escapeHtml(step.label)}
+                                - ${escapeHtml(step.label)}
                             </div>
                         `).join('')}
                     </div>
