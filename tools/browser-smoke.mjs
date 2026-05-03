@@ -334,6 +334,8 @@ async function runRealBrowserSmoke(url) {
       add('Main chat input exists', exists('#user-input, #composer-input, textarea'), 'selector #user-input or textarea', true);
       add('JavaScript executes', typeof window.setUIMode === 'function' && typeof window.toggleUIMode === 'function', 'setUIMode/toggleUIMode available', true);
 
+      const findMissingSelectors = (selectors) => selectors.filter(selector => !exists(selector));
+
       let modeOk = false;
       let ideVisible = false;
       let enterpriseHides = false;
@@ -359,6 +361,65 @@ async function runRealBrowserSmoke(url) {
       add('Enterprise/IDE mode toggle or state works', modeOk, 'mode class transitions enterprise->ide', true);
       add('IDE-only surface appears in IDE mode', ideVisible, 'IDE surface visible', true);
       add('Enterprise mode hides IDE-only surface', enterpriseHides, 'IDE surface hidden in enterprise', true);
+
+      const criticalShellSelectors = [
+        '#chat-box',
+        '#slash-menu',
+        '#sidebar-explorer',
+        '#sidebar-tasks',
+        '#sidebar-scm',
+        '#sidebar-extensions',
+        '#session-list',
+        '#task-timeline',
+        '#changed-files-list',
+        '#right-panel',
+        '#bottom-panel'
+      ];
+      const missingCriticalShell = findMissingSelectors(criticalShellSelectors);
+      add(
+        'Critical UI shell roots exist',
+        missingCriticalShell.length === 0,
+        missingCriticalShell.length === 0 ? `${criticalShellSelectors.length} roots found` : `missing ${missingCriticalShell.join(', ')}`,
+        true
+      );
+
+      const criticalEditorSelectors = [
+        '#code-viewer',
+        '#edit-workflow-guide',
+        '#edit-workflow-file-context',
+        '#edit-workflow-proposal-status',
+        '#edit-workflow-apply-status',
+        '#edit-workflow-log-status',
+        '#editor-tabs',
+        '#code-viewer-empty-state',
+        '#code-body',
+        '#diff-body'
+      ];
+      const missingCriticalEditor = findMissingSelectors(criticalEditorSelectors);
+      add(
+        'Critical editor workflow roots exist',
+        missingCriticalEditor.length === 0,
+        missingCriticalEditor.length === 0 ? `${criticalEditorSelectors.length} roots found` : `missing ${missingCriticalEditor.join(', ')}`,
+        true
+      );
+
+      const criticalPanelSelectors = [
+        '#terminal-view',
+        '#terminal-output',
+        '#jobs-view',
+        '#job-manager-list',
+        '#search-view',
+        '#search-results-list',
+        '#problems-view',
+        '#problems-list'
+      ];
+      const missingCriticalPanels = findMissingSelectors(criticalPanelSelectors);
+      add(
+        'Critical bottom-panel roots exist',
+        missingCriticalPanels.length === 0,
+        missingCriticalPanels.length === 0 ? `${criticalPanelSelectors.length} roots found` : `missing ${missingCriticalPanels.join(', ')}`,
+        true
+      );
 
       let contextOpen = false;
       try {

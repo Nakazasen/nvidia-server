@@ -2093,6 +2093,9 @@
 </head>
 
 <body>
+    <!-- Critical UI structure roots kept stable for smoke/audit:
+         activity bar, explorer/tasks/extensions/scm sidebars, chat/code viewer,
+         bottom panel (terminal/jobs/search/problems), right plan panel, and edit workflow roots. -->
     <div class="activity-bar">
         <div class="activity-btn active" onclick="switchSidebarTab('explorer')" id="btn-explorer" title="File Explorer">EXP</div>
         <div class="activity-btn" onclick="switchSidebarTab('tasks')" id="btn-tasks" title="Tasks and Composer">TASK</div>
@@ -2286,6 +2289,7 @@
             <!-- Rendered by JS -->
         </div>
 
+        <!-- Main runtime shell: chat, code viewer, diff/review surface, composer, and debug log. -->
         <div id="chat-view" style="display: flex; flex-direction: column; flex: 1; height: 100%; min-height: 0;">
             <div class="header">
                 <button class="toggle-btn mode-ide-only" onclick="toggleSidebar()">Menu</button>
@@ -2300,6 +2304,7 @@
             </div>
             <div id="chat-box" class="chat-container"></div>
 
+            <!-- Edit workflow roots: file context, proposal status, review/apply status, logs, editor tabs, code body, diff body. -->
             <div id="code-viewer" class="code-viewer">
                 <div class="code-header">
                     <div id="code-filename" style="color: var(--primary); font-weight: bold; font-family: monospace;">
