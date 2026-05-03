@@ -285,6 +285,11 @@ const nimRequestLog = [];
 let lastNimRateLimitHit = null;
 const pendingEdits = new Map();
 const commandJobs = new Map();
+const testChatFixtureState = {
+    source: '',
+    responses: [],
+    cursor: 0
+};
 
 // --- Task Timeline & Persistence (Sprint 12) ---
 const taskStore = new Map();
@@ -2291,6 +2296,36 @@ function isFileWriteIntent(text = '') {
     return writeTokens.some(token => lower.includes(token)) || asksForMarkdownArtifact;
 }
 
+function normalizeWriteTargetPath(candidate = '') {
+    const raw = String(candidate || '').trim().replace(/^["'`]+|["'`.,:;]+$/g, '');
+    if (!raw || raw.length > 400) return '';
+    if (!/[A-Za-z0-9]/.test(raw) || !/\.[A-Za-z0-9]+$/.test(raw)) return '';
+    try {
+        const resolved = resolveWorkspacePath(raw);
+        const relPath = path.relative(currentWorkspace, resolved).replace(/\\/g, '/');
+        return relPath || '';
+    } catch {
+        return '';
+    }
+}
+
+function extractExplicitWriteTarget(text = '') {
+    const input = String(text || '');
+    const patterns = [
+        /["'`](?<path>[^"'`\r\n]+?\.[A-Za-z0-9]+)["'`]/g,
+        /\b(?<path>[A-Za-z]:[\\/][^\s"'`]+?\.[A-Za-z0-9]+)\b/g,
+        /(?:create|write|save|make|tao|ghi|luu)[^.\r\n]{0,160}?\b(?:file|tep|tệp)?\s*(?<path>[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+)\b/gi,
+        /\b(?<path>[A-Za-z0-9_.-]+\.(?:py|md|txt|json|js|mjs|html|css|yml|yaml|toml|ts|tsx|jsx))\b/g
+    ];
+    for (const pattern of patterns) {
+        for (const match of input.matchAll(pattern)) {
+            const relPath = normalizeWriteTargetPath(match.groups?.path || match[1] || '');
+            if (relPath) return relPath;
+        }
+    }
+    return '';
+}
+
 async function prepareMessages(data) {
     const messages = normalizeMessages(data.messages || []);
     const lastUser = [...messages].reverse().find(m => m.role === 'user');
@@ -2367,7 +2402,60 @@ async function prepareMessages(data) {
     return messages;
 }
 
+function loadTestChatFixtureResponses() {
+    const fixturePath = String(process.env.NVIDIA_TEST_CHAT_FIXTURE || '').trim();
+    if (!fixturePath) return null;
+    const resolved = path.resolve(fixturePath);
+    if (testChatFixtureState.source !== resolved) {
+        const raw = fs.readFileSync(resolved, 'utf8');
+        const parsed = JSON.parse(raw);
+        const responses = Array.isArray(parsed) ? parsed : parsed?.responses;
+        if (!Array.isArray(responses) || responses.length === 0) {
+            throw new Error(`NVIDIA_TEST_CHAT_FIXTURE must contain a non-empty responses array: ${resolved}`);
+        }
+        testChatFixtureState.source = resolved;
+        testChatFixtureState.responses = responses;
+        testChatFixtureState.cursor = 0;
+    }
+    return testChatFixtureState.responses;
+}
+
+function getFixtureToolChoiceLabel(payload = {}) {
+    const choice = payload?.tool_choice;
+    if (!choice) return 'auto';
+    if (typeof choice === 'string') return choice;
+    if (typeof choice === 'object') {
+        return choice.function?.name || choice.type || 'object';
+    }
+    return String(choice);
+}
+
+function getTestChatFixtureCompletion(payload = {}) {
+    const responses = loadTestChatFixtureResponses();
+    if (!responses) return null;
+    const index = Math.min(testChatFixtureState.cursor, responses.length - 1);
+    const entry = responses[index];
+    testChatFixtureState.cursor++;
+    const matchToolChoice = entry?.match?.toolChoice;
+    if (matchToolChoice && getFixtureToolChoiceLabel(payload) !== matchToolChoice) {
+        throw new Error(`Fixture response ${index} expected tool_choice=${matchToolChoice} but received ${getFixtureToolChoiceLabel(payload)}`);
+    }
+    const message = entry?.message || entry;
+    if (!message || typeof message !== 'object') {
+        throw new Error(`Fixture response ${index} is invalid.`);
+    }
+    return {
+        id: `fixture-${Date.now()}-${index}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: payload.model || 'fixture-model',
+        choices: [{ index: 0, message }]
+    };
+}
+
 async function callNimChat(payload, signal, providerConfig = {}) {
+    const fixture = getTestChatFixtureCompletion(payload);
+    if (fixture) return fixture;
     const apiKey = providerConfig.apiKey || process.env.NVIDIA_API_KEY || '';
     const baseUrl = providerConfig.baseUrl || NIM_BASE_URL;
     const response = await fetchNim('/chat/completions', {
@@ -2393,6 +2481,37 @@ async function callNimChat(payload, signal, providerConfig = {}) {
         throw new Error(`NIM ${response.status}: ${truncate(data, 4000)}`);
     }
     return data;
+}
+
+function getWriteFileOnlyTool() {
+    return getAgentTools().filter(tool => tool?.function?.name === 'write_file');
+}
+
+async function requestForcedWriteFileToolCall({ messages, model, signal, providerResolved, targetPath, maxTokens }) {
+    if (!targetPath) return null;
+    const forcedMessages = [
+        ...messages,
+        {
+            role: 'system',
+            content: `The user explicitly wants to create or save the workspace file "${targetPath}". Respond with exactly one write_file tool call for that workspace-relative filePath. Include the complete desired file content. Do not answer with prose. This creates a pending diff review only and does not apply the edit to disk.`
+        }
+    ];
+    const completion = await callNimChat({
+        model,
+        messages: forcedMessages,
+        tools: getWriteFileOnlyTool(),
+        tool_choice: 'required',
+        temperature: 0,
+        max_tokens: maxTokens || 4096
+    }, signal, providerResolved);
+    const message = completion?.choices?.[0]?.message || null;
+    if (!message?.tool_calls?.length) return null;
+    const writeToolCalls = message.tool_calls.filter(tc => tc?.function?.name === 'write_file');
+    if (!writeToolCalls.length) return null;
+    return {
+        ...message,
+        tool_calls: writeToolCalls
+    };
 }
 
 function writeSse(res, event, data) {
@@ -2490,6 +2609,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
     }
     const lastUserText = getLastUserText(messages);
     const requiresFileWrite = isFileWriteIntent(lastUserText);
+    const explicitWriteTarget = requiresFileWrite ? extractExplicitWriteTarget(lastUserText) : '';
     if (requiresFileWrite) {
         messages.unshift({
             role: 'system',
@@ -2500,6 +2620,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
     let finalMessage = null;
     let successfulWrite = false;
     let writeEnforcementRetried = false;
+    let forcedWriteFallbackUsed = false;
     let terminalStatus = 'running';
     const emit = (name, payload) => {
         try {
@@ -2516,6 +2637,29 @@ async function runAutonomousAgent(data, callbacks = {}) {
         } catch (e) {
             events.push({ type: 'callback_error', callback: name, error: e.message });
         }
+    };
+
+    const executeToolCalls = async (toolCalls, iteration, status = 'acting') => {
+        emit('status', { iteration, status, toolCalls: toolCalls.map(tc => tc.function?.name) });
+        events.push({ type: 'status', iteration, status, toolCalls: toolCalls.map(tc => tc.function?.name) });
+
+        const toolResults = await Promise.all(toolCalls.map(async toolCall => {
+            if (signal?.aborted) return { role: 'tool', tool_call_id: toolCall.id, content: 'Aborted by user.' };
+            const toolName = toolCall.function?.name || 'unknown';
+            emit('tool_start', { iteration, tool: toolName, arguments: toolCall.function?.arguments || '{}' });
+            events.push({ type: 'tool_start', iteration, tool: toolName, arguments: toolCall.function?.arguments || '{}' });
+
+            const result = await runToolCall(toolCall, { allowDestructive });
+            if (toolName === 'write_file' && result?.ok !== false) successfulWrite = true;
+            const content = toolResult(result);
+            const ok = result?.ok !== false;
+
+            emit('tool_result', { iteration, tool: toolName, ok, result: content });
+            events.push({ type: 'tool_result', iteration, tool: toolName, ok, result: content });
+            if (!ok) terminalStatus = 'failed';
+            return { role: 'tool', tool_call_id: toolCall.id, content };
+        }));
+        messages.push(...toolResults);
     };
 
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
@@ -2548,6 +2692,22 @@ async function runAutonomousAgent(data, callbacks = {}) {
         const toolCalls = message.tool_calls || [];
         if (toolCalls.length === 0) {
             if (requiresFileWrite && !successfulWrite) {
+                if (!forcedWriteFallbackUsed && explicitWriteTarget) {
+                    const forcedWriteMessage = await requestForcedWriteFileToolCall({
+                        messages,
+                        model,
+                        signal,
+                        providerResolved,
+                        targetPath: explicitWriteTarget,
+                        maxTokens: data.max_tokens || data.maxTokens || 4096
+                    });
+                    if (forcedWriteMessage?.tool_calls?.length) {
+                        forcedWriteFallbackUsed = true;
+                        messages.push(forcedWriteMessage);
+                        await executeToolCalls(forcedWriteMessage.tool_calls, iteration, 'forcing_write_file');
+                        continue;
+                    }
+                }
                 if (!writeEnforcementRetried) {
                     writeEnforcementRetried = true;
                     messages.push({
@@ -2567,26 +2727,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
             break;
         }
 
-        emit('status', { iteration, status: 'acting', toolCalls: toolCalls.map(tc => tc.function?.name) });
-        events.push({ type: 'status', iteration, status: 'acting', toolCalls: toolCalls.map(tc => tc.function?.name) });
-
-        const toolResults = await Promise.all(toolCalls.map(async toolCall => {
-            if (signal?.aborted) return { role: 'tool', tool_call_id: toolCall.id, content: 'Aborted by user.' };
-            const toolName = toolCall.function?.name || 'unknown';
-            emit('tool_start', { iteration, tool: toolName, arguments: toolCall.function?.arguments || '{}' });
-            events.push({ type: 'tool_start', iteration, tool: toolName, arguments: toolCall.function?.arguments || '{}' });
-
-            const result = await runToolCall(toolCall, { allowDestructive });
-            if (toolName === 'write_file' && result?.ok !== false) successfulWrite = true;
-            const content = toolResult(result);
-            const ok = result?.ok !== false;
-
-            emit('tool_result', { iteration, tool: toolName, ok, result: content });
-            events.push({ type: 'tool_result', iteration, tool: toolName, ok, result: content });
-            if (!ok) terminalStatus = 'failed';
-            return { role: 'tool', tool_call_id: toolCall.id, content };
-        }));
-        messages.push(...toolResults);
+        await executeToolCalls(toolCalls, iteration, 'acting');
     }
 
     if (!finalMessage) {
