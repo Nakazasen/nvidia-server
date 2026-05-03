@@ -12,6 +12,8 @@
     "browser:smoke": "node tools/browser-smoke.mjs",
     "budget:check": "node tools/performance-budget.mjs",
     "runtime:hygiene": "node tools/runtime-hygiene.mjs --dry-run",
+    "bridge:preflight": "node tools/bridge-preflight.mjs",
+    "bridge:preflight:test": "node tests/bridge-preflight.test.mjs",
     "desktop": "electron electron-main.js",
     "dist": "electron-builder"
   },
