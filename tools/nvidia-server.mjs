@@ -2273,11 +2273,15 @@ function getLastUserText(messages = []) {
     return typeof lastUser?.content === 'string' ? lastUser.content : JSON.stringify(lastUser?.content ?? '');
 }
 
-function isFileWriteIntent(text = '') {
-    const lower = text
+function normalizeIntentText(text = '') {
+    return String(text || '')
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
         .toLowerCase();
+}
+
+function isFileWriteIntent(text = '') {
+    const lower = normalizeIntentText(text);
     const writeTokens = [
         'create file',
         'write file',
@@ -2285,15 +2289,26 @@ function isFileWriteIntent(text = '') {
         'make a file',
         'tao file',
         'tao mot file',
+        'tao cho toi file',
         'ghi file',
+        'ghi ra file',
         'luu file',
         'luu vao',
         'xuat ra file',
+        'viet vao file',
+        'thanh mot file',
+        'thanh 1 file',
+        'dong goi no thanh mot file',
+        'dong goi thanh file',
         '.md'
     ];
+    const fileSignals = ['file', 'tep', 'chuong trinh', 'program', 'script', 'source code'];
+    const writeSignals = ['tao', 'viet', 'ghi', 'luu', 'dong goi', 'create', 'write', 'save', 'make'];
     const asksForMarkdownArtifact = lower.includes('markdown')
         && ['tao', 'create', 'write', 'save', 'luu', 'ghi', 'xuat'].some(token => lower.includes(token));
-    return writeTokens.some(token => lower.includes(token)) || asksForMarkdownArtifact;
+    const asksForGenericProgramFile = fileSignals.some(token => lower.includes(token))
+        && writeSignals.some(token => lower.includes(token));
+    return writeTokens.some(token => lower.includes(token)) || asksForMarkdownArtifact || asksForGenericProgramFile;
 }
 
 function normalizeWriteTargetPath(candidate = '') {
@@ -2324,6 +2339,30 @@ function extractExplicitWriteTarget(text = '') {
         }
     }
     return '';
+}
+
+function extractExplicitOrInferredWriteTarget(text = '') {
+    const explicit = extractExplicitWriteTarget(text);
+    if (explicit) return explicit;
+
+    const lower = normalizeIntentText(text);
+    if (!isFileWriteIntent(lower)) return '';
+
+    let extension = 'txt';
+    if (/\b(python|\.py|chuong trinh|program|script)\b/.test(lower)) extension = 'py';
+    else if (/\b(markdown|readme|tai lieu|ghi chu)\b/.test(lower)) extension = 'md';
+    else if (/\b(json)\b/.test(lower)) extension = 'json';
+    else if (/\b(html|web)\b/.test(lower)) extension = 'html';
+    else if (/\b(css)\b/.test(lower)) extension = 'css';
+    else if (/\b(javascript|node|js)\b/.test(lower)) extension = 'js';
+
+    let baseName = 'generated_file';
+    if (/(a\s*\+\s*b|tong\s*2\s*so|tong\s+hai\s+so|sum\s+of\s+two\s+numbers)/.test(lower)) baseName = 'sum_ab';
+    else if (/\bhello\s+world\b/.test(lower)) baseName = 'hello_world';
+    else if (/\breadme\b/.test(lower)) baseName = 'README';
+
+    const inferredPath = baseName === 'README' ? `${baseName}.${extension}` : `proof/${baseName}.${extension}`;
+    return normalizeWriteTargetPath(inferredPath);
 }
 
 async function prepareMessages(data) {
@@ -2609,11 +2648,13 @@ async function runAutonomousAgent(data, callbacks = {}) {
     }
     const lastUserText = getLastUserText(messages);
     const requiresFileWrite = isFileWriteIntent(lastUserText);
-    const explicitWriteTarget = requiresFileWrite ? extractExplicitWriteTarget(lastUserText) : '';
+    const writeTargetHint = requiresFileWrite ? extractExplicitOrInferredWriteTarget(lastUserText) : '';
     if (requiresFileWrite) {
         messages.unshift({
             role: 'system',
-            content: 'The current user request appears to require creating, writing, or saving a file. You must call write_file and receive its tool result before saying the file was created or saved. In the final answer, include the exact relPath returned by write_file. If you cannot write the file, say that clearly and do not claim it exists.'
+            content: writeTargetHint
+                ? `The current user request appears to require creating, writing, or saving a file. You must call write_file and receive its tool result before saying the file was created or saved. Use the workspace-relative relPath "${writeTargetHint}" unless the user explicitly names a different safe workspace file. In the final answer, include the exact relPath returned by write_file. If you cannot write the file, say that clearly and do not claim it exists.`
+                : 'The current user request appears to require creating, writing, or saving a file. You must call write_file and receive its tool result before saying the file was created or saved. If the user did not specify a filename and you cannot safely infer one, ask for a concrete workspace-relative filename instead of pretending the file exists. In the final answer, include the exact relPath returned by write_file. If you cannot write the file, say that clearly and do not claim it exists.'
         });
     }
     const events = [];
@@ -2692,13 +2733,13 @@ async function runAutonomousAgent(data, callbacks = {}) {
         const toolCalls = message.tool_calls || [];
         if (toolCalls.length === 0) {
             if (requiresFileWrite && !successfulWrite) {
-                if (!forcedWriteFallbackUsed && explicitWriteTarget) {
+                if (!forcedWriteFallbackUsed && writeTargetHint) {
                     const forcedWriteMessage = await requestForcedWriteFileToolCall({
                         messages,
                         model,
                         signal,
                         providerResolved,
-                        targetPath: explicitWriteTarget,
+                        targetPath: writeTargetHint,
                         maxTokens: data.max_tokens || data.maxTokens || 4096
                     });
                     if (forcedWriteMessage?.tool_calls?.length) {

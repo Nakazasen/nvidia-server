@@ -207,6 +207,50 @@ await runCase({
   }
 });
 
+const vietnameseInferredPath = 'proof/sum_ab.py';
+await runCase({
+  name: 'real-write-vietnamese-inferred-target',
+  autoAccept: true,
+  trustAlways: true,
+  userPrompt: 'viết cho tôi chương trình tính tổng 2 số A+B và đóng gói nó thành một file',
+  fixtureResponses: [
+    { message: { role: 'assistant', content: 'Tôi sẽ chuẩn bị mã nguồn trước.' } },
+    {
+      match: { toolChoice: 'required' },
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: 'tc_write_vietnamese_inferred',
+          type: 'function',
+          function: {
+            name: 'write_file',
+            arguments: JSON.stringify({
+              filePath: vietnameseInferredPath,
+              content: 'def sum_ab(a, b):\n    return a + b\n'
+            })
+          }
+        }]
+      }
+    },
+    { message: { role: 'assistant', content: `Pending edit prepared for ${vietnameseInferredPath}. Review and apply it.` } }
+  ],
+  verify: async ({ baseUrl, response }) => {
+    assert(response.ok, '1h. /proxy/chat returns 200 for Vietnamese inferred-target create path', `status=${response.status}`);
+    const events = response.data?.agent?.events || [];
+    const toolResults = extractToolResults(events, 'write_file');
+    assert(events.some(ev => ev.type === 'status' && ev.status === 'forcing_write_file'), '1i. Vietnamese create-file intent triggers forced write_file fallback');
+    assert(toolResults.some(ev => ev.ok), '1j. Vietnamese create-file intent completes write_file successfully');
+    const successfulToolResult = toolResults.find(ev => ev.ok);
+    const parsedToolResult = tryParseJson(successfulToolResult?.result || '');
+    const pendingArtifact = parsedToolResult?.pendingEdit || parsedToolResult?.pending_edit || null;
+    const normalizedRelPath = String(pendingArtifact?.relPath || '').replace(/\\/g, '/');
+    assert(normalizedRelPath === vietnameseInferredPath, '1k. Vietnamese inferred target is routed into pending edit path', normalizedRelPath || 'missing relPath');
+    assert(pendingArtifact?.content?.includes('def sum_ab(a, b):'), '1l. Vietnamese pending edit contains expected Python function');
+    assert(pendingArtifact?.content?.includes('return a + b'), '1m. Vietnamese pending edit contains expected addition logic');
+  }
+});
+
 const outsideLeaf = `outside_real_write_test_${Date.now()}.py`;
 const outsidePath = `..\\${outsideLeaf}`;
 const outsideAbs = path.resolve(APP_DIR, '..', outsideLeaf);

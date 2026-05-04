@@ -113,6 +113,10 @@ function removeIfExists(targetPath) {
   } catch {}
 }
 
+function normalizeRelPath(value) {
+  return String(value || '').replace(/\\/g, '/');
+}
+
 function findChromeExecutable() {
   const candidates = [
     process.env.CHROME_PATH,
@@ -139,12 +143,19 @@ async function waitForCondition(predicate, timeoutMs, label) {
 }
 
 async function main() {
-  const relPath = `proof/manual_create_apply_${uniqueName('ui')}.py`;
+  const relPath = 'proof/sum_ab.py';
   const absPath = path.join(APP_DIR, ...relPath.split('/'));
-  const content = 'def manual_ui_add(a, b):\n    return a + b\n';
-  const prompt = `Create file ${relPath} with Python code that defines manual_ui_add(a, b) and returns a + b.`;
+  const content = 'def sum_ab(a, b):\n    return a + b\n';
+  const prompt = 'viết cho tôi chương trình tính tổng 2 số A+B và đóng gói nó thành một file';
   const fixturePath = writeFixtureFile('manual-ui-create-apply', [
     {
+      message: {
+        role: 'assistant',
+        content: 'Đây là mã Python cho chương trình cộng hai số A + B.'
+      }
+    },
+    {
+      match: { toolChoice: 'required' },
       message: {
         role: 'assistant',
         content: '',
@@ -208,8 +219,17 @@ async function main() {
     page.setDefaultTimeout(SELECTOR_TIMEOUT_MS);
 
     let proxyChatSeen = false;
+    let proxyResponseStatus = null;
+    let proxyResponseJson = null;
     page.on('request', (request) => {
       if (request.url().includes('/proxy/chat') && request.method() === 'POST') proxyChatSeen = true;
+    });
+    page.on('response', async (response) => {
+      if (!response.url().includes('/proxy/chat') || response.request().method() !== 'POST') return;
+      proxyResponseStatus = response.status();
+      try {
+        proxyResponseJson = await response.json();
+      } catch {}
     });
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
@@ -217,9 +237,16 @@ async function main() {
     await page.waitForFunction(() => typeof window.sendMessage === 'function' && typeof window.setUIMode === 'function');
     await page.waitForFunction(() => {
       const debugConsole = document.getElementById('debug-console');
-      const ready = debugConsole && /System ready\./i.test(debugConsole.textContent || '');
-      const hasMessage = document.querySelectorAll('#chat-box .message').length > 0;
-      return ready && hasMessage;
+      return Boolean(debugConsole && /ready\./i.test(debugConsole.textContent || ''));
+    });
+    await page.evaluate(() => {
+      const hasSession = typeof currentSessionId !== 'undefined'
+        && typeof sessions !== 'undefined'
+        && currentSessionId
+        && sessions[currentSessionId];
+      if (!hasSession && typeof createNewSession === 'function') {
+        createNewSession();
+      }
     });
     await page.evaluate(async () => {
       if (typeof window.setUIMode === 'function') {
@@ -233,72 +260,69 @@ async function main() {
     const autoAcceptChecked = await page.locator('#auto-accept').isChecked();
     assert(autoAcceptChecked, '1b. Auto-Accept enabled for prompt-to-pending-edit path');
 
-    const proxyResponsePromise = page.waitForResponse((response) =>
-      response.url().includes('/proxy/chat') && response.request().method() === 'POST'
-    );
     await page.evaluate((nextPrompt) => {
       const input = document.getElementById('user-input');
       if (!input) throw new Error('user-input not found');
       input.value = nextPrompt;
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      const sendButton = document.getElementById('send-stop-btn');
-      if (sendButton && typeof sendButton.click === 'function') {
-        sendButton.click();
-        return;
-      }
-      if (typeof window.handleSendStop === 'function') {
-        window.handleSendStop();
-        return;
-      }
-      throw new Error('send control not available');
+      if (typeof window.sendMessage !== 'function') throw new Error('sendMessage not available');
+      return window.sendMessage();
     }, prompt);
 
     await waitForCondition(async () => proxyChatSeen, 10000, '/proxy/chat request');
     assert(proxyChatSeen, '2. user prompt submitted through UI chat path');
-    const proxyResponse = await proxyResponsePromise;
-    const proxyJson = await proxyResponse.json();
-    const agentEvents = proxyJson?.agent?.events || [];
-    const writeToolResults = agentEvents.filter((event) => event?.type === 'tool_result' && event.tool === 'write_file');
-    const successfulWrite = writeToolResults.find((event) => event.ok);
-    let writeResult = null;
-    if (successfulWrite?.result) {
-      try {
-        writeResult = JSON.parse(successfulWrite.result);
-      } catch {}
-    }
-    const uiRelPath = String(writeResult?.pendingEdit?.relPath || relPath);
-    assert(proxyResponse.status() === 200, '2a. /proxy/chat returned 200 to the UI', `status=${proxyResponse.status()}`);
-    assert(writeToolResults.some((event) => event.ok), '2b. /proxy/chat response includes successful write_file tool result');
+    await waitForCondition(async () => proxyResponseStatus !== null, 20000, '/proxy/chat response');
+    await waitForCondition(async () => {
+      const pending = await requestJson(`${baseUrl}/api/pending_edits`, {
+        method: 'POST',
+        headers: { 'X-Agent-Approved': 'true' },
+        body: {}
+      });
+      const edits = pending.json?.result || [];
+      return Array.isArray(edits) && edits.length > 0;
+    }, 20000, 'pending edit from UI chat');
+    const pendingBeforeApply = await requestJson(`${baseUrl}/api/pending_edits`, {
+      method: 'POST',
+      headers: { 'X-Agent-Approved': 'true' },
+      body: {}
+    });
+    const pendingEdits = pendingBeforeApply.json?.result || [];
+    const pendingEdit = pendingEdits.find((edit) => normalizeRelPath(edit.relPath) === relPath) || pendingEdits[0];
+    const uiRelPath = normalizeRelPath(pendingEdit?.relPath || relPath);
+    assert(proxyResponseStatus === 200, '2a. /proxy/chat returned 200 to the UI', `status=${proxyResponseStatus}`);
+    assert(Boolean(pendingEdit?.id), '2b. UI chat created a pending edit record for the Vietnamese create-file prompt');
 
     const userMessage = page.locator('.user-message').filter({ hasText: prompt });
     await userMessage.waitFor({ state: 'visible' });
     assert(await userMessage.count() > 0, '2c. user prompt is visible in UI transcript');
     assert(!(await page.locator('#modal-overlay.active').isVisible().catch(() => false)), '2d. no extra approval modal interrupted Auto-Accept prompt path');
 
-    const pendingCard = page.locator('.pending-edit-card').filter({ hasText: uiRelPath });
+    const pendingCard = page.locator('.pending-edit-card').filter({ hasText: path.basename(uiRelPath) });
     await pendingCard.waitFor({ state: 'visible' });
     const pendingText = await pendingCard.textContent() || '';
     assert(/Pending edit:/i.test(pendingText), '3. pending edit card visible in UI');
-    assert(pendingText.includes(uiRelPath), '3a. target path visible in pending edit UI');
+    assert(/sum_ab\.py/i.test(pendingText), '3a. target path visible in pending edit UI');
     assert(/proposed change only/i.test(pendingText), '3b. UI marks change as proposed only before apply');
     assert(/Review \+ Apply/i.test(pendingText), '3c. Review + Apply control visible on pending edit card');
     assert(!fs.existsSync(absPath), '3d. disk file does not exist before apply');
     assert(!/Applied:/i.test(pendingText), '3e. UI does not claim applied status before apply');
 
     await page.locator('#btn-tasks').click();
-    const changedFilesItem = page.locator('#changed-files-list .file-item').filter({ hasText: uiRelPath });
+    const changedFilesItem = page.locator('#changed-files-list .file-item').filter({ hasText: path.basename(uiRelPath) });
     await changedFilesItem.waitFor({ state: 'visible' });
     assert(await changedFilesItem.count() > 0, '3f. pending edit also appears in Changed Files list');
 
     await pendingCard.locator('button', { hasText: 'Review + Apply' }).click();
 
     await waitForCondition(async () => fs.existsSync(absPath), 10000, 'applied file on disk');
-    const appliedText = await page.locator(`text=Applied: ${uiRelPath}`).textContent();
+    const appliedMessage = page.locator('.assistant-message').filter({ hasText: `Applied:` }).filter({ hasText: path.basename(uiRelPath) }).last();
+    await appliedMessage.waitFor({ state: 'visible' });
+    const appliedText = await appliedMessage.textContent();
     assert(Boolean(appliedText), '4. Review + Apply click updates UI to applied state');
     assert(fs.existsSync(absPath), '4a. file exists on disk after Review + Apply');
 
     const diskContent = fs.readFileSync(absPath, 'utf8');
-    assert(diskContent.includes('def manual_ui_add(a, b):'), '4b. disk content contains expected Python function');
+    assert(diskContent.includes('def sum_ab(a, b):'), '4b. disk content contains expected Python function');
     assert(diskContent.includes('return a + b'), '4c. disk content contains expected return expression');
 
     await waitForCondition(async () => (await changedFilesItem.count()) === 0, 10000, 'pending edit removed from Changed Files');
@@ -310,7 +334,7 @@ async function main() {
       body: {}
     });
     const edits = pendingAfter.json?.result || [];
-    assert(Array.isArray(edits) && !edits.some((edit) => edit.relPath === uiRelPath), '4e. pending_edits API no longer lists the applied edit');
+    assert(Array.isArray(edits) && !edits.some((edit) => normalizeRelPath(edit.relPath) === uiRelPath), '4e. pending_edits API no longer lists the applied edit');
 
     removeIfExists(absPath);
     assert(!fs.existsSync(absPath), '5. proof file cleaned up after verification');
