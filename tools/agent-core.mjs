@@ -800,6 +800,35 @@ export function createWorkspaceCore({
     return createPendingEdit({ filePath: filePath || inputPath, content: next, reason: reason || 'apply_patch' });
   }
 
+  function deleteFileTool({ filePath, path: inputPath, reason = 'delete_file' }) {
+    const rawPath = String(filePath || inputPath || '').trim();
+    if (!rawPath) throw new Error('filePath is required');
+    if (/[*?]/.test(rawPath)) throw new Error('Wildcards are not allowed for delete_file.');
+    const resolved = resolveWorkspacePath(rawPath);
+    if (!fs.existsSync(resolved)) throw new Error(`File does not exist: ${rawPath}`);
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) throw new Error(`delete_file only supports regular files: ${rawPath}`);
+    const relPath = path.relative(currentWorkspace, resolved).replace(/\\/g, '/');
+    const beforeContent = fs.readFileSync(resolved, 'utf8');
+    const id = `edit_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const edit = {
+      id,
+      filePath: resolved,
+      relPath,
+      content: '',
+      beforeContent,
+      reason,
+      operation: 'delete',
+      createdAt: new Date().toISOString(),
+      before: { existed: true, bytes: stat.size, hash: fileHash(resolved) },
+      after: { existed: false, bytes: 0, hash: null },
+      diff: [`--- a/${relPath}`, '+++ /dev/null', ...String(beforeContent).split(/\r?\n/).map(line => `-${line}`)].join('\n'),
+      hunks: []
+    };
+    pendingEdits.set(id, edit);
+    return { ok: true, pendingEdit: edit };
+  }
+
   function applyPendingEditTool({ id, hunkIds = null }) {
     if (!isWorkspaceTrusted()) throw new Error('Workspace is not trusted.');
     const edit = pendingEdits.get(id);
@@ -824,6 +853,14 @@ export function createWorkspaceCore({
       }
       output.push(...oldLines.slice(cursor));
       nextContent = output.join('\n');
+    }
+    if (edit.operation === 'delete') {
+      if (!fs.existsSync(edit.filePath)) throw new Error(`File already missing for delete apply: ${edit.relPath}`);
+      const stat = fs.statSync(edit.filePath);
+      if (!stat.isFile()) throw new Error(`Refusing to delete non-file target: ${edit.relPath}`);
+      fs.unlinkSync(edit.filePath);
+      pendingEdits.delete(id);
+      return { ok: true, id, relPath: edit.relPath, operation: 'delete', before: edit.before, after: { existed: false, bytes: 0, hash: null } };
     }
     fs.writeFileSync(edit.filePath, nextContent);
     pendingEdits.delete(id);
@@ -929,6 +966,7 @@ export function createWorkspaceCore({
     if (name === 'apply_patch') return applyPatchTool(args);
     if (name === 'apply_pending_edit') return applyPendingEditTool(args);
     if (name === 'discard_pending_edit') return discardPendingEditTool(args);
+    if (name === 'delete_file') return deleteFileTool(args);
     if (name === 'pending_edits') return listPendingEditsTool(args);
     if (name === 'search_files' || name === 'search' || name === 'grep_search') return searchFiles(args);
     if (name === 'execute_command') return executeCommandTool(args);
@@ -943,6 +981,7 @@ export function createWorkspaceCore({
     { permissionId: 'file.read', actionType: 'file.read', riskLevel: 'low', modeAllowed: 'both-readonly', requiresApproval: false, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Read a file from the workspace.', exampleActions: ['read_file', 'read_file_paged', 'search_files'] },
     { permissionId: 'file.write', actionType: 'file.write', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Write or create a file in the workspace.', exampleActions: ['write_file'] },
     { permissionId: 'file.apply_edit', actionType: 'file.apply_edit', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Apply or discard a pending file edit.', exampleActions: ['apply_pending_edit', 'discard_pending_edit', 'apply_patch'] },
+    { permissionId: 'file.delete', actionType: 'file.delete', riskLevel: 'destructive', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Create a pending delete operation for a workspace file.', exampleActions: ['delete_file'] },
     { permissionId: 'terminal.run', actionType: 'terminal.run', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Execute a shell command in the workspace.', exampleActions: ['execute_command', 'start_command_job'] },
     { permissionId: 'job.cancel', actionType: 'job.cancel', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Cancel a running command job.', exampleActions: ['cancel_command_job'] },
     { permissionId: 'provider.mutate', actionType: 'provider.mutate', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Create, update, or delete API provider configuration.', exampleActions: ['POST /api/providers', 'POST /api/providers/default', 'POST /api/providers/clear_key', 'POST /api/settings'] },

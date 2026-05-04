@@ -46,7 +46,7 @@ const SECRET_KEY_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\b/
 ];
 const READ_ONLY_TOOLS = new Set(['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
-const DESTRUCTIVE_TOOLS = new Set(['write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job', 'git_stage', 'git_unstage', 'git_discard']);
+const DESTRUCTIVE_TOOLS = new Set(['write_file', 'delete_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job', 'git_stage', 'git_unstage', 'git_discard']);
 
 // --- Sprint 8: Diagnostics Model ---
 // In-memory diagnostics store. Not persisted to disk.
@@ -1118,6 +1118,7 @@ function enforcePermission(req, actionType, options = {}) {
 function actionTypeForTool(toolName = '') {
     const map = {
         write_file: 'file.write',
+        delete_file: 'file.delete',
         apply_patch: 'file.apply_edit',
         apply_pending_edit: 'file.apply_edit',
         discard_pending_edit: 'file.apply_edit',
@@ -2075,6 +2076,21 @@ function getAgentTools() {
         {
             type: 'function',
             function: {
+                name: 'delete_file',
+                description: 'Propose deletion of a single existing workspace file. This creates a pending delete operation that must be reviewed/applied.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        filePath: { type: 'string', description: 'Workspace-relative path to the file to delete.' },
+                        reason: { type: 'string' }
+                    },
+                    required: ['filePath']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
                 name: 'apply_pending_edit',
                 description: 'Apply a pending reviewed edit by id after user approval.',
                 parameters: {
@@ -2214,7 +2230,7 @@ async function runToolCall(toolCall, options = {}) {
                 observation: 'Ask the user to enable Auto-Accept or approve the operation, then retry.'
             };
         }
-        if (['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'git_status', 'git_diff', 'git_file_diff', 'git_log', 'git_stage', 'git_unstage', 'git_discard', 'git_commit_draft', 'list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'search_files', 'search', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job'].includes(name)) {
+        if (['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'git_status', 'git_diff', 'git_file_diff', 'git_log', 'git_stage', 'git_unstage', 'git_discard', 'git_commit_draft', 'list_dir', 'read_file', 'read_file_paged', 'write_file', 'delete_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'search_files', 'search', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job'].includes(name)) {
             return await workspaceCore.callTool(name, args);
         }
         if (name === 'load_skill') return await loadSkillTool(args);
@@ -2702,7 +2718,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
 
             const result = await runToolCall(toolCall, { allowDestructive });
             if (toolName === 'write_file' && result?.ok !== false) successfulWrite = true;
-            if (toolName === 'write_file' && result?.approvalRequired && result?.approvalRequest && !pendingApprovalRequest) {
+            if ((toolName === 'write_file' || toolName === 'delete_file') && result?.approvalRequired && result?.approvalRequest && !pendingApprovalRequest) {
                 pendingApprovalRequest = result.approvalRequest;
             }
             const content = toolResult(result);
@@ -2784,10 +2800,11 @@ async function runAutonomousAgent(data, callbacks = {}) {
         await executeToolCalls(toolCalls, iteration, 'acting');
         if (pendingApprovalRequest && !successfulWrite) {
             const targetPath = pendingApprovalRequest.targetPath || 'the requested workspace file';
-            events.push({ type: 'status', iteration, status: 'awaiting_user_approval', tool: 'write_file', targetPath });
+            const pendingTool = pendingApprovalRequest.tool || 'write_file';
+            events.push({ type: 'status', iteration, status: 'awaiting_user_approval', tool: pendingTool, targetPath });
             finalMessage = {
                 role: 'assistant',
-                content: `I need your approval before I can create the pending edit for "${targetPath}". Approve the write request in the UI, then review and apply the pending edit. No file has been written to disk yet.`
+                content: `I need your approval before I can create the pending operation for "${targetPath}". Approve the ${pendingTool} request in the UI, then review and apply the pending operation. No file has been mutated on disk yet.`
             };
             terminalStatus = 'needs_user';
             break;
@@ -2933,7 +2950,7 @@ async function probeModels(models, concurrency = 12, timeoutMs = 15000) {
 }
 
 async function routeApiTool(toolName, args) {
-    if (['list_dir', 'read_file', 'read_file_paged', 'write_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'pending_edits', 'search', 'search_files', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'git_status', 'git_diff', 'git_file_diff', 'git_log', 'git_stage', 'git_unstage', 'git_discard', 'git_commit_draft', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job', 'project_indexer'].includes(toolName)) {
+    if (['list_dir', 'read_file', 'read_file_paged', 'write_file', 'delete_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'pending_edits', 'search', 'search_files', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'git_context', 'git_status', 'git_diff', 'git_file_diff', 'git_log', 'git_stage', 'git_unstage', 'git_discard', 'git_commit_draft', 'execute_command', 'start_command_job', 'command_job_status', 'cancel_command_job', 'project_indexer'].includes(toolName)) {
         const result = await workspaceCore.callTool(toolName, args);
         return toolName === 'read_file' ? result.content : result;
     }

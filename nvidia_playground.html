@@ -3001,16 +3001,18 @@
             }
         }
 
-        async function approveWriteFileRequest(request = {}) {
+        async function approveMutationRequest(request = {}) {
             const args = request?.args || {};
+            const toolName = String(request?.tool || '').trim() || 'write_file';
             const targetPath = request?.targetPath || args.filePath || 'requested file';
-            const res = await fetch('/api/write_file', {
+            const endpoint = toolName === 'delete_file' ? '/api/delete_file' : '/api/write_file';
+            const payload = toolName === 'delete_file'
+                ? { path: args.filePath }
+                : { path: args.filePath, content: args.content };
+            const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
-                body: JSON.stringify({
-                    path: args.filePath,
-                    content: args.content
-                })
+                body: JSON.stringify(payload)
             });
             const data = await res.json();
             if (!res.ok || data.error) {
@@ -3022,7 +3024,7 @@
                 renderPendingEdit(pendingEdit);
                 refreshPendingEdits();
                 updateTaskTimeline({ type: 'approval', label: `Approved pending edit: ${pendingEdit.relPath}`, status: 'completed' });
-                addMessage('assistant', `Approval granted. Pending edit created for ${pendingEdit.relPath}. Review + Apply when ready.`);
+                addMessage('assistant', `Approval granted for ${toolName}. Pending operation created for ${pendingEdit.relPath}. Review + Apply when ready.`);
             } else {
                 addMessage('assistant', `Approval granted for ${targetPath}. Review the queued change before apply.`);
             }
@@ -3846,26 +3848,30 @@
                                 const observed = tryParseJson(ev.result);
                                 const pending = observed?.pendingEdit || observed?.pending_edit;
                                 if (pending) renderPendingEdit(pending);
-                                if (observed?.approvalRequired && observed?.approvalRequest?.tool === 'write_file' && isIdeMode() && !autoAcceptCheck.checked) {
+                                if (observed?.approvalRequired && (observed?.approvalRequest?.tool === 'write_file' || observed?.approvalRequest?.tool === 'delete_file') && isIdeMode() && !autoAcceptCheck.checked) {
                                     const approvalRequest = observed.approvalRequest;
+                                    const toolName = approvalRequest.tool || 'write_file';
                                     const targetPath = approvalRequest.targetPath || approvalRequest.args?.filePath || 'requested file';
                                     updateTaskTimeline({ type: 'approval', label: `Approval required: ${targetPath}`, status: 'pending' });
-                                    const approved = await askPermission('write_file', approvalRequest.args || {}, {
-                                        title: 'Write Approval Required',
-                                        description: `Create a pending edit for ${targetPath}. No file will be written to disk yet. After approval, Review + Apply is still required to write the file.`,
-                                        allowLabel: 'Approve Pending Edit',
+                                    const isDelete = toolName === 'delete_file';
+                                    const approved = await askPermission(toolName, approvalRequest.args || {}, {
+                                        title: isDelete ? 'Delete Approval Required' : 'Write Approval Required',
+                                        description: isDelete
+                                            ? `Queue a pending delete for ${targetPath}. No file will be deleted from disk yet. After approval, Review + Apply is still required to apply deletion.`
+                                            : `Create a pending edit for ${targetPath}. No file will be written to disk yet. After approval, Review + Apply is still required to write the file.`,
+                                        allowLabel: isDelete ? 'Approve Pending Delete' : 'Approve Pending Edit',
                                         denyLabel: 'Cancel'
                                     });
                                     if (approved) {
                                         try {
-                                            await approveWriteFileRequest(approvalRequest);
+                                            await approveMutationRequest(approvalRequest);
                                         } catch (approvalError) {
                                             logDebug(`Approval replay failed: ${approvalError.message}`);
-                                            addMessage('assistant', `Approval failed for ${targetPath}: ${approvalError.message}`);
+                                            addMessage('assistant', `Approval failed for ${toolName} on ${targetPath}: ${approvalError.message}`);
                                         }
                                     } else {
                                         logDebug(`Approval denied for ${targetPath}.`);
-                                        addMessage('assistant', `Approval was not granted for ${targetPath}. No file was created or queued.`);
+                                        addMessage('assistant', `Approval was not granted for ${toolName} on ${targetPath}. No file mutation was queued.`);
                                     }
                                 }
                                 updateTaskTimeline({ type: 'tool', label: ev.tool, status: ev.ok ? 'completed' : 'failed' });
