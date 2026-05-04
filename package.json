@@ -10,6 +10,7 @@
     "agent": "node tools/nvidia-cli-agent.mjs",
     "agent:audit": "node tools/agent-capability-harness.mjs",
     "browser:smoke": "node tools/browser-smoke.mjs",
+    "manual:proof": "node tests/manual-ui-create-apply-e2e.test.mjs",
     "write:create:proof": "node tests/real-write-create-flow.test.mjs",
     "apply:proof": "node tests/apply-pending-edit-to-disk.test.mjs",
     "budget:check": "node tools/performance-budget.mjs",

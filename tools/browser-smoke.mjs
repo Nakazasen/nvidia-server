@@ -172,7 +172,7 @@ function stopLocalServer(child) {
     const pid = child.pid;
     const finish = (stopped) => {
       const orphan = isProcessRunning(pid);
-      resolve({ stopped, orphan });
+      resolve({ stopped: stopped || !orphan, orphan });
     };
 
     const timer = setTimeout(() => {
@@ -555,7 +555,7 @@ async function runRealBrowserSmoke(url) {
             content: '{\n  "name": "preview"\n}\n',
             hunks: [{ id: 'hunk-1', preview: '+  \"name\": \"preview\"' }]
           });
-          await sleep(120);
+          await waitUntil(() => !!document.getElementById('pending-smoke-preview-edit'), 3000, 80);
           const pendingCard = document.getElementById('pending-smoke-preview-edit');
           const pendingText = pendingCard?.textContent || '';
           pendingEditHonestyOk =
@@ -1053,8 +1053,8 @@ async function main() {
     if (allFails.length > 0) reasons.push(`${allFails.length} total check failures`);
 
     if (report.mode === 'real-browser' && requiredFailsList.length === 0 && guardBreaks.length === 0) {
-      verdict = 'INTERNAL_DAILY_USE_CANDIDATE';
-      reasons = ['All required checks pass, guard matrix verified, browser smoke ok.'];
+      verdict = 'HARDENING_BASELINE_PASS_NOT_DAILY_USE_READY';
+      reasons = ['All required checks pass, guard matrix verified, browser smoke ok. This is baseline hardening evidence only, not a daily-use readiness claim.'];
     }
 
     const knownLimitations = [
@@ -1089,8 +1089,8 @@ async function main() {
       hygiene: SUMMARY.hygiene || {},
       reasons,
       knownLimitations,
-      nextRecommended: verdict === 'INTERNAL_DAILY_USE_CANDIDATE'
-        ? 'Phase 1 Gate Review before Sprint 17'
+      nextRecommended: verdict === 'HARDENING_BASELINE_PASS_NOT_DAILY_USE_READY'
+        ? 'Collect broader non-fixture E2E evidence before any readiness review'
         : 'Address blocking issues before re-running readiness check'
     };
 
