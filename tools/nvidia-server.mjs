@@ -2201,6 +2201,15 @@ async function runToolCall(toolCall, options = {}) {
             return {
                 ok: false,
                 denied: true,
+                approvalRequired: true,
+                approvalRequest: {
+                    tool: name,
+                    args,
+                    targetPath: typeof args.filePath === 'string' ? args.filePath : undefined,
+                    summary: typeof args.filePath === 'string'
+                        ? `Approve ${name} for workspace path "${args.filePath}".`
+                        : `Approve ${name} and retry the request.`
+                },
                 error: `${name} requires user approval or Auto-Accept. The tool was not executed.`,
                 observation: 'Ask the user to enable Auto-Accept or approve the operation, then retry.'
             };
@@ -2662,6 +2671,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
     let successfulWrite = false;
     let writeEnforcementRetried = false;
     let forcedWriteFallbackUsed = false;
+    let pendingApprovalRequest = null;
     let terminalStatus = 'running';
     const emit = (name, payload) => {
         try {
@@ -2692,6 +2702,9 @@ async function runAutonomousAgent(data, callbacks = {}) {
 
             const result = await runToolCall(toolCall, { allowDestructive });
             if (toolName === 'write_file' && result?.ok !== false) successfulWrite = true;
+            if (toolName === 'write_file' && result?.approvalRequired && result?.approvalRequest && !pendingApprovalRequest) {
+                pendingApprovalRequest = result.approvalRequest;
+            }
             const content = toolResult(result);
             const ok = result?.ok !== false;
 
@@ -2769,6 +2782,16 @@ async function runAutonomousAgent(data, callbacks = {}) {
         }
 
         await executeToolCalls(toolCalls, iteration, 'acting');
+        if (pendingApprovalRequest && !successfulWrite) {
+            const targetPath = pendingApprovalRequest.targetPath || 'the requested workspace file';
+            events.push({ type: 'status', iteration, status: 'awaiting_user_approval', tool: 'write_file', targetPath });
+            finalMessage = {
+                role: 'assistant',
+                content: `I need your approval before I can create the pending edit for "${targetPath}". Approve the write request in the UI, then review and apply the pending edit. No file has been written to disk yet.`
+            };
+            terminalStatus = 'needs_user';
+            break;
+        }
     }
 
     if (!finalMessage) {

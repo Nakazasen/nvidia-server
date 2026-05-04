@@ -295,7 +295,7 @@ await runCase({
   name: 'real-write-no-approval-blocked',
   autoAccept: false,
   trustAlways: true,
-  userPrompt: `Create file proof/no_approval.py with Python code that prints "approval required".`,
+  userPrompt: 'Tạo file docs/fix-proposal.md với nội dung markdown',
   fixtureResponses: [
     {
       message: {
@@ -307,23 +307,30 @@ await runCase({
           function: {
             name: 'write_file',
             arguments: JSON.stringify({
-              filePath: 'proof/no_approval.py',
-              content: 'print("approval required")\n'
+              filePath: 'docs/fix-proposal.md',
+              content: '# Fix Proposal\n\n- Diagnose the approval flow.\n'
             })
           }
         }]
       }
-    },
-    { message: { role: 'assistant', content: 'Approval is required before creating that file.' } }
+    }
   ],
   verify: async ({ baseUrl, response }) => {
     assert(response.ok, '3. /proxy/chat returns 200 for no-approval case', `status=${response.status}`);
     const events = response.data?.agent?.events || [];
     const toolResults = extractToolResults(events, 'write_file');
-    assert(toolResults.some(ev => !ev.ok && /requires user approval or auto-accept/i.test(ev.result || '')), '3a. no-approval path remains blocked');
+    const blockedWrite = toolResults.find(ev => !ev.ok && /requires user approval or auto-accept/i.test(ev.result || ''));
+    const blockedPayload = tryParseJson(blockedWrite?.result || '');
+    assert(Boolean(blockedWrite), '3a. no-approval path remains blocked');
+    assert(blockedPayload?.approvalRequired === true, '3b. blocked write_file result reports approvalRequired');
+    assert(blockedPayload?.approvalRequest?.tool === 'write_file', '3c. blocked write_file result includes approval replay metadata');
+    assert(blockedPayload?.approvalRequest?.targetPath === 'docs/fix-proposal.md', '3d. approval replay metadata preserves target path');
+    assert(events.some(ev => ev.type === 'status' && ev.status === 'awaiting_user_approval'), '3e. agent enters awaiting_user_approval state');
+    assert(/approve/i.test(response.data?.choices?.[0]?.message?.content || ''), '3f. final assistant message asks for approval');
+    assert(!/không có lệnh write_file nào chạy thành công/i.test(response.data?.choices?.[0]?.message?.content || ''), '3g. misleading missing-write_file fallback is removed');
     const pending = await postJson(`${baseUrl}/api/pending_edits`, {}, { 'X-Agent-Approved': 'true' });
     const edits = pending.data?.result || pending.data || [];
-    assert(!edits.some(edit => edit.relPath === 'proof/no_approval.py'), '3b. no-approval path did not create a pending edit');
+    assert(!edits.some(edit => edit.relPath === 'docs/fix-proposal.md'), '3h. no-approval path did not create a pending edit before approval');
   }
 });
 

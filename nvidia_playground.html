@@ -3001,6 +3001,34 @@
             }
         }
 
+        async function approveWriteFileRequest(request = {}) {
+            const args = request?.args || {};
+            const targetPath = request?.targetPath || args.filePath || 'requested file';
+            const res = await fetch('/api/write_file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
+                body: JSON.stringify({
+                    path: args.filePath,
+                    content: args.content
+                })
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                throw new Error(data.error || `Approval failed for ${targetPath}`);
+            }
+            const result = data.result || data;
+            const pendingEdit = result?.pendingEdit || result?.pending_edit || null;
+            if (pendingEdit) {
+                renderPendingEdit(pendingEdit);
+                refreshPendingEdits();
+                updateTaskTimeline({ type: 'approval', label: `Approved pending edit: ${pendingEdit.relPath}`, status: 'completed' });
+                addMessage('assistant', `Approval granted. Pending edit created for ${pendingEdit.relPath}. Review + Apply when ready.`);
+            } else {
+                addMessage('assistant', `Approval granted for ${targetPath}. Review the queued change before apply.`);
+            }
+            return result;
+        }
+
         function switchSidebarTab(tabId) {
             if (!isIdeMode() && IDE_ONLY_TABS.has(tabId)) {
                 document.querySelectorAll('.sidebar').forEach(s => s.style.display = 'none');
@@ -3810,7 +3838,7 @@
                     refreshRateLimitStatus();
                     if (data.error) throw new Error(data.error);
                     if (data.agent && Array.isArray(data.agent.events)) {
-                        data.agent.events.forEach(ev => {
+                        for (const ev of data.agent.events) {
                             if (ev.type === 'status') logDebug(`[Agent] ${ev.status} iteration ${ev.iteration || ''}`);
                             if (ev.type === 'tool_start') logDebug(`[Tool] ${ev.tool} ${ev.arguments || ''}`);
                             if (ev.type === 'tool_result') {
@@ -3818,9 +3846,31 @@
                                 const observed = tryParseJson(ev.result);
                                 const pending = observed?.pendingEdit || observed?.pending_edit;
                                 if (pending) renderPendingEdit(pending);
+                                if (observed?.approvalRequired && observed?.approvalRequest?.tool === 'write_file' && isIdeMode() && !autoAcceptCheck.checked) {
+                                    const approvalRequest = observed.approvalRequest;
+                                    const targetPath = approvalRequest.targetPath || approvalRequest.args?.filePath || 'requested file';
+                                    updateTaskTimeline({ type: 'approval', label: `Approval required: ${targetPath}`, status: 'pending' });
+                                    const approved = await askPermission('write_file', approvalRequest.args || {}, {
+                                        title: 'Write Approval Required',
+                                        description: `Create a pending edit for ${targetPath}. No file will be written to disk yet. After approval, Review + Apply is still required to write the file.`,
+                                        allowLabel: 'Approve Pending Edit',
+                                        denyLabel: 'Cancel'
+                                    });
+                                    if (approved) {
+                                        try {
+                                            await approveWriteFileRequest(approvalRequest);
+                                        } catch (approvalError) {
+                                            logDebug(`Approval replay failed: ${approvalError.message}`);
+                                            addMessage('assistant', `Approval failed for ${targetPath}: ${approvalError.message}`);
+                                        }
+                                    } else {
+                                        logDebug(`Approval denied for ${targetPath}.`);
+                                        addMessage('assistant', `Approval was not granted for ${targetPath}. No file was created or queued.`);
+                                    }
+                                }
                                 updateTaskTimeline({ type: 'tool', label: ev.tool, status: ev.ok ? 'completed' : 'failed' });
                             }
-                        });
+                        }
                     }
                     const msg = data.choices[0].message;
                     history.push(msg);
@@ -3890,15 +3940,31 @@
             }
         }
 
-        function askPermission(name, args) {
+        function askPermission(name, args, options = {}) {
             return new Promise(r => {
                 const modal = document.getElementById('modal-overlay');
-                document.getElementById('modal-title').innerText = "Execution Approval";
-                document.getElementById('modal-desc').innerText = `${name}: ${JSON.stringify(args)}`;
+                const allowBtn = document.getElementById('btn-allow');
+                const denyBtn = document.getElementById('btn-deny');
+                const previousAllow = allowBtn.innerText;
+                const previousDeny = denyBtn.innerText;
+                document.getElementById('modal-title').innerText = options.title || "Execution Approval";
+                document.getElementById('modal-desc').innerText = options.description || `${name}: ${JSON.stringify(args)}`;
                 document.getElementById('modal-input-container').style.display = 'none';
+                allowBtn.innerText = options.allowLabel || 'Confirm';
+                denyBtn.innerText = options.denyLabel || 'Cancel';
                 modal.classList.add('active');
-                document.getElementById('btn-allow').onclick = () => { modal.classList.remove('active'); r(true); };
-                document.getElementById('btn-deny').onclick = () => { modal.classList.remove('active'); r(false); };
+                allowBtn.onclick = () => {
+                    allowBtn.innerText = previousAllow;
+                    denyBtn.innerText = previousDeny;
+                    modal.classList.remove('active');
+                    r(true);
+                };
+                denyBtn.onclick = () => {
+                    allowBtn.innerText = previousAllow;
+                    denyBtn.innerText = previousDeny;
+                    modal.classList.remove('active');
+                    r(false);
+                };
             });
         }
 
