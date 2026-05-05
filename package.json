@@ -13,6 +13,7 @@
     "manual:proof": "node tests/manual-ui-create-apply-e2e.test.mjs",
     "edit:proof": "node tests/existing-file-edit-workflow.test.mjs",
     "delete:proof": "node tests/delete-file-safety-proof.test.mjs",
+    "move:proof": "node tests/move-rename-file-workflow-proof.test.mjs",
     "live:proof": "node tests/live-provider-create-apply-proof.test.mjs",
     "write:create:proof": "node tests/real-write-create-flow.test.mjs",
     "apply:proof": "node tests/apply-pending-edit-to-disk.test.mjs",

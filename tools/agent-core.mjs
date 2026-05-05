@@ -829,6 +829,57 @@ export function createWorkspaceCore({
     return { ok: true, pendingEdit: edit };
   }
 
+  function moveFileTool({ sourcePath, fromPath, filePath, path: inputPath, targetPath, toPath, destinationPath, reason = 'move_file' }) {
+    if (!isWorkspaceTrusted()) throw new Error('Workspace is not trusted. Trust it before proposing move/rename operations.');
+    const rawSource = String(sourcePath || fromPath || filePath || inputPath || '').trim();
+    const rawTarget = String(targetPath || toPath || destinationPath || '').trim();
+    if (!rawSource) throw new Error('sourcePath is required');
+    if (!rawTarget) throw new Error('targetPath is required');
+    if (/[*?]/.test(rawSource) || /[*?]/.test(rawTarget)) throw new Error('Wildcards are not allowed for move_file.');
+    if (/(^|[\\/])\.\.([\\/]|$)/.test(rawSource) || /(^|[\\/])\.\.([\\/]|$)/.test(rawTarget)) throw new Error('Path traversal is not allowed for move_file.');
+    if (/[\\/]$/.test(rawTarget)) throw new Error('Directory move is not allowed for move_file.');
+
+    const resolvedSource = resolveWorkspacePath(rawSource);
+    const resolvedTarget = resolveWorkspacePath(rawTarget);
+    if (path.resolve(resolvedSource) === path.resolve(resolvedTarget)) throw new Error('Source and target paths must be different for move_file.');
+
+    if (!fs.existsSync(resolvedSource)) throw new Error(`Source file does not exist: ${rawSource}`);
+    const sourceStat = fs.statSync(resolvedSource);
+    if (!sourceStat.isFile()) throw new Error(`move_file only supports regular source files: ${rawSource}`);
+
+    if (fs.existsSync(resolvedTarget)) throw new Error(`Target already exists: ${rawTarget}`);
+    const targetParent = path.dirname(resolvedTarget);
+    if (fs.existsSync(targetParent)) {
+      const parentStat = fs.statSync(targetParent);
+      if (!parentStat.isDirectory()) throw new Error(`Target parent is not a directory: ${path.relative(currentWorkspace, targetParent)}`);
+    }
+
+    const sourceRelPath = path.relative(currentWorkspace, resolvedSource).replace(/\\/g, '/');
+    const targetRelPath = path.relative(currentWorkspace, resolvedTarget).replace(/\\/g, '/');
+    const beforeContent = fs.readFileSync(resolvedSource, 'utf8');
+    const id = `edit_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const edit = {
+      id,
+      filePath: resolvedTarget,
+      sourcePath: resolvedSource,
+      targetPath: resolvedTarget,
+      relPath: targetRelPath,
+      sourceRelPath,
+      targetRelPath,
+      content: beforeContent,
+      beforeContent,
+      reason,
+      operation: 'move',
+      createdAt: new Date().toISOString(),
+      before: { existed: true, bytes: sourceStat.size, hash: fileHash(resolvedSource) },
+      after: { existed: true, bytes: sourceStat.size, hash: fileHash(resolvedSource) },
+      diff: [`--- a/${sourceRelPath}`, `+++ b/${targetRelPath}`, `@@ move @@`, `rename from ${sourceRelPath}`, `rename to ${targetRelPath}`].join('\n'),
+      hunks: []
+    };
+    pendingEdits.set(id, edit);
+    return { ok: true, pendingEdit: edit };
+  }
+
   function applyPendingEditTool({ id, hunkIds = null }) {
     if (!isWorkspaceTrusted()) throw new Error('Workspace is not trusted.');
     const edit = pendingEdits.get(id);
@@ -862,6 +913,25 @@ export function createWorkspaceCore({
       pendingEdits.delete(id);
       return { ok: true, id, relPath: edit.relPath, operation: 'delete', before: edit.before, after: { existed: false, bytes: 0, hash: null } };
     }
+    if (edit.operation === 'move') {
+      if (!fs.existsSync(edit.sourcePath)) throw new Error(`Source file already missing for move apply: ${edit.sourceRelPath}`);
+      const sourceStat = fs.statSync(edit.sourcePath);
+      if (!sourceStat.isFile()) throw new Error(`Refusing to move non-file source: ${edit.sourceRelPath}`);
+      if (fs.existsSync(edit.targetPath)) throw new Error(`Target already exists for move apply: ${edit.targetRelPath}`);
+      fs.mkdirSync(path.dirname(edit.targetPath), { recursive: true });
+      fs.renameSync(edit.sourcePath, edit.targetPath);
+      pendingEdits.delete(id);
+      return {
+        ok: true,
+        id,
+        operation: 'move',
+        relPath: edit.relPath,
+        sourceRelPath: edit.sourceRelPath,
+        targetRelPath: edit.targetRelPath,
+        before: edit.before,
+        after: { existed: true, bytes: fs.statSync(edit.targetPath).size, hash: fileHash(edit.targetPath) }
+      };
+    }
     fs.writeFileSync(edit.filePath, nextContent);
     pendingEdits.delete(id);
     return { ok: true, id, relPath: edit.relPath, before: edit.before, after: { bytes: fs.statSync(edit.filePath).size, hash: fileHash(edit.filePath) } };
@@ -875,7 +945,7 @@ export function createWorkspaceCore({
   }
 
   function listPendingEditsTool() {
-    return Array.from(pendingEdits.values()).map(edit => ({ id: edit.id, relPath: edit.relPath, reason: edit.reason, createdAt: edit.createdAt, before: edit.before, after: edit.after, beforeContent: edit.beforeContent, content: edit.content, diff: edit.diff, hunks: edit.hunks }));
+    return Array.from(pendingEdits.values()).map(edit => ({ id: edit.id, relPath: edit.relPath, sourceRelPath: edit.sourceRelPath, targetRelPath: edit.targetRelPath, operation: edit.operation || 'write', reason: edit.reason, createdAt: edit.createdAt, before: edit.before, after: edit.after, beforeContent: edit.beforeContent, content: edit.content, diff: edit.diff, hunks: edit.hunks }));
   }
 
   function executeCommandTool({ command, timeoutMs = execTimeoutMs }) {
@@ -967,6 +1037,7 @@ export function createWorkspaceCore({
     if (name === 'apply_pending_edit') return applyPendingEditTool(args);
     if (name === 'discard_pending_edit') return discardPendingEditTool(args);
     if (name === 'delete_file') return deleteFileTool(args);
+    if (name === 'move_file') return moveFileTool(args);
     if (name === 'pending_edits') return listPendingEditsTool(args);
     if (name === 'search_files' || name === 'search' || name === 'grep_search') return searchFiles(args);
     if (name === 'execute_command') return executeCommandTool(args);
@@ -982,6 +1053,7 @@ export function createWorkspaceCore({
     { permissionId: 'file.write', actionType: 'file.write', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Write or create a file in the workspace.', exampleActions: ['write_file'] },
     { permissionId: 'file.apply_edit', actionType: 'file.apply_edit', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Apply or discard a pending file edit.', exampleActions: ['apply_pending_edit', 'discard_pending_edit', 'apply_patch'] },
     { permissionId: 'file.delete', actionType: 'file.delete', riskLevel: 'destructive', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Create a pending delete operation for a workspace file.', exampleActions: ['delete_file'] },
+    { permissionId: 'file.move', actionType: 'file.move', riskLevel: 'destructive', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Create a pending move/rename operation for a single workspace file.', exampleActions: ['move_file'] },
     { permissionId: 'terminal.run', actionType: 'terminal.run', riskLevel: 'high', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Execute a shell command in the workspace.', exampleActions: ['execute_command', 'start_command_job'] },
     { permissionId: 'job.cancel', actionType: 'job.cancel', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: true, requiresConfirmation: false, description: 'Cancel a running command job.', exampleActions: ['cancel_command_job'] },
     { permissionId: 'provider.mutate', actionType: 'provider.mutate', riskLevel: 'medium', modeAllowed: 'ide', requiresApproval: true, requiresTrustedWorkspace: false, requiresConfirmation: false, description: 'Create, update, or delete API provider configuration.', exampleActions: ['POST /api/providers', 'POST /api/providers/default', 'POST /api/providers/clear_key', 'POST /api/settings'] },
@@ -1047,7 +1119,7 @@ export function createWorkspaceCore({
     projectIndexerTool, semanticIndexTool, indexStatusTool, buildIndexCache, refreshIndexCache, searchIndexCache, gitContextTool,
     gitStatusTool, gitDiffTool, gitFileDiffTool, gitLogTool,
     gitStageTool, gitUnstageTool, gitDiscardTool, gitCommitMessageDraftTool,
-    createPendingEdit, applyPatchTool, applyPendingEditTool, discardPendingEditTool,
+    createPendingEdit, applyPatchTool, applyPendingEditTool, discardPendingEditTool, moveFileTool,
     listPendingEditsTool, executeCommandTool, startCommandJobTool, commandJobStatusTool,
     cancelCommandJobTool, callTool,
     PERMISSION_DEFINITIONS, getPermission, getAllPermissions, checkPermission, enforcePermission

@@ -2584,6 +2584,7 @@
             { type: "function", function: { name: "read_file", description: " t", parameters: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] } } },
             { type: "function", function: { name: "read_file_paged", description: " m n dng trong t l", parameters: { type: "object", properties: { filePath: { type: "string" }, startLine: { type: "integer" }, lineCount: { type: "integer" } }, required: ["filePath"] } } },
             { type: "function", function: { name: "write_file", description: "Ghi t", parameters: { type: "object", properties: { filePath: { type: "string" }, content: { type: "string" } }, required: ["filePath", "content"] } } },
+            { type: "function", function: { name: "move_file", description: "Di chuyn hoc i tn 1 file trong workspace theo flow pending/apply", parameters: { type: "object", properties: { sourcePath: { type: "string" }, targetPath: { type: "string" } }, required: ["sourcePath", "targetPath"] } } },
             { type: "function", function: { name: "apply_patch", description: "xut patch bng thay th text chnh xc v to diff chduy", parameters: { type: "object", properties: { filePath: { type: "string" }, find: { type: "string" }, replace: { type: "string" }, reason: { type: "string" } }, required: ["filePath"] } } },
             { type: "function", function: { name: "start_command_job", description: "Chy lh lu d dng job c thhy", parameters: { type: "object", properties: { command: { type: "string" }, timeoutMs: { type: "integer" } }, required: ["command"] } } },
             { type: "function", function: { name: "command_job_status", description: "Xem trng thi command job", parameters: { type: "object", properties: { id: { type: "string" } } } } },
@@ -3004,11 +3005,15 @@
         async function approveMutationRequest(request = {}) {
             const args = request?.args || {};
             const toolName = String(request?.tool || '').trim() || 'write_file';
-            const targetPath = request?.targetPath || args.filePath || 'requested file';
-            const endpoint = toolName === 'delete_file' ? '/api/delete_file' : '/api/write_file';
+            const targetPath = request?.targetPath || args.targetPath || args.filePath || 'requested file';
+            const endpoint = toolName === 'delete_file'
+                ? '/api/delete_file'
+                : (toolName === 'move_file' ? '/api/move_file' : '/api/write_file');
             const payload = toolName === 'delete_file'
                 ? { path: args.filePath }
-                : { path: args.filePath, content: args.content };
+                : (toolName === 'move_file'
+                    ? { sourcePath: args.sourcePath || args.filePath, targetPath: args.targetPath }
+                    : { path: args.filePath, content: args.content });
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Agent-Approved': 'true' },
@@ -3848,18 +3853,23 @@
                                 const observed = tryParseJson(ev.result);
                                 const pending = observed?.pendingEdit || observed?.pending_edit;
                                 if (pending) renderPendingEdit(pending);
-                                if (observed?.approvalRequired && (observed?.approvalRequest?.tool === 'write_file' || observed?.approvalRequest?.tool === 'delete_file') && isIdeMode() && !autoAcceptCheck.checked) {
+                                if (observed?.approvalRequired && (observed?.approvalRequest?.tool === 'write_file' || observed?.approvalRequest?.tool === 'delete_file' || observed?.approvalRequest?.tool === 'move_file') && isIdeMode() && !autoAcceptCheck.checked) {
                                     const approvalRequest = observed.approvalRequest;
                                     const toolName = approvalRequest.tool || 'write_file';
-                                    const targetPath = approvalRequest.targetPath || approvalRequest.args?.filePath || 'requested file';
+                                    const targetPath = approvalRequest.targetPath || approvalRequest.args?.targetPath || approvalRequest.args?.filePath || 'requested file';
                                     updateTaskTimeline({ type: 'approval', label: `Approval required: ${targetPath}`, status: 'pending' });
                                     const isDelete = toolName === 'delete_file';
+                                    const isMove = toolName === 'move_file';
+                                    const sourcePath = approvalRequest.args?.sourcePath || approvalRequest.args?.filePath || 'source';
+                                    const moveTargetPath = approvalRequest.args?.targetPath || targetPath;
                                     const approved = await askPermission(toolName, approvalRequest.args || {}, {
-                                        title: isDelete ? 'Delete Approval Required' : 'Write Approval Required',
+                                        title: isDelete ? 'Delete Approval Required' : (isMove ? 'Move/Rename Approval Required' : 'Write Approval Required'),
                                         description: isDelete
                                             ? `Queue a pending delete for ${targetPath}. No file will be deleted from disk yet. After approval, Review + Apply is still required to apply deletion.`
-                                            : `Create a pending edit for ${targetPath}. No file will be written to disk yet. After approval, Review + Apply is still required to write the file.`,
-                                        allowLabel: isDelete ? 'Approve Pending Delete' : 'Approve Pending Edit',
+                                            : (isMove
+                                                ? `Queue a pending move/rename from ${sourcePath} to ${moveTargetPath}. No file will be moved on disk yet. After approval, Review + Apply is still required to apply move/rename.`
+                                                : `Create a pending edit for ${targetPath}. No file will be written to disk yet. After approval, Review + Apply is still required to write the file.`),
+                                        allowLabel: isDelete ? 'Approve Pending Delete' : (isMove ? 'Approve Pending Move' : 'Approve Pending Edit'),
                                         denyLabel: 'Cancel'
                                     });
                                     if (approved) {
