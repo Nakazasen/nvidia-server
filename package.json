@@ -15,6 +15,7 @@
     "delete:proof": "node tests/delete-file-safety-proof.test.mjs",
     "move:proof": "node tests/move-rename-file-workflow-proof.test.mjs",
     "multi:proof": "node tests/multi-file-edit-guard-proof.test.mjs",
+    "soak:proof": "node tests/manual-file-workflow-soak-isolated.test.mjs",
     "live:proof": "node tests/live-provider-create-apply-proof.test.mjs",
     "write:create:proof": "node tests/real-write-create-flow.test.mjs",
     "apply:proof": "node tests/apply-pending-edit-to-disk.test.mjs",
