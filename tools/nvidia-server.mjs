@@ -47,6 +47,7 @@ const SECRET_KEY_PATTERNS = [
 ];
 const READ_ONLY_TOOLS = new Set(['project_indexer', 'semantic_index', 'index_status', 'index_build', 'index_refresh', 'index_search', 'list_dir', 'read_file', 'read_file_paged', 'search_files', 'search', 'load_skill']);
 const DESTRUCTIVE_TOOLS = new Set(['write_file', 'delete_file', 'move_file', 'apply_patch', 'apply_pending_edit', 'discard_pending_edit', 'execute_command', 'start_command_job', 'cancel_command_job', 'git_stage', 'git_unstage', 'git_discard']);
+const MAX_MULTI_FILE_WRITE_TOOL_CALLS = Number(process.env.NVIDIA_MAX_MULTI_FILE_WRITE_TOOL_CALLS || 2);
 
 // --- Sprint 8: Diagnostics Model ---
 // In-memory diagnostics store. Not persisted to disk.
@@ -2222,6 +2223,22 @@ async function runToolCall(toolCall, options = {}) {
     }
 
     try {
+        if (name === 'write_file' && options.writeGuardState && Number.isFinite(options.maxWriteFiles) && options.maxWriteFiles > 0) {
+            const filePath = typeof args.filePath === 'string' ? args.filePath.trim() : '';
+            if (!filePath) {
+                return { ok: false, denied: true, error: 'write_file requires a concrete workspace filePath.' };
+            }
+            const targetKey = filePath.replace(/\\/g, '/').toLowerCase();
+            if (!options.writeGuardState.targets.has(targetKey) && options.writeGuardState.targets.size >= options.maxWriteFiles) {
+                return {
+                    ok: false,
+                    denied: true,
+                    error: `write_file file-count limit exceeded: max ${options.maxWriteFiles} files per request. Narrow scope and retry with fewer files.`,
+                    observation: 'Narrow the request to a bounded small file set.'
+                };
+            }
+            options.writeGuardState.targets.add(targetKey);
+        }
         if (DESTRUCTIVE_TOOLS.has(name) && !isWorkspaceTrusted()) {
             return {
                 ok: false,
@@ -2708,6 +2725,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
     let forcedWriteFallbackUsed = false;
     let pendingApprovalRequest = null;
     let terminalStatus = 'running';
+    const writeGuardState = { targets: new Set() };
     const emit = (name, payload) => {
         try {
             callbacks[name]?.(payload);
@@ -2735,7 +2753,11 @@ async function runAutonomousAgent(data, callbacks = {}) {
             emit('tool_start', { iteration, tool: toolName, arguments: toolCall.function?.arguments || '{}' });
             events.push({ type: 'tool_start', iteration, tool: toolName, arguments: toolCall.function?.arguments || '{}' });
 
-            const result = await runToolCall(toolCall, { allowDestructive });
+            const result = await runToolCall(toolCall, {
+                allowDestructive,
+                maxWriteFiles: MAX_MULTI_FILE_WRITE_TOOL_CALLS,
+                writeGuardState
+            });
             if (toolName === 'write_file' && result?.ok !== false) successfulWrite = true;
             if ((toolName === 'write_file' || toolName === 'delete_file' || toolName === 'move_file') && result?.approvalRequired && result?.approvalRequest && !pendingApprovalRequest) {
                 pendingApprovalRequest = result.approvalRequest;
