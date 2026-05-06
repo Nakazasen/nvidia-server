@@ -777,7 +777,7 @@ export function createWorkspaceCore({
     if (!isWorkspaceTrusted()) throw new Error('Workspace is not trusted. Trust it before proposing edits.');
     if (typeof content !== 'string') throw new Error('content must be a string');
     const resolved = resolveWorkspacePath(filePath || inputPath);
-    const relPath = path.relative(currentWorkspace, resolved);
+    const relPath = path.relative(currentWorkspace, resolved).replace(/\\/g, '/');
     const previous = fs.existsSync(resolved) ? fs.readFileSync(resolved, 'utf8') : '';
     const id = `edit_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     if (oldContent !== null && previous !== oldContent) return { ok: false, conflict: true, relPath, message: 'The file changed since the proposed oldContent snapshot. Re-read the file before editing.' };

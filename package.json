@@ -11,6 +11,7 @@
     "agent:audit": "node tools/agent-capability-harness.mjs",
     "browser:smoke": "node tools/browser-smoke.mjs",
     "manual:proof": "node tests/manual-ui-create-apply-e2e.test.mjs",
+    "manual:reliability": "node tests/manual-reliability-regression.test.mjs",
     "edit:proof": "node tests/existing-file-edit-workflow.test.mjs",
     "delete:proof": "node tests/delete-file-safety-proof.test.mjs",
     "move:proof": "node tests/move-rename-file-workflow-proof.test.mjs",

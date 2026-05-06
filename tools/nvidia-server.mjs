@@ -2348,9 +2348,15 @@ function isFileWriteIntent(text = '') {
         'write file',
         'save file',
         'make a file',
+        'edit file',
+        'modify file',
+        'update file',
         'tao file',
         'tao mot file',
         'tao cho toi file',
+        'sua file',
+        'chinh sua file',
+        'cap nhat file',
         'ghi file',
         'ghi ra file',
         'luu file',
@@ -2364,18 +2370,21 @@ function isFileWriteIntent(text = '') {
         '.md'
     ];
     const fileSignals = ['file', 'tep', 'chuong trinh', 'program', 'script', 'source code'];
-    const writeSignals = ['tao', 'viet', 'ghi', 'luu', 'dong goi', 'create', 'write', 'save', 'make'];
+    const writeSignals = ['tao', 'viet', 'ghi', 'luu', 'sua', 'chinh sua', 'cap nhat', 'dong goi', 'create', 'write', 'save', 'make', 'edit', 'modify', 'update'];
+    const fuzzyVietnameseWriteIntent = /\b(tao|vi.t|ghi|luu|s.?a|chinh\s+s.?a|cap\s+nh.t)\b/.test(lower)
+        && fileSignals.some(token => lower.includes(token));
     const asksForMarkdownArtifact = lower.includes('markdown')
         && ['tao', 'create', 'write', 'save', 'luu', 'ghi', 'xuat'].some(token => lower.includes(token));
     const asksForGenericProgramFile = fileSignals.some(token => lower.includes(token))
         && writeSignals.some(token => lower.includes(token));
-    return writeTokens.some(token => lower.includes(token)) || asksForMarkdownArtifact || asksForGenericProgramFile;
+    return writeTokens.some(token => lower.includes(token)) || asksForMarkdownArtifact || asksForGenericProgramFile || fuzzyVietnameseWriteIntent;
 }
 
-function normalizeWriteTargetPath(candidate = '') {
+function normalizeExplicitWorkspacePath(candidate = '') {
     const raw = String(candidate || '').trim().replace(/^["'`]+|["'`.,:;]+$/g, '');
     if (!raw || raw.length > 400) return '';
     if (!/[A-Za-z0-9]/.test(raw) || !/\.[A-Za-z0-9]+$/.test(raw)) return '';
+    if (/[*?]/.test(raw)) return '';
     try {
         const resolved = resolveWorkspacePath(raw);
         const relPath = path.relative(currentWorkspace, resolved).replace(/\\/g, '/');
@@ -2385,7 +2394,54 @@ function normalizeWriteTargetPath(candidate = '') {
     }
 }
 
+function normalizeWriteTargetPath(candidate = '') {
+    return normalizeExplicitWorkspacePath(candidate);
+}
+
+function extractExplicitWorkspacePaths(text = '') {
+    const input = String(text || '');
+    const patterns = [
+        /["'`](?<path>[^"'`\r\n]+?\.[A-Za-z0-9]+)["'`]/g,
+        /\b(?<path>[A-Za-z]:[\\/][^\s"'`<>|]+?\.[A-Za-z0-9]+)\b/g,
+        /(?<![\w])(?<path>(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)\b/g,
+        /(?<![./\\])\b(?<path>[A-Za-z0-9_.-]+\.(?:py|md|txt|json|js|mjs|html|css|yml|yaml|toml|ts|tsx|jsx))\b/g
+    ];
+    const out = [];
+    const seen = new Set();
+    for (const pattern of patterns) {
+        for (const match of input.matchAll(pattern)) {
+            const relPath = normalizeExplicitWorkspacePath(match.groups?.path || match[1] || '');
+            if (relPath && !seen.has(relPath)) {
+                seen.add(relPath);
+                out.push(relPath);
+            }
+        }
+    }
+    return out;
+}
+
+function hasPathLikeMention(text = '') {
+    return /(?:^|[\s"'`(])(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[A-Za-z0-9_.-]+[\\/])?[A-Za-z0-9_.-]+\.[A-Za-z0-9]+(?:$|[\s"'`).,;:!?])/m.test(String(text || ''));
+}
+
+function getUnsafeExplicitPathReason(text = '') {
+    const input = String(text || '');
+    if (/(^|[\s"'`(])(?:\.{1,2}[\\/]|[^\s"'`]*[\\/]\.\.[\\/])/.test(input)) {
+        return 'Path traversal is not allowed; the requested path is outside workspace.';
+    }
+    if (/(^|[\s"'`(])[^ \t\r\n"'`]*[*?][^ \t\r\n"'`]*\.[A-Za-z0-9]+/.test(input)) {
+        return 'Wildcards are not allowed for file operations.';
+    }
+    if (/\b[A-Za-z]:[\\/][^\s"'`<>|]+?\.[A-Za-z0-9]+\b/.test(input) && extractExplicitWorkspacePaths(input).length === 0) {
+        return 'Absolute paths outside workspace are not allowed.';
+    }
+    return '';
+}
+
 function extractExplicitWriteTarget(text = '') {
+    if (/(^|[\s"'`(])\.{1,2}[\\/]/.test(String(text || ''))) return '';
+    const explicitPaths = extractExplicitWorkspacePaths(text);
+    if (explicitPaths.length) return explicitPaths[0];
     const input = String(text || '');
     const patterns = [
         /["'`](?<path>[^"'`\r\n]+?\.[A-Za-z0-9]+)["'`]/g,
@@ -2405,6 +2461,7 @@ function extractExplicitWriteTarget(text = '') {
 function extractExplicitOrInferredWriteTarget(text = '') {
     const explicit = extractExplicitWriteTarget(text);
     if (explicit) return explicit;
+    if (hasPathLikeMention(text)) return '';
 
     const lower = normalizeIntentText(text);
     if (!isFileWriteIntent(lower)) return '';
@@ -2424,6 +2481,103 @@ function extractExplicitOrInferredWriteTarget(text = '') {
 
     const inferredPath = baseName === 'README' ? `${baseName}.${extension}` : `proof/${baseName}.${extension}`;
     return normalizeWriteTargetPath(inferredPath);
+}
+
+function getManualFileExpectation(text = '') {
+    const paths = extractExplicitWorkspacePaths(text);
+    const unsafeReason = getUnsafeExplicitPathReason(text);
+    if (unsafeReason) return { operation: 'blocked', paths, unsafeReason };
+    if (!paths.length) return { operation: '', paths: [] };
+    const lower = normalizeIntentText(text);
+    const hasMoveIntent = paths.length >= 2 && (
+        /\b(move|rename|doi ten|di chuyen|chuyen file)\b/.test(lower)
+        || /\?\?i\s*ten/.test(lower)
+        || /di\s*chuy.n/.test(lower)
+        || (/\b(file|tep)\b/.test(lower) && /\b(thanh|sang|to)\b/.test(lower) && !isFileWriteIntent(lower))
+    );
+    const hasDeleteIntent = /\b(delete|remove|xoa|xoa file)\b/.test(lower);
+    const hasWriteIntent = isFileWriteIntent(lower);
+    if (hasMoveIntent) {
+        return { operation: 'move', paths, sourcePath: paths[0], targetPath: paths[1] };
+    }
+    if (hasDeleteIntent) {
+        return { operation: 'delete', paths, targetPath: paths[0] };
+    }
+    if (hasWriteIntent || paths.length) {
+        return { operation: 'write', paths, targetPath: paths[0] };
+    }
+    return { operation: '', paths };
+}
+
+function buildExplicitPathContract(expectation = {}) {
+    if (!expectation.paths?.length) return '';
+    return [
+        'Explicit workspace path contract:',
+        `- The user named these workspace-relative path(s): ${expectation.paths.map(p => `"${p}"`).join(', ')}.`,
+        '- Preserve every directory prefix exactly. Do not replace an explicit path with a root-level basename.',
+        '- If you use write_file or apply_patch, filePath must exactly match the requested target path.',
+        '- If you use delete_file, filePath must exactly match the requested delete target.',
+        '- If you use move_file, sourcePath and targetPath must exactly match the requested source and destination.',
+        '- If an exact path cannot be used, report the operation as blocked. Do not claim created, edited, deleted, moved, or applied.'
+    ].join('\n');
+}
+
+function getFileToolTargetMismatch(toolName, args = {}, expectation = {}) {
+    const mutatingTools = new Set(['write_file', 'apply_patch', 'delete_file', 'move_file']);
+    if (!mutatingTools.has(toolName)) return null;
+    if (expectation.unsafeReason) {
+        return { code: 'UNSAFE_EXPLICIT_PATH', unsafeReason: expectation.unsafeReason };
+    }
+    if (!expectation.paths?.length) return null;
+    const normalizeArg = value => normalizeExplicitWorkspacePath(value);
+
+    if (expectation.operation === 'delete' && toolName !== 'delete_file') {
+        return { code: 'TARGET_OPERATION_MISMATCH', expectedOperation: 'delete', actualOperation: toolName };
+    }
+    if (expectation.operation === 'move' && toolName !== 'move_file') {
+        return { code: 'TARGET_OPERATION_MISMATCH', expectedOperation: 'move', actualOperation: toolName };
+    }
+    if (expectation.operation === 'write' && (toolName === 'delete_file' || toolName === 'move_file')) {
+        return { code: 'TARGET_OPERATION_MISMATCH', expectedOperation: 'write', actualOperation: toolName };
+    }
+
+    if (toolName === 'move_file') {
+        const rawSource = args.sourcePath || args.fromPath || args.filePath || args.path || '';
+        const rawTarget = args.targetPath || args.toPath || args.destinationPath || '';
+        const actualSource = normalizeArg(rawSource);
+        const actualTarget = normalizeArg(rawTarget);
+        if (expectation.sourcePath && actualSource !== expectation.sourcePath) {
+            return { code: 'TARGET_PATH_MISMATCH', role: 'sourcePath', expectedPath: expectation.sourcePath, actualPath: actualSource || String(rawSource) };
+        }
+        if (expectation.targetPath && actualTarget !== expectation.targetPath) {
+            return { code: 'TARGET_PATH_MISMATCH', role: 'targetPath', expectedPath: expectation.targetPath, actualPath: actualTarget || String(rawTarget) };
+        }
+        return null;
+    }
+
+    const expectedPath = expectation.targetPath || expectation.paths[0];
+    const rawPath = args.filePath || args.path || '';
+    const actualPath = normalizeArg(rawPath);
+    if (expectation.operation === 'write' && expectation.paths.length > 1) {
+        if (!expectation.paths.includes(actualPath)) {
+            return { code: 'TARGET_PATH_MISMATCH', role: 'filePath', expectedPath: expectation.paths.join(', '), actualPath: actualPath || String(rawPath) };
+        }
+        return null;
+    }
+    if (expectedPath && actualPath !== expectedPath) {
+        return { code: 'TARGET_PATH_MISMATCH', role: 'filePath', expectedPath, actualPath: actualPath || String(rawPath) };
+    }
+    return null;
+}
+
+function summarizeFileOperationTarget(result = {}) {
+    const pending = result.pendingEdit || result.pending_edit || null;
+    if (pending) {
+        if (pending.operation === 'move') return `${pending.sourceRelPath || 'unknown source'} -> ${pending.targetRelPath || pending.relPath || 'unknown target'}`;
+        return pending.relPath || 'unknown target';
+    }
+    if (result.operation === 'move') return `${result.sourceRelPath || 'unknown source'} -> ${result.targetRelPath || result.relPath || 'unknown target'}`;
+    return result.relPath || 'unknown target';
 }
 
 async function prepareMessages(data) {
@@ -2708,8 +2862,13 @@ async function runAutonomousAgent(data, callbacks = {}) {
         });
     }
     const lastUserText = getLastUserText(messages);
+    const fileExpectation = getManualFileExpectation(lastUserText);
     const requiresFileWrite = isFileWriteIntent(lastUserText);
     const writeTargetHint = requiresFileWrite ? extractExplicitOrInferredWriteTarget(lastUserText) : '';
+    const explicitPathContract = buildExplicitPathContract(fileExpectation);
+    if (explicitPathContract) {
+        messages.unshift({ role: 'system', content: explicitPathContract });
+    }
     if (requiresFileWrite) {
         messages.unshift({
             role: 'system',
@@ -2724,6 +2883,10 @@ async function runAutonomousAgent(data, callbacks = {}) {
     let writeEnforcementRetried = false;
     let forcedWriteFallbackUsed = false;
     let pendingApprovalRequest = null;
+    let targetMismatch = null;
+    const pendingFileOperations = [];
+    const appliedFileOperations = [];
+    const failedFileOperations = [];
     let terminalStatus = 'running';
     const writeGuardState = { targets: new Set() };
     const emit = (name, payload) => {
@@ -2753,14 +2916,46 @@ async function runAutonomousAgent(data, callbacks = {}) {
             emit('tool_start', { iteration, tool: toolName, arguments: toolCall.function?.arguments || '{}' });
             events.push({ type: 'tool_start', iteration, tool: toolName, arguments: toolCall.function?.arguments || '{}' });
 
-            const result = await runToolCall(toolCall, {
-                allowDestructive,
-                maxWriteFiles: MAX_MULTI_FILE_WRITE_TOOL_CALLS,
-                writeGuardState
-            });
+            let parsedArgs = {};
+            try {
+                parsedArgs = JSON.parse(toolCall.function?.arguments || '{}');
+            } catch {}
+            const mismatch = getFileToolTargetMismatch(toolName, parsedArgs, fileExpectation);
+            const result = mismatch
+                ? {
+                    ok: false,
+                    denied: true,
+                    code: mismatch.code,
+                    expectedPath: mismatch.expectedPath,
+                    actualPath: mismatch.actualPath,
+                    expectedOperation: mismatch.expectedOperation,
+                    actualOperation: mismatch.actualOperation,
+                    error: mismatch.code === 'UNSAFE_EXPLICIT_PATH'
+                        ? `UNSAFE_EXPLICIT_PATH: ${mismatch.unsafeReason} No pending operation was created.`
+                        : mismatch.code === 'TARGET_PATH_MISMATCH'
+                        ? `TARGET_PATH_MISMATCH: requested ${mismatch.role} "${mismatch.expectedPath}" but tool used "${mismatch.actualPath || 'missing'}". No pending operation was created.`
+                        : `TARGET_OPERATION_MISMATCH: requested ${mismatch.expectedOperation} but tool used ${mismatch.actualOperation}. No pending operation was created.`,
+                    observation: 'Retry with the exact user-requested workspace-relative path and operation.'
+                }
+                : await runToolCall(toolCall, {
+                    allowDestructive,
+                    maxWriteFiles: MAX_MULTI_FILE_WRITE_TOOL_CALLS,
+                    writeGuardState
+                });
+            if (mismatch && !targetMismatch) targetMismatch = mismatch;
             if (toolName === 'write_file' && result?.ok !== false) successfulWrite = true;
             if ((toolName === 'write_file' || toolName === 'delete_file' || toolName === 'move_file') && result?.approvalRequired && result?.approvalRequest && !pendingApprovalRequest) {
                 pendingApprovalRequest = result.approvalRequest;
+            }
+            if (['write_file', 'apply_patch', 'delete_file', 'move_file'].includes(toolName) && result?.ok !== false) {
+                const pending = result.pendingEdit || result.pending_edit || null;
+                if (pending) pendingFileOperations.push({ tool: toolName, target: summarizeFileOperationTarget(result), id: pending.id });
+            }
+            if (toolName === 'apply_pending_edit' && result?.ok !== false) {
+                appliedFileOperations.push({ tool: toolName, target: summarizeFileOperationTarget(result), id: result.id });
+            }
+            if (['write_file', 'apply_patch', 'delete_file', 'move_file', 'apply_pending_edit'].includes(toolName) && result?.ok === false) {
+                failedFileOperations.push({ tool: toolName, error: result.error || result.message || 'failed' });
             }
             const content = toolResult(result);
             const ok = result?.ok !== false;
@@ -2857,6 +3052,39 @@ async function runAutonomousAgent(data, callbacks = {}) {
             role: 'assistant',
             content: `Reached max_iterations (${maxIterations}) before a final answer. Current state was preserved in the server-side tool loop.`
         };
+    }
+
+    if (targetMismatch) {
+        const expected = targetMismatch.expectedPath || targetMismatch.expectedOperation || 'requested target';
+        const actual = targetMismatch.actualPath || targetMismatch.actualOperation || 'missing target';
+        finalMessage = {
+            role: 'assistant',
+            content: targetMismatch.code === 'UNSAFE_EXPLICIT_PATH'
+                ? `Blocked: ${targetMismatch.code}. ${targetMismatch.unsafeReason} No pending operation was created and no file was mutated on disk. Retry with a safe workspace-relative path.`
+                : `Blocked: ${targetMismatch.code}. Requested "${expected}" but the tool used "${actual}". No pending operation was created and no file was mutated on disk. Retry with the exact workspace-relative path from the request.`
+        };
+        terminalStatus = 'failed';
+    } else if (appliedFileOperations.length > 0) {
+        const targets = appliedFileOperations.map(op => op.target).join(', ');
+        finalMessage = {
+            role: 'assistant',
+            content: `Applied successfully for: ${targets}. Disk mutation completed only after apply evidence was returned.`
+        };
+        terminalStatus = terminalStatus === 'running' ? 'completed' : terminalStatus;
+    } else if (pendingFileOperations.length > 0) {
+        const targets = pendingFileOperations.map(op => op.target).join(', ');
+        finalMessage = {
+            role: 'assistant',
+            content: `Pending operation created for: ${targets}. Review + Apply is still required before any disk mutation.`
+        };
+        terminalStatus = terminalStatus === 'running' ? 'needs_user' : terminalStatus;
+    } else if (failedFileOperations.length > 0 && finalMessage?.content && /(created|edited|deleted|moved|applied|successfully|thanh cong|da tao|da sua|da xoa|da doi ten)/i.test(String(finalMessage.content))) {
+        const failure = failedFileOperations[0];
+        finalMessage = {
+            role: 'assistant',
+            content: `Failed: ${failure.tool} did not complete. ${failure.error}. No pending/apply evidence exists and no success is claimed.`
+        };
+        terminalStatus = 'failed';
     }
 
     const result = {
