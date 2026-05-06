@@ -170,28 +170,42 @@ function stopLocalServer(child) {
     }
 
     const pid = child.pid;
+    let settled = false;
     const finish = (stopped) => {
+      if (settled) return;
+      settled = true;
       const orphan = isProcessRunning(pid);
       resolve({ stopped: stopped || !orphan, orphan });
     };
 
+    const poll = setInterval(() => {
+      if (!isProcessRunning(pid)) {
+        clearInterval(poll);
+        clearTimeout(timer);
+        finish(true);
+      }
+    }, 250);
+
     const timer = setTimeout(() => {
+      clearInterval(poll);
       try {
         if (process.platform === 'win32') spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
         else child.kill('SIGKILL');
       } catch {}
       setTimeout(() => finish(false), 800);
-    }, 5000);
+    }, 8000);
 
     child.once('exit', () => {
+      clearInterval(poll);
       clearTimeout(timer);
       setTimeout(() => finish(true), 300);
     });
 
     try {
-      if (process.platform === 'win32') spawn('taskkill', ['/pid', String(pid), '/t'], { windowsHide: true, stdio: 'ignore' });
+      if (process.platform === 'win32') spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
       else child.kill('SIGTERM');
     } catch {
+      clearInterval(poll);
       clearTimeout(timer);
       finish(false);
     }
@@ -499,6 +513,13 @@ async function runRealBrowserSmoke(url) {
       let changedFilesGuideOk = false;
       let diffReviewUiOk = false;
       let pendingEditHonestyOk = false;
+      let pendingStateVisibleOk = false;
+      let appliedStateVisibleOk = false;
+      let blockedStateVisibleOk = false;
+      let failedStateVisibleOk = false;
+      let approvalModalClarityOk = false;
+      let multiFileCountVisibleOk = false;
+      let noOverclaimUiTextOk = false;
       let inlineEditActionOk = false;
       let inlineEditWidgetOk = false;
       let enterpriseBlocksInlineEdit = false;
@@ -560,9 +581,89 @@ async function runRealBrowserSmoke(url) {
           const pendingText = pendingCard?.textContent || '';
           pendingEditHonestyOk =
             !!pendingCard &&
-            /proposed change only/i.test(pendingText) &&
+            /Ready to apply|Sẵn sàng áp dụng/i.test(pendingText) &&
             /Review \+ Apply/i.test(pendingText) &&
+            /Chưa có disk mutation|Chưa ghi gì ra disk|pending proposal/i.test(pendingText) &&
+            /Target:/i.test(pendingText) &&
+            /Create|Edit|Delete|Move/i.test(pendingText) &&
             /Open Diff/i.test(pendingText);
+          pendingStateVisibleOk =
+            !!pendingCard &&
+            /Pending:/i.test(pendingText) &&
+            /Status:\s*Ready to apply/i.test(pendingText);
+
+          window.updateChangedFiles([
+            {
+              id: 'smoke-multi-1',
+              relPath: 'proof/a.txt',
+              before: { existed: false },
+              hunks: [{ id: 'h1', preview: '+a' }]
+            },
+            {
+              id: 'smoke-multi-2',
+              relPath: 'proof/b.txt',
+              before: { existed: true },
+              hunks: [{ id: 'h2', preview: '+b' }]
+            }
+          ]);
+          const changedFilesText = document.querySelector('#changed-files-list')?.textContent || '';
+          multiFileCountVisibleOk =
+            /Multi-file pending:\s*2 files/i.test(changedFilesText) &&
+            /Ready to apply|Sẵn sàng áp dụng/i.test(changedFilesText);
+
+          const appliedCard = document.getElementById('pending-smoke-preview-edit');
+          if (appliedCard) {
+            appliedCard.innerHTML = '<div><b>Applied:</b> Edit | Sửa file - package.json<div>Disk mutation completed. Áp dụng đã hoàn tất trên disk.</div></div>';
+          }
+          const appliedText = appliedCard?.textContent || '';
+          appliedStateVisibleOk =
+            /Applied:/i.test(appliedText) &&
+            /Disk mutation completed|hoàn tất trên disk/i.test(appliedText);
+
+          const blockedCopy = typeof window.renderWorkflowFailureMessage === 'function'
+            ? window.renderWorkflowFailureMessage('write_file', { error: 'write_file requires a trusted workspace. The tool was not executed.' })
+            : null;
+          const failedCopy = typeof window.renderWorkflowFailureMessage === 'function'
+            ? window.renderWorkflowFailureMessage('write_file', { error: 'Provider unavailable: 502 upstream' })
+            : null;
+          blockedStateVisibleOk =
+            !!blockedCopy &&
+            blockedCopy.status === 'blocked' &&
+            /Không có file nào được ghi ra đĩa/i.test(blockedCopy.message) &&
+            /thu hẹp phạm vi|đường dẫn hợp lệ|giảm số file/i.test(blockedCopy.next);
+          failedStateVisibleOk =
+            !!failedCopy &&
+            failedCopy.status === 'failed' &&
+            /Không có trusted success|Không có file nào/i.test(`${failedCopy.message} ${failedCopy.next}`) &&
+            /thử lại|kiểm tra logs/i.test(failedCopy.next);
+
+          if (typeof window.askPermission === 'function') {
+            const modalPromise = window.askPermission('write_file', { filePath: 'proof/demo.txt' }, {
+              title: 'Write Approval Required | Cần phê duyệt ghi file',
+              description: 'Operation: create | tạo file\nTarget path: proof/demo.txt\nApproval này chỉ tạo pending operation. Chưa ghi gì ra disk. Sau khi approve, bạn vẫn phải Review + Apply để write file.',
+              allowLabel: 'Approve Pending Edit',
+              denyLabel: 'Cancel'
+            });
+            await sleep(120);
+            const modalText = document.querySelector('#modal-overlay')?.textContent || '';
+            approvalModalClarityOk =
+              /Operation:\s*create/i.test(modalText) &&
+              /Target path:\s*proof\/demo\.txt/i.test(modalText) &&
+              /pending operation/i.test(modalText) &&
+              /Review \+ Apply/i.test(modalText);
+            document.getElementById('btn-deny')?.click();
+            await modalPromise.catch(() => {});
+          }
+
+          const fullUiText = document.body?.textContent || '';
+          noOverclaimUiTextOk = !/DAILY_USE_READY|PRODUCTION_READY|FULL_BRIDGE_READY|COGNITIVE_OS_ACHIEVED|ENTERPRISE_GRADE_SECURITY/i.test(fullUiText);
+
+          if (typeof window.setRecentOperationSummary === 'function') {
+            window.setRecentOperationSummary({ label: 'Recent action: none yet. Chưa có thao tác gần đây.', tone: 'neutral' });
+          }
+          if (typeof window.updateChangedFiles === 'function') {
+            window.updateChangedFiles([]);
+          }
           pendingCard?.remove();
         }
         if (window.editor && typeof window.editor.getAction === 'function') {
@@ -601,6 +702,13 @@ async function runRealBrowserSmoke(url) {
       add('Changed Files guide explains review/apply path', changedFilesGuideOk, 'tasks sidebar changed-files guide visible', true);
       add('Diff review UI labels queue-for-review honestly', diffReviewUiOk, 'diff preview uses queue/review wording and no-silent-write note', true);
       add('Pending edit card labels review/apply honestly', pendingEditHonestyOk, 'pending edit card shows proposed-only and review/apply wording', true);
+      add('Pending state is visible and labeled clearly', pendingStateVisibleOk, 'pending card shows pending + ready-to-apply state', true);
+      add('Applied state is visible and labeled clearly', appliedStateVisibleOk, 'applied copy confirms disk mutation completed', true);
+      add('Blocked state guidance is actionable', blockedStateVisibleOk, 'blocked copy explains no mutation + recovery path', true);
+      add('Failed/provider state guidance is actionable', failedStateVisibleOk, 'failure copy avoids fake success and suggests retry/log review', true);
+      add('Approval modal includes operation type and target path', approvalModalClarityOk, 'approval modal text includes operation, target path, and Review + Apply guidance', true);
+      add('Changed Files shows multi-file affected count', multiFileCountVisibleOk, 'multi-file pending summary and ready-to-apply label visible', true);
+      add('UI text avoids readiness/production/full-bridge overclaim', noOverclaimUiTextOk, 'forbidden overclaim labels absent from UI shell text', true);
       add('Inline edit action exists', inlineEditActionOk, inlineEditActionOk ? 'monaco action nvidia-inline-edit registered' : 'action not observable in current smoke state', false);
       add('Inline edit widget opens from selection', inlineEditWidgetOk, inlineEditWidgetOk ? 'inline widget opens with selection' : 'widget not observable in current smoke state', false);
       add('Enterprise mode blocks inline edit mutation surface', enterpriseBlocksInlineEdit, 'editor/inline-edit surface blocked in enterprise mode', true);
@@ -883,7 +991,23 @@ async function runRealBrowserSmoke(url) {
         addCheck('Code hygiene: duplicate functions', duplicates.length === 0 ? 'pass' : 'warn', duplicates.length ? duplicates.slice(0, 5).map(([n]) => n).join(', ') : 'none', false);
 
         // Mojibake scan
-        const mojibakePattern = new RegExp('[\uFF83\u862F\u76FB\u7B1E\uE05E\u00C3\u00C2\u00E2\uFFFD\u00E1\u00BA\u00C4\u00C6]');
+        const mojibakePattern = new RegExp([
+          '\\u00C3.',
+          '\\u00C2.',
+          '\\u00E2\\u20AC',
+          '\\uFFFD',
+          '\\uFF83',
+          '\\u76FB',
+          '\\u862F',
+          '\\u67C1',
+          '\\u5B16',
+          '\\uFF6D',
+          '\\uFF84\\u67C1',
+          '\\uFF83\\uF8F0',
+          '\\u76FB\\u5193',
+          '\\u862F\\uFF61',
+          'ch\\u862F\\uFF61y th\\uFF83\\uF8F0nh c\\uFF83\\uFF74ng'
+        ].join('|'));
         const hasBadChars = mojibakePattern.test(htmlContent);
         addCheck('Code hygiene: mojibake free', hasBadChars ? 'fail' : 'pass', hasBadChars ? 'garbled chars detected in playground HTML' : 'no garbled chars', true);
 

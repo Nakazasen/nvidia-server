@@ -372,6 +372,7 @@ async function scenarioMove() {
   }, async ({ baseUrl }) => {
     const srcAbs = absPath(...srcRel.split('/'));
     const dstAbs = absPath(...dstRel.split('/'));
+    fs.mkdirSync(path.dirname(srcAbs), { recursive: true });
     fs.writeFileSync(srcAbs, 'MOVE CONTENT\n', 'utf8');
     const res = await postJson(`${baseUrl}/proxy/chat`, {
       model: 'auto',

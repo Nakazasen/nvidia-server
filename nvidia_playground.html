@@ -2198,7 +2198,8 @@
         <button class="btn-small" onclick="clearCompletedTasks()" style="margin: -10px 0 15px 0;">Clear Completed</button>
 
         <div class="sidebar-section-title">Changed Files</div>
-        <div id="changed-files-guide" style="font-size: 0.7rem; opacity: 0.7; padding: 0 0 5px 0;">Workflow: open a file, queue a proposal, review the diff, then apply only after approval.</div>
+        <div id="changed-files-guide" style="font-size: 0.7rem; opacity: 0.7; padding: 0 0 5px 0;">Workflow: queue a pending proposal first, review the diff, then use Review + Apply for disk mutation after approval.</div>
+        <div id="recent-operation-summary" style="font-size: 0.7rem; opacity: 0.82; padding: 0 0 8px 0; min-height: 18px;">Recent action: none yet. Chưa có thao tác gần đây.</div>
         <div id="changed-files-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 5px;">
             <div style="opacity: 0.3; text-align: center; padding: 10px;">No changes yet</div>
         </div>
@@ -2771,23 +2772,164 @@
             }
         }
 
+        let recentOperationSummary = {
+            label: 'Recent action: none yet. Chưa có thao tác gần đây.',
+            tone: 'neutral'
+        };
+
+        function inferPendingOperation(edit = {}) {
+            const explicit = String(edit.operation || '').trim().toLowerCase();
+            if (explicit) return explicit;
+            if (edit.before && edit.before.existed === false) return 'create';
+            return 'edit';
+        }
+
+        function operationLabel(operation = 'edit') {
+            const labels = {
+                create: 'Create',
+                edit: 'Edit',
+                delete: 'Delete',
+                move: 'Move'
+            };
+            return labels[operation] || 'Edit';
+        }
+
+        function operationLabelVi(operation = 'edit') {
+            const labels = {
+                create: 'Tạo file',
+                edit: 'Sửa file',
+                delete: 'Xóa file',
+                move: 'Đổi tên/di chuyển'
+            };
+            return labels[operation] || 'Sửa file';
+        }
+
+        function describeEditTargets(edit = {}) {
+            const operation = inferPendingOperation(edit);
+            if (operation === 'move') {
+                const sourcePath = edit.sourceRelPath || edit.relPath || 'unknown source';
+                const targetPath = edit.targetRelPath || edit.relPath || 'unknown target';
+                return `${sourcePath} → ${targetPath}`;
+            }
+            return edit.relPath || 'unknown target';
+        }
+
+        function summarizeTargetPaths(paths = []) {
+            const normalized = paths.filter(Boolean);
+            if (!normalized.length) return 'no target path';
+            if (normalized.length === 1) return normalized[0];
+            return `${normalized[0]} +${normalized.length - 1} more`;
+        }
+
+        function setRecentOperationSummary(summary = {}) {
+            const fallbackLabel = 'Recent action: none yet. Chưa có thao tác gần đây.';
+            recentOperationSummary = {
+                label: summary.label || fallbackLabel,
+                tone: summary.tone || 'neutral'
+            };
+            const el = document.getElementById('recent-operation-summary');
+            if (!el) return;
+            const tones = {
+                neutral: '#cfd6df',
+                pending: '#f5b942',
+                success: 'var(--primary)',
+                blocked: '#ff9f43',
+                failed: '#ff6b6b'
+            };
+            el.textContent = recentOperationSummary.label;
+            el.style.color = tones[recentOperationSummary.tone] || tones.neutral;
+        }
+
+        function renderWorkflowFailureMessage(toolName, observed = {}, fallbackText = '') {
+            const raw = String(observed?.error || observed?.message || observed?.observation || fallbackText || `${toolName} failed`).trim();
+            const normalized = raw.toLowerCase();
+            const targetPath = observed?.approvalRequest?.targetPath
+                || observed?.approvalRequest?.args?.targetPath
+                || observed?.approvalRequest?.args?.filePath
+                || observed?.relPath
+                || 'requested path';
+
+            if (/api key|nvidia_api_key|missing key|missing api key/.test(normalized)) {
+                return {
+                    status: 'failed',
+                    title: 'Provider failed | Lỗi provider',
+                    message: `Thiếu khóa provider cho ${targetPath}. Không có file nào được ghi ra đĩa.`,
+                    next: 'Next: kiểm tra NVIDIA_API_KEY hoặc .env bị ignore, rồi thử lại.',
+                    tone: 'failed'
+                };
+            }
+            if (/502|timeout|timed out|rate limit|429|unavailable|provider/.test(normalized)) {
+                return {
+                    status: 'failed',
+                    title: 'Provider unavailable | Provider tạm thời lỗi',
+                    message: `Provider chưa trả về kết quả tin cậy cho ${targetPath}. Không có trusted success và không có silent mutation.`,
+                    next: 'Next: thử lại, kiểm tra logs, hoặc đợi provider ổn định hơn.',
+                    tone: 'failed'
+                };
+            }
+            if (/trusted workspace|path traversal|outside the workspace|outside workspace|wildcard|glob|directory restriction|file-count limit exceeded|too many files/.test(normalized)) {
+                return {
+                    status: 'blocked',
+                    title: 'Blocked | Bị chặn',
+                    message: `${raw} Không có file nào được ghi ra đĩa.`,
+                    next: 'Next: thu hẹp phạm vi, dùng đường dẫn hợp lệ trong workspace, hoặc giảm số file.',
+                    tone: 'blocked'
+                };
+            }
+            if (/approval|auto-accept/.test(normalized)) {
+                return {
+                    status: 'blocked',
+                    title: 'Approval required | Cần phê duyệt',
+                    message: `Thao tác ${toolName} cho ${targetPath} đang bị chặn trước khi tạo pending operation. Chưa có mutation trên disk.`,
+                    next: 'Next: bật Auto-Accept hoặc phê duyệt trong modal, sau đó Review + Apply.',
+                    tone: 'blocked'
+                };
+            }
+            return {
+                status: 'failed',
+                title: 'Failed | Thất bại',
+                message: `${raw} Không có trusted success nào được xác nhận.`,
+                next: 'Next: kiểm tra logs và thử lại với phạm vi nhỏ hơn nếu cần.',
+                tone: 'failed'
+            };
+        }
+
         function updateChangedFiles(edits) {
             const list = document.getElementById('changed-files-list');
             if (!list) return;
             if (edits.length === 0) {
-                list.innerHTML = '<div style="opacity: 0.45; text-align: center; padding: 10px;">No pending edits yet. Save or queue a proposal, then review it here before apply.</div>';
+                list.innerHTML = '<div style="opacity: 0.45; text-align: center; padding: 10px;">No pending edits yet. Chưa có thao tác đang chờ. Save hoặc queue proposal trước, rồi Review + Apply mới ghi ra disk.</div>';
                 updateEditWorkflowGuide({ pendingCount: 0 });
                 return;
             }
-            list.innerHTML = edits.map(edit => `
-                <div class="file-item" style="justify-content: space-between;" onclick="openDiffViewer('${edit.id}')">
-                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+            const multiFileSummary = edits.length > 1
+                ? `<div style="font-size:0.68rem; opacity:0.72; padding:4px 6px 6px 6px;">Multi-file pending: ${edits.length} files đang chờ Review + Apply.</div>`
+                : '';
+            list.innerHTML = multiFileSummary + edits.map(edit => {
+                const operation = inferPendingOperation(edit);
+                const targetLabel = describeEditTargets(edit);
+                const statusLabel = 'Ready to apply | Sẵn sàng áp dụng';
+                const hunkCount = Array.isArray(edit.hunks) && edit.hunks.length ? edit.hunks.length : 1;
+                const riskNote = operation === 'delete'
+                    ? 'Delete remains pending until apply.'
+                    : (operation === 'move' ? 'Path change remains pending until apply.' : 'No disk mutation yet.');
+                return `
+                <div class="file-item" style="justify-content: space-between; align-items:flex-start;" onclick="openDiffViewer('${edit.id}')">
+                    <div style="display:flex; align-items:flex-start; gap:8px; overflow:hidden; flex:1;">
                         <span class="icon">[TASK]</span>
-                        <span style="overflow:hidden; text-overflow:ellipsis;">${escapeHtml(edit.relPath)}</span>
+                        <div style="display:flex; flex-direction:column; gap:2px; overflow:hidden;">
+                            <span style="font-size:0.7rem; color:var(--primary);">${escapeHtml(operationLabel(operation))} | ${escapeHtml(operationLabelVi(operation))}</span>
+                            <span style="overflow:hidden; text-overflow:ellipsis;">${escapeHtml(targetLabel)}</span>
+                            <span style="font-size:0.68rem; opacity:0.66;">${escapeHtml(riskNote)}</span>
+                        </div>
                     </div>
-                    <span style="font-size:0.7rem; opacity:0.5;">${edit.hunks ? edit.hunks.length : 1} hunks</span>
+                    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; margin-left:8px;">
+                        <span style="font-size:0.66rem; color:#f5b942;">${statusLabel}</span>
+                        <span style="font-size:0.66rem; opacity:0.55;">${hunkCount} hunk(s)</span>
+                    </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
             updateEditWorkflowGuide({ pendingCount: edits.length });
         }
 
@@ -2812,22 +2954,22 @@
             const diffVisible = document.getElementById('diff-body')?.style.display !== 'none';
             const pendingValue = pendingCount === null ? document.querySelectorAll('#changed-files-list .file-item').length : pendingCount;
             if (activeTab) {
-                fileEl.textContent = `Current file: ${activeTab.name}. Save queues a pending edit for review.`;
+                fileEl.textContent = `Current file: ${activeTab.name}. Save chỉ tạo pending proposal để review, chưa ghi disk.`;
             } else if (diffVisible) {
-                fileEl.textContent = `Reviewing diff: ${codeFilename.textContent || 'pending edit'}. Return to Explorer to open another file.`;
+                fileEl.textContent = `Reviewing diff: ${codeFilename.textContent || 'pending edit'}. Bạn đang ở bước review trước khi apply.`;
             } else {
-                fileEl.textContent = 'Open a file from Explorer or Recent Files to start.';
+                fileEl.textContent = 'Open a file from Explorer hoặc Recent Files để bắt đầu.';
             }
             proposalEl.textContent = pendingValue > 0
-                ? `${pendingValue} pending proposal(s) ready for diff review. Unsupported actions must stay labeled as unavailable or guarded.`
-                : 'No pending proposal yet. Save or Inline Edit should create a reviewable proposal, not a silent write.';
+                ? `${pendingValue} pending proposal(s) đang chờ review. Pending không ghi disk; chỉ Review + Apply mới mutate file.`
+                : 'No pending proposal yet. Save hoặc Inline Edit phải tạo proposal để review, không được silent write.';
             applyEl.textContent = diffVisible
-                ? 'You are in review mode. Apply remains approval-guarded and trust-guarded.'
-                : 'Apply is never silent. Review the diff first, then apply only after approval and trust checks pass.';
+                ? 'Bạn đang ở review mode. Apply vẫn bị guard bởi approval và trust check.'
+                : 'Apply is never silent. Review diff trước, rồi chỉ apply sau khi approval và trust checks pass.';
             if (currentView === 'diff') {
-                logEl.textContent = 'After review/apply, verify the result in Changed Files, Tasks, and Terminal/Jobs.';
+                logEl.textContent = 'Sau review/apply, kiểm tra Changed Files, Tasks, và Terminal/Jobs để xác nhận kết quả.';
             } else {
-                logEl.textContent = 'Use Tasks, Changed Files, and Terminal/Jobs to verify what happened.';
+                logEl.textContent = 'Dùng Tasks, Changed Files, và Terminal/Jobs để biết thao tác đang pending, applied, blocked, hay failed.';
             }
             updateCodeViewerEmptyState();
         }
@@ -2940,6 +3082,14 @@
             const div = document.createElement('div');
             div.id = `pending-${edit.id}`;
             div.className = 'message assistant-message';
+            const operation = inferPendingOperation(edit);
+            const operationText = `${operationLabel(operation)} | ${operationLabelVi(operation)}`;
+            const targetText = describeEditTargets(edit);
+            const warningText = operation === 'delete'
+                ? 'Delete này vẫn chỉ là pending. Chưa xóa gì trên disk cho đến khi bạn Review + Apply.'
+                : (operation === 'move'
+                    ? 'Move/rename này vẫn chỉ là pending. Chưa đổi path trên disk cho đến khi bạn Review + Apply.'
+                    : 'Đây mới là pending proposal. Chưa có disk mutation cho đến khi bạn Review + Apply.');
             const hunkHtml = Array.isArray(edit.hunks) && edit.hunks.length
                 ? edit.hunks.map(hunk => `
                     <label style="display:block; margin:8px 0;">
@@ -2951,8 +3101,11 @@
                 : `<div class="pending-edit-diff" onclick="openDiffViewer('${edit.id}')">${escapeHtml(edit.diff || '')}</div>`;
             div.innerHTML = `
                 <div class="pending-edit-card">
-                    <div><b>Pending edit:</b> ${escapeHtml(edit.relPath)} (${escapeHtml(edit.id)})</div>
-                    <div style="font-size:0.76rem; opacity:0.8; margin-top:6px;">This is a proposed change only. Review the diff first. Apply still requires approval.</div>
+                    <div><b>Pending:</b> ${escapeHtml(operationText)}</div>
+                    <div style="font-size:0.82rem; margin-top:4px;"><b>Target:</b> ${escapeHtml(targetText)} (${escapeHtml(edit.id)})</div>
+                    <div style="font-size:0.76rem; color:#f5b942; margin-top:6px;"><b>Status:</b> Ready to apply | Sẵn sàng áp dụng</div>
+                    <div style="font-size:0.76rem; opacity:0.82; margin-top:6px;">${escapeHtml(warningText)}</div>
+                    <div style="font-size:0.76rem; opacity:0.76; margin-top:4px;">Review diff trước. Approval chỉ tạo pending operation; Review + Apply mới ghi ra disk.</div>
                     ${hunkHtml}
                     <div style="display:flex; gap:10px; margin-top:10px;">
                         <button class="btn-small" style="flex:1" onclick="applyPendingEdit('${edit.id}')">Review + Apply</button>
@@ -2962,6 +3115,10 @@
             `;
             chatBox.appendChild(div);
             chatBox.scrollTop = chatBox.scrollHeight;
+            setRecentOperationSummary({
+                label: `Recent action: Pending ${operationLabel(operation).toLowerCase()} for ${summarizeTargetPaths([targetText])}. Next: review diff, then Review + Apply.`,
+                tone: 'pending'
+            });
             updateEditWorkflowGuide({ pendingCount: document.querySelectorAll('#changed-files-list .file-item').length || 1 });
         }
 
@@ -2978,10 +3135,17 @@
                 });
                 const data = await res.json();
                 if (!res.ok || data.error) {
-                    alert(data.error || 'Apply failed');
+                    const failure = renderWorkflowFailureMessage('apply_pending_edit', data, data.error || 'Apply failed');
+                    addMessage('assistant', `${failure.title}\n${failure.message}\n${failure.next}`);
+                    setRecentOperationSummary({
+                        label: `Recent action: ${failure.status === 'blocked' ? 'Blocked' : 'Failed'} apply for ${id}. ${failure.next}`,
+                        tone: failure.tone
+                    });
                     return;
                 }
                 const result = data.result || data;
+                const appliedTarget = describeEditTargets(result);
+                const appliedOperation = inferPendingOperation(result);
                 logDebug(`Apply pending edit ${id}: ${result.relPath}`);
                 const appliedTab = editorTabs.find(tab => tab.path === result.relPath);
                 if (appliedTab && appliedTab.pendingSaveEditId === id) {
@@ -2992,13 +3156,23 @@
                 }
                 const card = document.getElementById(`pending-${id}`);
                 if (card) {
-                    card.innerHTML = `<div style="color:var(--primary); padding:10px;"><b>Applied:</b> ${escapeHtml(result.relPath)}</div>`;
+                    card.innerHTML = `<div style="color:var(--primary); padding:10px;"><b>Applied:</b> ${escapeHtml(operationLabel(appliedOperation))} | ${escapeHtml(operationLabelVi(appliedOperation))} - ${escapeHtml(appliedTarget)}<div style="font-size:0.76rem; opacity:0.85; margin-top:6px;">Disk mutation completed. Áp dụng đã hoàn tất trên disk.</div></div>`;
                 }
+                addMessage('assistant', `Applied: ${appliedTarget}\nStatus: Applied | Đã áp dụng.\nDisk mutation completed successfully.`);
+                setRecentOperationSummary({
+                    label: `Recent action: Applied ${operationLabel(appliedOperation).toLowerCase()} for ${summarizeTargetPaths([appliedTarget])}. Next: verify result in Tasks/Changed Files/Terminal.`,
+                    tone: 'success'
+                });
                 refreshPendingEdits();
                 loadFileExplorer();
-                updateTaskTimeline({ type: 'apply', label: `Applied: ${result.relPath}`, status: 'completed' });
+                updateTaskTimeline({ type: 'apply', label: `Applied: ${appliedTarget}`, status: 'completed' });
             } catch (e) {
-                alert("Apply error: " + e.message);
+                const failure = renderWorkflowFailureMessage('apply_pending_edit', { error: e.message }, e.message);
+                addMessage('assistant', `${failure.title}\n${failure.message}\n${failure.next}`);
+                setRecentOperationSummary({
+                    label: `Recent action: Failed apply for ${id}. ${failure.next}`,
+                    tone: failure.tone
+                });
             }
         }
 
@@ -3846,13 +4020,35 @@
                     if (data.error) throw new Error(data.error);
                     if (data.agent && Array.isArray(data.agent.events)) {
                         for (const ev of data.agent.events) {
-                            if (ev.type === 'status') logDebug(`[Agent] ${ev.status} iteration ${ev.iteration || ''}`);
+                            if (ev.type === 'status') {
+                                logDebug(`[Agent] ${ev.status} iteration ${ev.iteration || ''}`);
+                                if (ev.status === 'awaiting_user_approval') {
+                                    const targetPath = ev.targetPath || 'requested path';
+                                    setRecentOperationSummary({
+                                        label: `Recent action: Approval required for ${targetPath}. Next: approve pending operation, then Review + Apply.`,
+                                        tone: 'blocked'
+                                    });
+                                } else if (ev.status === 'retrying_missing_write_file') {
+                                    setRecentOperationSummary({
+                                        label: 'Recent action: Agent retried because no trusted write_file succeeded yet. Next: inspect tool call and target path.',
+                                        tone: 'blocked'
+                                    });
+                                }
+                            }
                             if (ev.type === 'tool_start') logDebug(`[Tool] ${ev.tool} ${ev.arguments || ''}`);
                             if (ev.type === 'tool_result') {
                                 logDebug(`[Observe] ${ev.tool} ${ev.ok ? 'ok' : 'failed'}`);
                                 const observed = tryParseJson(ev.result);
                                 const pending = observed?.pendingEdit || observed?.pending_edit;
                                 if (pending) renderPendingEdit(pending);
+                                if (!ev.ok && !observed?.approvalRequired) {
+                                    const failure = renderWorkflowFailureMessage(ev.tool, observed || {}, ev.result || '');
+                                    addMessage('assistant', `${failure.title}\n${failure.message}\n${failure.next}`);
+                                    setRecentOperationSummary({
+                                        label: `Recent action: ${failure.status === 'blocked' ? 'Blocked' : 'Failed'} ${ev.tool} for ${summarizeTargetPaths([observed?.relPath, observed?.approvalRequest?.targetPath].filter(Boolean))}. ${failure.next}`,
+                                        tone: failure.tone
+                                    });
+                                }
                                 if (observed?.approvalRequired && (observed?.approvalRequest?.tool === 'write_file' || observed?.approvalRequest?.tool === 'delete_file' || observed?.approvalRequest?.tool === 'move_file') && isIdeMode() && !autoAcceptCheck.checked) {
                                     const approvalRequest = observed.approvalRequest;
                                     const toolName = approvalRequest.tool || 'write_file';
@@ -3863,12 +4059,12 @@
                                     const sourcePath = approvalRequest.args?.sourcePath || approvalRequest.args?.filePath || 'source';
                                     const moveTargetPath = approvalRequest.args?.targetPath || targetPath;
                                     const approved = await askPermission(toolName, approvalRequest.args || {}, {
-                                        title: isDelete ? 'Delete Approval Required' : (isMove ? 'Move/Rename Approval Required' : 'Write Approval Required'),
+                                        title: isDelete ? 'Delete Approval Required | Cần phê duyệt xóa' : (isMove ? 'Move/Rename Approval Required | Cần phê duyệt đổi tên' : 'Write Approval Required | Cần phê duyệt ghi file'),
                                         description: isDelete
-                                            ? `Queue a pending delete for ${targetPath}. No file will be deleted from disk yet. After approval, Review + Apply is still required to apply deletion.`
+                                            ? `Operation: delete | xóa file\nTarget path: ${targetPath}\nApproval này chỉ tạo pending delete. Chưa xóa gì trên disk. Sau khi approve, bạn vẫn phải Review + Apply để xóa thật. Đây là thao tác destructive sau apply.`
                                             : (isMove
-                                                ? `Queue a pending move/rename from ${sourcePath} to ${moveTargetPath}. No file will be moved on disk yet. After approval, Review + Apply is still required to apply move/rename.`
-                                                : `Create a pending edit for ${targetPath}. No file will be written to disk yet. After approval, Review + Apply is still required to write the file.`),
+                                                ? `Operation: move | đổi tên/di chuyển file\nSource path: ${sourcePath}\nTarget path: ${moveTargetPath}\nApproval này chỉ tạo pending move. Chưa đổi path nào trên disk. Sau khi approve, bạn vẫn phải Review + Apply để áp dụng path change.`
+                                                : `Operation: ${observed?.before?.existed === false ? 'create' : 'edit'} | ${observed?.before?.existed === false ? 'tạo file' : 'sửa file'}\nTarget path: ${targetPath}\nApproval này chỉ tạo pending operation. Chưa ghi gì ra disk. Sau khi approve, bạn vẫn phải Review + Apply để write file.`),
                                         allowLabel: isDelete ? 'Approve Pending Delete' : (isMove ? 'Approve Pending Move' : 'Approve Pending Edit'),
                                         denyLabel: 'Cancel'
                                     });
@@ -3877,11 +4073,20 @@
                                             await approveMutationRequest(approvalRequest);
                                         } catch (approvalError) {
                                             logDebug(`Approval replay failed: ${approvalError.message}`);
-                                            addMessage('assistant', `Approval failed for ${toolName} on ${targetPath}: ${approvalError.message}`);
+                                            const failure = renderWorkflowFailureMessage(toolName, { error: approvalError.message, relPath: targetPath }, approvalError.message);
+                                            addMessage('assistant', `${failure.title}\n${failure.message}\n${failure.next}`);
+                                            setRecentOperationSummary({
+                                                label: `Recent action: Failed approval replay for ${targetPath}. ${failure.next}`,
+                                                tone: failure.tone
+                                            });
                                         }
                                     } else {
                                         logDebug(`Approval denied for ${targetPath}.`);
-                                        addMessage('assistant', `Approval was not granted for ${toolName} on ${targetPath}. No file mutation was queued.`);
+                                        addMessage('assistant', `Blocked | Bị chặn\nApproval was not granted for ${toolName} on ${targetPath}. Không có pending operation nào được tạo và không có file mutation trên disk.\nNext: approve request nếu muốn tiếp tục, hoặc giữ nguyên hiện trạng.`);
+                                        setRecentOperationSummary({
+                                            label: `Recent action: Blocked ${toolName} for ${targetPath}. Next: approve request or keep current files unchanged.`,
+                                            tone: 'blocked'
+                                        });
                                     }
                                 }
                                 updateTaskTimeline({ type: 'tool', label: ev.tool, status: ev.ok ? 'completed' : 'failed' });

@@ -261,8 +261,10 @@ async function verifyApplyFlow(page, baseUrl, relPath, absPath, contentChecks, l
   const pendingCard = page.locator('.pending-edit-card').filter({ hasText: path.basename(uiRelPath) }).last();
   await pendingCard.waitFor({ state: 'visible' });
   const pendingText = await pendingCard.textContent() || '';
-  assert(/Pending edit:/i.test(pendingText), `${labelPrefix} pending edit card visible`);
-  assert(/proposed change only/i.test(pendingText), `${labelPrefix} pending edit remains proposed before apply`);
+  assert(/Pending:/i.test(pendingText), `${labelPrefix} pending edit card visible`);
+  assert(/Status:\s*Ready to apply|Sẵn sàng áp dụng/i.test(pendingText), `${labelPrefix} pending edit state is ready to apply`);
+  assert(/Target:/i.test(pendingText), `${labelPrefix} pending edit shows target path`);
+  assert(/Chưa có disk mutation|Chưa ghi gì ra disk|pending proposal/i.test(pendingText), `${labelPrefix} pending edit remains non-mutating before apply`);
   assert(/Review \+ Apply/i.test(pendingText), `${labelPrefix} Review + Apply visible`);
   assert(!fs.existsSync(absPath), `${labelPrefix} file absent before apply`);
 
@@ -270,12 +272,16 @@ async function verifyApplyFlow(page, baseUrl, relPath, absPath, contentChecks, l
   const changedFilesItems = page.locator('#changed-files-list .file-item').filter({ hasText: path.basename(uiRelPath) });
   await changedFilesItems.first().waitFor({ state: 'visible' });
   assert(await changedFilesItems.count() > 0, `${labelPrefix} changed files list shows pending edit`);
+  const changedFilesText = await page.locator('#changed-files-list').textContent() || '';
+  assert(/Ready to apply|Sẵn sàng áp dụng/i.test(changedFilesText), `${labelPrefix} changed files list shows ready-to-apply status`);
 
   await pendingCard.locator('button', { hasText: 'Review + Apply' }).click();
 
   await waitForCondition(async () => fs.existsSync(absPath), 10000, 'applied file on disk');
   const appliedMessage = page.locator('.assistant-message').filter({ hasText: 'Applied:' }).filter({ hasText: path.basename(uiRelPath) }).last();
   await appliedMessage.waitFor({ state: 'visible' });
+  const appliedText = await appliedMessage.textContent() || '';
+  assert(/Applied|Đã áp dụng/i.test(appliedText), `${labelPrefix} applied state visible in transcript`);
   assert(fs.existsSync(absPath), `${labelPrefix} file exists after apply`);
 
   const diskContent = fs.readFileSync(absPath, 'utf8');
@@ -340,7 +346,10 @@ async function runUiScenario({
       await page.waitForSelector('#modal-overlay.active', { state: 'visible' });
       const modalText = await page.locator('#modal-overlay').textContent() || '';
       assert(/Write Approval Required/i.test(modalText), `${fixtureName} approval-required modal visible`);
+      assert(/Operation:\s*(create|edit)/i.test(modalText), `${fixtureName} approval modal includes operation type`);
       assert(modalText.includes(relPath), `${fixtureName} approval modal references target path`);
+      assert(/pending operation/i.test(modalText), `${fixtureName} approval modal explains pending-only step`);
+      assert(/Review \+ Apply/i.test(modalText), `${fixtureName} approval modal explains Review + Apply requirement`);
       assert(!/không có lệnh write_file nào chạy thành công/i.test(finalAssistantContent), `${fixtureName} misleading chatbot fallback removed`);
       assert(/approve/i.test(finalAssistantContent), `${fixtureName} final assistant message asks for approval`);
       assert(!fs.existsSync(absPath), `${fixtureName} file absent before approval`);

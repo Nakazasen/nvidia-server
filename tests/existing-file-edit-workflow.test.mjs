@@ -293,7 +293,10 @@ async function runExistingEditUiScenario({ fixtureName, autoAccept, relPath, ini
       await page.waitForSelector('#modal-overlay.active', { state: 'visible' });
       const modalText = await page.locator('#modal-overlay').textContent() || '';
       assert(/Write Approval Required/i.test(modalText), `${fixtureName} approval modal visible`);
+      assert(/Operation:\s*edit/i.test(modalText), `${fixtureName} approval modal includes operation type`);
       assert(modalText.includes(relPath), `${fixtureName} approval modal references target path`);
+      assert(/pending operation/i.test(modalText), `${fixtureName} approval modal explains pending-only step`);
+      assert(/Review \+ Apply/i.test(modalText), `${fixtureName} approval modal explains Review + Apply requirement`);
       const beforeApprovalPending = await getPendingEdits(baseUrl);
       assert(!beforeApprovalPending.some((edit) => normalizeRelPath(edit.relPath) === relPath), `${fixtureName} no pending edit exists before approval`);
       await page.locator('#btn-allow').click();
@@ -319,13 +322,19 @@ async function runExistingEditUiScenario({ fixtureName, autoAccept, relPath, ini
     const pendingCard = page.locator('.pending-edit-card').filter({ hasText: 'edit_existing_target.py' }).last();
     await pendingCard.waitFor({ state: 'visible' });
     const pendingText = await pendingCard.textContent() || '';
-    assert(/Pending edit:/i.test(pendingText), `${fixtureName} pending edit card visible`);
+    assert(/Pending:/i.test(pendingText), `${fixtureName} pending edit card visible`);
+    assert(/Status:\s*Ready to apply|Sẵn sàng áp dụng/i.test(pendingText), `${fixtureName} pending edit state is ready to apply`);
+    assert(/Target:/i.test(pendingText), `${fixtureName} pending edit shows target path`);
+    assert(/pending proposal|Chưa có disk mutation|Chưa ghi gì ra disk/i.test(pendingText), `${fixtureName} pending edit remains non-mutating before apply`);
     assert(/Review \+ Apply/i.test(pendingText), `${fixtureName} Review + Apply visible`);
 
     await page.locator('#btn-tasks').click();
     const changedItem = page.locator('#changed-files-list .file-item').filter({ hasText: 'edit_existing_target.py' }).first();
     await changedItem.waitFor({ state: 'visible' });
     assert(await changedItem.count() > 0, `${fixtureName} changed-files list includes target`);
+    const changedFilesText = await page.locator('#changed-files-list').textContent() || '';
+    assert(/Edit \| Sửa file/i.test(changedFilesText), `${fixtureName} changed-files list shows operation type`);
+    assert(/Ready to apply|Sẵn sàng áp dụng/i.test(changedFilesText), `${fixtureName} changed-files list shows ready-to-apply state`);
 
     await pendingCard.locator('button', { hasText: 'Review + Apply' }).click();
     await waitForCondition(async () => fs.readFileSync(absPath, 'utf8') === expectedContent, 10000, 'updated disk content after apply');
