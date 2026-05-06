@@ -576,6 +576,8 @@
             flex: 1;
             overflow-y: auto;
             padding: 20px;
+            padding-bottom: 28px;
+            scroll-padding-bottom: 120px;
             display: flex;
             flex-direction: column;
             gap: 15px;
@@ -667,6 +669,9 @@
         .input-area {
             padding: 20px 40px;
             background: linear-gradient(to top, var(--bg) 80%, transparent);
+            position: sticky;
+            bottom: 0;
+            z-index: 45;
         }
 
         .input-wrapper {
@@ -727,7 +732,7 @@
             border: 1px solid var(--primary);
             background: rgba(var(--primary-rgb), 0.08);
             border-radius: 8px;
-            padding: 10px;
+            padding: 12px;
             margin: 10px 0;
             font-family: Consolas, monospace;
             font-size: 0.78rem;
@@ -1766,9 +1771,10 @@
             background: none;
             border: 1px solid var(--primary);
             color: var(--primary);
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.7rem;
+            padding: 6px 10px;
+            min-height: 30px;
+            border-radius: 6px;
+            font-size: 0.74rem;
             cursor: pointer;
             transition: 0.2s;
         }
@@ -1830,6 +1836,17 @@
 
         .composer-body {
             padding: 10px;
+        }
+
+        .pending-edit-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .pending-edit-actions .btn-small {
+            flex: 1 1 180px;
         }
 
         /* Context Pills */
@@ -2352,7 +2369,7 @@
                 Attached code selection
             </div>
             <div id="pinned-context" class="context-pills"></div>
-            <div class="input-area" style="position: relative;">
+            <div class="input-area">
                 <div id="slash-menu" class="slash-menu"></div>
                 <div id="media-preview" style="display:flex; gap:10px; margin-bottom:10px;"></div>
                 <div class="input-wrapper">
@@ -3107,9 +3124,9 @@
                     <div style="font-size:0.76rem; opacity:0.82; margin-top:6px;">${escapeHtml(warningText)}</div>
                     <div style="font-size:0.76rem; opacity:0.76; margin-top:4px;">Review diff trước. Approval chỉ tạo pending operation; Review + Apply mới ghi ra disk.</div>
                     ${hunkHtml}
-                    <div style="display:flex; gap:10px; margin-top:10px;">
-                        <button class="btn-small" style="flex:1" onclick="applyPendingEdit('${edit.id}')">Review + Apply</button>
-                        <button class="btn-small" style="flex:1; background:#333; color:#fff;" onclick="openDiffViewer('${edit.id}')">Open Diff</button>
+                    <div class="pending-edit-actions">
+                        <button class="btn-small" onclick="applyPendingEdit('${edit.id}')">Review + Apply (write disk)</button>
+                        <button class="btn-small" style="background:#333; color:#fff;" onclick="openDiffViewer('${edit.id}')">Open Diff (details)</button>
                     </div>
                 </div>
             `;

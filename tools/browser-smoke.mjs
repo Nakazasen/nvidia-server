@@ -520,6 +520,12 @@ async function runRealBrowserSmoke(url) {
       let approvalModalClarityOk = false;
       let multiFileCountVisibleOk = false;
       let noOverclaimUiTextOk = false;
+      let keyWorkflowControlsVisibleOk = false;
+      let noCriticalBottomActionClippedOk = false;
+      let visibilityDiagnostic = '';
+      let reviewButtonVisible = false;
+      let reviewButtonNotClipped = false;
+      let reviewButtonDiagnostic = 'review:not-measured';
       let inlineEditActionOk = false;
       let inlineEditWidgetOk = false;
       let enterpriseBlocksInlineEdit = false;
@@ -568,6 +574,13 @@ async function runRealBrowserSmoke(url) {
         }
 
         if (typeof window.renderPendingEdit === 'function') {
+          if (typeof window.closeCodeViewer === 'function') {
+            window.closeCodeViewer();
+            await sleep(120);
+          } else {
+            document.getElementById('code-viewer')?.classList.remove('active');
+            await sleep(80);
+          }
           window.renderPendingEdit({
             id: 'smoke-preview-edit',
             relPath: 'package.json',
@@ -591,6 +604,50 @@ async function runRealBrowserSmoke(url) {
             !!pendingCard &&
             /Pending:/i.test(pendingText) &&
             /Status:\s*Ready to apply/i.test(pendingText);
+          const reviewBtnBeforeApplied = pendingCard?.querySelector('button');
+          const isInViewport = (el) => {
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 &&
+              rect.height > 0 &&
+              rect.bottom > 0 &&
+              rect.top < window.innerHeight &&
+              style.visibility !== 'hidden' &&
+              style.display !== 'none';
+          };
+          const describeVisibility = (name, el) => {
+            if (!el) return `${name}:missing`;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            const cx = Math.max(0, Math.min(window.innerWidth - 1, rect.left + (rect.width / 2)));
+            const cy = Math.max(0, Math.min(window.innerHeight - 1, rect.top + Math.min(rect.height / 2, 12)));
+            const hit = document.elementFromPoint(cx, cy);
+            const hitName = hit ? `${hit.tagName.toLowerCase()}#${hit.id || ''}.${String(hit.className || '').replace(/\s+/g, '.')}` : 'none';
+            return [
+              `${name}:exists`,
+              `visible=${isInViewport(el)}`,
+              `rect=${Math.round(rect.left)},${Math.round(rect.top)},${Math.round(rect.right)},${Math.round(rect.bottom)},${Math.round(rect.width)}x${Math.round(rect.height)}`,
+              `style=${style.display}/${style.visibility}/${style.opacity}/${style.position}/z${style.zIndex}`,
+              `hit=${hitName}`
+            ].join(' ');
+          };
+          if (reviewBtnBeforeApplied && typeof reviewBtnBeforeApplied.scrollIntoView === 'function') {
+            reviewBtnBeforeApplied.scrollIntoView({ block: 'center' });
+            await sleep(60);
+          }
+          reviewButtonVisible = isInViewport(reviewBtnBeforeApplied);
+          reviewButtonNotClipped = !!reviewBtnBeforeApplied && (() => {
+            const rect = reviewBtnBeforeApplied.getBoundingClientRect();
+            const cx = rect.left + (rect.width / 2);
+            const cy = rect.top + Math.min(rect.height / 2, 12);
+            const hit = document.elementFromPoint(cx, cy);
+            return rect.bottom <= window.innerHeight &&
+              rect.top >= 0 &&
+              rect.height > 0 &&
+              (!!hit && (hit === reviewBtnBeforeApplied || reviewBtnBeforeApplied.contains(hit)));
+          })();
+          reviewButtonDiagnostic = describeVisibility('review', reviewBtnBeforeApplied);
 
           window.updateChangedFiles([
             {
@@ -657,6 +714,77 @@ async function runRealBrowserSmoke(url) {
 
           const fullUiText = document.body?.textContent || '';
           noOverclaimUiTextOk = !/DAILY_USE_READY|PRODUCTION_READY|FULL_BRIDGE_READY|COGNITIVE_OS_ACHIEVED|ENTERPRISE_GRADE_SECURITY/i.test(fullUiText);
+          const inViewport = (el) => {
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 &&
+              rect.height > 0 &&
+              rect.bottom > 0 &&
+              rect.top < window.innerHeight &&
+              style.visibility !== 'hidden' &&
+              style.display !== 'none';
+          };
+          const describeElement = (name, el) => {
+            if (!el) return `${name}:missing`;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            const cx = Math.max(0, Math.min(window.innerWidth - 1, rect.left + (rect.width / 2)));
+            const cy = Math.max(0, Math.min(window.innerHeight - 1, rect.top + (rect.height / 2)));
+            const hit = document.elementFromPoint(cx, cy);
+            const hitName = hit ? `${hit.tagName.toLowerCase()}#${hit.id || ''}.${String(hit.className || '').replace(/\s+/g, '.')}` : 'none';
+            return [
+              `${name}:exists`,
+              `visible=${inViewport(el)}`,
+              `rect=${Math.round(rect.left)},${Math.round(rect.top)},${Math.round(rect.right)},${Math.round(rect.bottom)},${Math.round(rect.width)}x${Math.round(rect.height)}`,
+              `style=${style.display}/${style.visibility}/${style.opacity}/${style.position}/z${style.zIndex}`,
+              `hit=${hitName}`
+            ].join(' ');
+          };
+          const sendBtn = document.querySelector('#send-button') || document.querySelector('.btn-send');
+          let tasksPanelReachable = false;
+          let changedFilesPanelReachable = false;
+          let recentActionReachable = false;
+          const tasksBtnForVisibility = document.querySelector('#btn-tasks');
+          if (tasksBtnForVisibility && typeof tasksBtnForVisibility.click === 'function') {
+            tasksBtnForVisibility.click();
+            await sleep(120);
+            const tasksPanel = document.querySelector('#sidebar-tasks');
+            const changedFilesPanel = document.querySelector('#changed-files-list');
+            const recentAction = document.querySelector('#recent-operation-summary');
+            if (recentAction && typeof recentAction.scrollIntoView === 'function') {
+              recentAction.scrollIntoView({ block: 'nearest' });
+              await sleep(40);
+            }
+            if (changedFilesPanel && typeof changedFilesPanel.scrollIntoView === 'function') {
+              changedFilesPanel.scrollIntoView({ block: 'nearest' });
+              await sleep(40);
+            }
+            tasksPanelReachable = !!tasksPanel && window.getComputedStyle(tasksPanel).display !== 'none';
+            changedFilesPanelReachable = !!changedFilesPanel && changedFilesPanel.clientHeight > 0;
+            recentActionReachable = !!recentAction && recentAction.clientHeight > 0;
+          }
+          const explorerBtnBack = document.querySelector('#btn-explorer');
+          if (explorerBtnBack && typeof explorerBtnBack.click === 'function') {
+            explorerBtnBack.click();
+            await sleep(80);
+          }
+          keyWorkflowControlsVisibleOk =
+            inViewport(sendBtn) &&
+            reviewButtonVisible &&
+            tasksPanelReachable &&
+            changedFilesPanelReachable &&
+            recentActionReachable;
+          noCriticalBottomActionClippedOk = reviewButtonNotClipped;
+          visibilityDiagnostic = [
+            `viewport=${window.innerWidth}x${window.innerHeight}`,
+            describeElement('send', sendBtn),
+            reviewButtonDiagnostic,
+            `tasksReachable=${tasksPanelReachable}`,
+            `changedReachable=${changedFilesPanelReachable}`,
+            `recentReachable=${recentActionReachable}`,
+            `reviewNotClipped=${reviewButtonNotClipped}`
+          ].join(' | ');
 
           if (typeof window.setRecentOperationSummary === 'function') {
             window.setRecentOperationSummary({ label: 'Recent action: none yet. Chưa có thao tác gần đây.', tone: 'neutral' });
@@ -709,6 +837,8 @@ async function runRealBrowserSmoke(url) {
       add('Approval modal includes operation type and target path', approvalModalClarityOk, 'approval modal text includes operation, target path, and Review + Apply guidance', true);
       add('Changed Files shows multi-file affected count', multiFileCountVisibleOk, 'multi-file pending summary and ready-to-apply label visible', true);
       add('UI text avoids readiness/production/full-bridge overclaim', noOverclaimUiTextOk, 'forbidden overclaim labels absent from UI shell text', true);
+      add('Key workflow controls are visible', keyWorkflowControlsVisibleOk, visibilityDiagnostic || 'send/review/changed-files/recent-action are visible in viewport', true);
+      add('Critical bottom actions are not clipped', noCriticalBottomActionClippedOk, visibilityDiagnostic || 'review/apply button stays inside viewport bounds', true);
       add('Inline edit action exists', inlineEditActionOk, inlineEditActionOk ? 'monaco action nvidia-inline-edit registered' : 'action not observable in current smoke state', false);
       add('Inline edit widget opens from selection', inlineEditWidgetOk, inlineEditWidgetOk ? 'inline widget opens with selection' : 'widget not observable in current smoke state', false);
       add('Enterprise mode blocks inline edit mutation surface', enterpriseBlocksInlineEdit, 'editor/inline-edit surface blocked in enterprise mode', true);
