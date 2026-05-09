@@ -261,6 +261,46 @@ async function runRootMismatchBlocked() {
   removeIfExists(absRoot);
 }
 
+async function runExplicitPathDominatesFallbackRootPrompt() {
+  const relPath = 'proof/manual-revalidation/edit_target.py';
+  const rootPath = 'edit_target.py';
+  const absTarget = absFromRel(relPath);
+  const absRoot = absFromRel(rootPath);
+  fs.mkdirSync(path.dirname(absTarget), { recursive: true });
+  fs.writeFileSync(absTarget, 'def add(a, b):\n    return a + b\n', 'utf8');
+  removeIfExists(absRoot);
+
+  await withServer('manual-reliability-explicit-path-dominates-root-fallback', [
+    { message: { role: 'assistant', content: '', tool_calls: [toolCall('tc_explicit_path_dominates_root_fallback', 'write_file', { filePath: rootPath, content: 'def add(a, b):\n    return a + b + 1\n' })] } },
+    { message: { role: 'assistant', content: 'Edited successfully.' } }
+  ], async (baseUrl) => {
+    const before = fs.readFileSync(absTarget, 'utf8');
+    const res = await postJson(`${baseUrl}/proxy/chat`, {
+      model: 'auto',
+      messages: [{ role: 'user', content: 'Sửa file proof/manual-revalidation/edit_target.py nhưng nếu không thấy thì tạo edit_target.py' }],
+      autoAccept: true
+    });
+    assert(res.ok, 'mixed explicit-path/root-fallback prompt /proxy/chat returns 200', `status=${res.status}`);
+    const writeResults = extractToolResults(res.data?.agent?.events || [], 'write_file');
+    const mismatch = writeResults.find(ev => !ev.ok && /TARGET_PATH_MISMATCH/i.test(ev.result || ''));
+    const mismatchPayload = tryParseJson(mismatch?.result || '');
+    assert(Boolean(mismatch), 'mixed explicit-path/root-fallback prompt blocks root fallback before pending creation');
+    assert(mismatchPayload?.code === 'TARGET_PATH_MISMATCH', 'mixed explicit-path/root-fallback exposes TARGET_PATH_MISMATCH code');
+    assert(mismatchPayload?.expectedPath === relPath, 'mixed explicit-path/root-fallback expected path recorded as nested path');
+    assert(mismatchPayload?.actualPath === rootPath, 'mixed explicit-path/root-fallback actual path recorded as root fallback');
+    const pending = await getPending(baseUrl);
+    assert(!pending.some(p => normalizeRelPath(p.relPath) === rootPath), 'mixed explicit-path/root-fallback creates no wrong root pending edit');
+    assert(!fs.existsSync(absRoot), 'mixed explicit-path/root-fallback does not create root file');
+    assert(fs.readFileSync(absTarget, 'utf8') === before, 'mixed explicit-path/root-fallback leaves explicit target unchanged before apply');
+    const finalText = String(res.data?.choices?.[0]?.message?.content || '');
+    assert(/Blocked: TARGET_PATH_MISMATCH/i.test(finalText), 'mixed explicit-path/root-fallback final message is blocked');
+    assert(!/(edited successfully|created successfully|applied successfully|pending operation created for: edit_target\.py)/i.test(finalText), 'mixed explicit-path/root-fallback final message has no fake success or wrong pending');
+  });
+
+  removeIfExists(absTarget);
+  removeIfExists(absRoot);
+}
+
 async function runEditDeleteMoveExactPaths() {
   const editRel = 'proof/manual-validation/edit_target.py';
   const deleteRel = 'proof/manual-validation/delete_target.txt';
@@ -373,10 +413,11 @@ async function runTraversalBlockedNoFallback() {
 
 console.log('\nManual Reliability Regression Tests\n');
 
-await runExplicitCreatePreservesPath();
-await runRootMismatchBlocked();
-await runEditDeleteMoveExactPaths();
-await runTraversalBlockedNoFallback();
+  await runExplicitCreatePreservesPath();
+  await runRootMismatchBlocked();
+  await runExplicitPathDominatesFallbackRootPrompt();
+  await runEditDeleteMoveExactPaths();
+  await runTraversalBlockedNoFallback();
 
 process.stdout.write(`\nSummary: ${passed} passed, ${failed} failed\n`);
 if (failed > 0) {

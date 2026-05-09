@@ -2398,6 +2398,19 @@ function normalizeWriteTargetPath(candidate = '') {
     return normalizeExplicitWorkspacePath(candidate);
 }
 
+function prioritizeExplicitWorkspacePaths(paths = []) {
+    const normalized = Array.from(new Set((Array.isArray(paths) ? paths : [])
+        .map(p => normalizeExplicitWorkspacePath(p))
+        .filter(Boolean)));
+    const nested = normalized.filter(p => p.includes('/'));
+    if (!nested.length) return normalized;
+    const nestedBasenames = new Set(nested.map(p => path.posix.basename(p)));
+    return normalized.filter(p => {
+        if (!nestedBasenames.has(path.posix.basename(p))) return true;
+        return p.includes('/');
+    });
+}
+
 function extractExplicitWorkspacePaths(text = '') {
     const input = String(text || '');
     const patterns = [
@@ -2417,7 +2430,7 @@ function extractExplicitWorkspacePaths(text = '') {
             }
         }
     }
-    return out;
+    return prioritizeExplicitWorkspacePaths(out);
 }
 
 function hasPathLikeMention(text = '') {
