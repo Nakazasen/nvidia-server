@@ -140,6 +140,18 @@ async function postJson(url, body, headers = {}) {
   return { status: res.status, ok: res.ok, data };
 }
 
+async function getJson(url, headers = {}) {
+  const res = await fetch(url, { headers });
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { raw: text };
+  }
+  return { status: res.status, ok: res.ok, data };
+}
+
 async function getPending(baseUrl) {
   const res = await postJson(`${baseUrl}/api/pending_edits`, {}, APPROVED);
   return res.data?.result || res.data || [];
@@ -399,6 +411,42 @@ async function runAbsolutePathInsideWorkspaceNormalizesToRelative() {
   }
 }
 
+async function runWorkspaceSwitchAcceptsValidWindowsPath() {
+  await withServer('manual-reliability-workspace-switch-valid', [], async (baseUrl) => {
+    const initialWorkspace = await getJson(`${baseUrl}/api/workspace`);
+    assert(initialWorkspace.ok, 'workspace switch valid initial GET returns 200', `status=${initialWorkspace.status}`);
+    assert(Boolean(initialWorkspace.data?.path), 'workspace switch valid initial workspace payload is readable');
+
+    const switched = await postJson(`${baseUrl}/api/workspace`, { path: APP_DIR });
+    assert(switched.ok, 'workspace switch valid path accepted', `status=${switched.status}`);
+    assert(switched.data?.status === 'success', 'workspace switch valid response reports success');
+    assert(switched.data?.path === APP_DIR, 'workspace switch valid active workspace becomes NVIDIA workspace');
+
+    const after = await getJson(`${baseUrl}/api/workspace`);
+    assert(after.ok, 'workspace switch valid GET after switch returns 200', `status=${after.status}`);
+    assert(after.data?.path === APP_DIR, 'workspace switch valid workspace label source updates to NVIDIA workspace');
+  }, { workspacePath: CONTROL_WORKSPACE });
+}
+
+async function runWorkspaceSwitchRejectsInvalidPathHonestly() {
+  await withServer('manual-reliability-workspace-switch-invalid', [], async (baseUrl) => {
+    const before = await getJson(`${baseUrl}/api/workspace`);
+    assert(before.ok, 'workspace switch invalid initial GET returns 200', `status=${before.status}`);
+    assert(before.data?.path === CONTROL_WORKSPACE, 'workspace switch invalid initial workspace is control workspace');
+
+    const invalidTarget = 'D:\\Sandbox\\__does_not_exist__';
+    const rejected = await postJson(`${baseUrl}/api/workspace`, { path: invalidTarget });
+    assert(!rejected.ok, 'workspace switch invalid path rejected');
+    const errorText = String(rejected.data?.error || '');
+    assert(/does not exist|invalid/i.test(errorText), 'workspace switch invalid response explains real reason');
+
+    const after = await getJson(`${baseUrl}/api/workspace`);
+    assert(after.ok, 'workspace switch invalid GET after rejection returns 200', `status=${after.status}`);
+    assert(after.data?.path === CONTROL_WORKSPACE, 'workspace switch invalid keeps workspace unchanged');
+    assert(after.data?.path !== invalidTarget, 'workspace switch invalid does not fake success');
+  }, { workspacePath: CONTROL_WORKSPACE });
+}
+
 async function runEditDeleteMoveExactPaths() {
   const editRel = 'proof/manual-validation/edit_target.py';
   const deleteRel = 'proof/manual-validation/delete_target.txt';
@@ -516,6 +564,8 @@ console.log('\nManual Reliability Regression Tests\n');
   await runExplicitPathDominatesFallbackRootPrompt();
   await runAbsolutePathOutsideWorkspaceFailsFast();
   await runAbsolutePathInsideWorkspaceNormalizesToRelative();
+  await runWorkspaceSwitchAcceptsValidWindowsPath();
+  await runWorkspaceSwitchRejectsInvalidPathHonestly();
   await runEditDeleteMoveExactPaths();
   await runTraversalBlockedNoFallback();
 

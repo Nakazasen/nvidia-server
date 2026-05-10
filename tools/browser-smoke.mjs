@@ -318,7 +318,7 @@ async function runRealBrowserSmoke(url) {
     }
     addCheck('Page readiness selector', selectorReady ? 'pass' : 'fail', selectorReady ? `attached: ${selectorReady}` : `none matched within ${SELECTOR_TIMEOUT_MS}ms`, true);
 
-    const domChecks = await page.evaluate(async () => {
+    const domChecks = await page.evaluate(async ({ appDir, controlWorkspace }) => {
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       const checks = [];
       const add = (name, pass, detail, required = true) => checks.push({ name, pass, detail, required });
@@ -452,6 +452,33 @@ async function runRealBrowserSmoke(url) {
       }
       add('Context picker opens when typing @', contextOpen, 'slash menu active with items', true);
 
+      let workspaceSwitchUiOk = false;
+      let workspaceSwitchUiDetail = 'workspace switch not exercised';
+      try {
+        const controlResolved = await (await fetch('/api/workspace', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: controlWorkspace })
+        })).json();
+        const appResolved = await (await fetch('/api/workspace', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: appDir })
+        })).json();
+        if (controlResolved?.status === 'success' && appResolved?.status === 'success' && typeof window.loadWorkspaceInfo === 'function') {
+          await window.loadWorkspaceInfo();
+          await sleep(150);
+          const label = (document.querySelector('#current-workspace-path')?.textContent || '').trim();
+          workspaceSwitchUiOk = label === appDir;
+          workspaceSwitchUiDetail = `label=${label}`;
+        } else {
+          workspaceSwitchUiDetail = `control=${controlResolved?.error || controlResolved?.status} app=${appResolved?.error || appResolved?.status}`;
+        }
+      } catch (error) {
+        workspaceSwitchUiDetail = error.message;
+      }
+      add('Workspace switch UI accepts valid Windows path and updates label', workspaceSwitchUiOk, workspaceSwitchUiDetail, true);
+
       let terminalOk = false;
       let jobsOk = false;
       let problemsOk = false;
@@ -569,7 +596,10 @@ async function runRealBrowserSmoke(url) {
           await sleep(220);
           const diffButton = tempHost.querySelector('.diff-header button');
           const diffNote = tempHost.querySelector('.workflow-diff-note');
-          diffReviewUiOk = !!diffButton && /Queue for Review/i.test(diffButton.textContent || '') && !!diffNote && /does not silently write/i.test(diffNote.textContent || '');
+          diffReviewUiOk = !!diffButton
+            && (/Queue for Review/i.test(diffButton.textContent || '') || /Đưa vào hàng đợi Duyệt/i.test(diffButton.textContent || ''))
+            && !!diffNote
+            && (/does not silently write/i.test(diffNote.textContent || '') || /không ghi tệp trực tiếp/i.test(diffNote.textContent || ''));
           tempHost.remove();
         }
 
@@ -888,6 +918,9 @@ async function runRealBrowserSmoke(url) {
       add('Security/Permissions UI exists', securitySectionOk, '#security-permissions-section + #permissions-list', true);
 
       return { checks };
+    }, {
+      appDir: APP_DIR,
+      controlWorkspace: path.resolve(APP_DIR, '..', 'ABW_NVIDIA_FUSION_CONTROL')
     });
 
     for (const check of domChecks.checks || []) {
@@ -1033,9 +1066,14 @@ async function runRealBrowserSmoke(url) {
       const section = exists('#project-rules-section');
       const rulesList = exists('#project-rules-list');
       const memoryList = exists('#project-memory-list');
-      const addBtn = [...document.querySelectorAll('button')].some(btn => btn.textContent?.includes('Add Rule'));
-      const warning1 = (document.querySelector('#rules-warning-1')?.textContent || '').includes('not a proof system');
-      const warning2 = (document.querySelector('#rules-warning-2')?.textContent || '').includes('No automatic self-learning');
+      const addBtn = [...document.querySelectorAll('button')].some(btn => {
+        const text = btn.textContent || '';
+        return text.includes('Add Rule') || text.includes('Th\u00eam Quy t\u1eafc');
+      });
+      const warning1Text = document.querySelector('#rules-warning-1')?.textContent || '';
+      const warning2Text = document.querySelector('#rules-warning-2')?.textContent || '';
+      const warning1 = warning1Text.includes('not a proof system') || warning1Text.includes('kh\u00f4ng ph\u1ea3i l\u00e0 m\u1ed9t h\u1ec7 th\u1ed1ng ch\u1ee9ng minh');
+      const warning2 = warning2Text.includes('No automatic self-learning') || warning2Text.includes('Kh\u00f4ng c\u00f3 t\u00ednh n\u0103ng t\u1ef1 h\u1ecdc t\u1ef1 \u0111\u1ed9ng');
 
       const denyBtn = document.getElementById('btn-deny');
       if (denyBtn) denyBtn.click();

@@ -2475,6 +2475,27 @@ function hasPathLikeMention(text = '') {
     return /(?:^|[\s"'`(])(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[A-Za-z0-9_.-]+[\\/])?[A-Za-z0-9_.-]+\.[A-Za-z0-9]+(?:$|[\s"'`).,;:!?])/m.test(String(text || ''));
 }
 
+function normalizeWorkspaceInputPath(input = '') {
+    const raw = String(input || '').trim().replace(/^["'`]+|["'`]+$/g, '');
+    if (!raw) {
+        return { ok: false, error: 'Workspace path is required.' };
+    }
+    const resolved = path.resolve(raw);
+    if (!fs.existsSync(resolved)) {
+        return { ok: false, error: `Workspace path does not exist: ${resolved}` };
+    }
+    let stats = null;
+    try {
+        stats = fs.statSync(resolved);
+    } catch (error) {
+        return { ok: false, error: `Unable to inspect workspace path: ${resolved}. ${error.message}` };
+    }
+    if (!stats.isDirectory()) {
+        return { ok: false, error: `Workspace path is not a directory: ${resolved}` };
+    }
+    return { ok: true, path: resolved };
+}
+
 function getExplicitPathBlockReason(text = '') {
     const input = String(text || '');
     if (/(^|[\s"'`(])(?:\.{1,2}[\\/]|[^\s"'`]*[\\/]\.\.[\\/])/.test(input)) {
@@ -3380,6 +3401,7 @@ const server = http.createServer(async (req, res) => {
             if (req.url === '/api/agent_providers') return sendJSON(res, 200, { providers: extensionHost.getAgentProviders() });
             if (req.url === '/api/files') return sendJSON(res, 200, { tree: workspaceCore.getFileTree(currentWorkspace) });
             if (req.url === '/api/files_flat') return sendJSON(res, 200, { files: workspaceCore.getFilesFlat(currentWorkspace) });
+            if (req.url === '/api/workspace') return sendJSON(res, 200, { path: currentWorkspace, trust: getWorkspaceTrustStatus() });
             if (req.url === '/api/trust') return sendJSON(res, 200, getWorkspaceTrustStatus());
             if (req.url === '/api/profile') return sendJSON(res, 200, loadProfile());
             if (req.url === '/api/settings') return sendJSON(res, 200, getSettingsPayload());
@@ -3565,8 +3587,9 @@ const server = http.createServer(async (req, res) => {
 
         if (req.url === '/api/workspace') {
             const body = await getBody(req);
-            if (!body.path || !fs.existsSync(body.path)) return sendJSON(res, 400, { error: 'Invalid workspace path' });
-            currentWorkspace = path.resolve(body.path);
+            const normalizedWorkspace = normalizeWorkspaceInputPath(body.path);
+            if (!normalizedWorkspace.ok) return sendJSON(res, 400, { error: normalizedWorkspace.error });
+            currentWorkspace = normalizedWorkspace.path;
             workspaceCore.setWorkspace(currentWorkspace);
             extensionHost.setWorkspace(currentWorkspace);
             console.log(`[WORKSPACE] Switched to: ${currentWorkspace}`);

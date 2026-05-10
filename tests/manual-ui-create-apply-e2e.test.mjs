@@ -205,7 +205,8 @@ async function openScenarioPage(baseUrl, autoAccept) {
   await page.waitForFunction(() => typeof window.sendMessage === 'function' && typeof window.setUIMode === 'function');
   await page.waitForFunction(() => {
     const debugConsole = document.getElementById('debug-console');
-    return Boolean(debugConsole && /ready\./i.test(debugConsole.textContent || ''));
+    const text = debugConsole?.textContent || '';
+    return Boolean(debugConsole && (/ready\./i.test(text) || /sẵn sàng/i.test(text)));
   });
   await page.evaluate(() => {
     const hasSession = typeof currentSessionId !== 'undefined'
