@@ -46,7 +46,7 @@ function writeFixtureFile(name, responses) {
   return fixturePath;
 }
 
-function startServer({ port, fixturePath }) {
+function startServer({ port, fixturePath, extraEnv = {} }) {
   return new Promise((resolve, reject) => {
     const child = spawn('node', [SERVER_SCRIPT], {
       cwd: APP_DIR,
@@ -56,7 +56,8 @@ function startServer({ port, fixturePath }) {
         HOST,
         NVIDIA_SERVER_HOST: HOST,
         NVIDIA_TEST_CHAT_FIXTURE: fixturePath,
-        NVIDIA_WORKSPACE_TRUST: 'always'
+        NVIDIA_WORKSPACE_TRUST: 'always',
+        ...extraEnv
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
@@ -182,7 +183,7 @@ async function withServer(name, responses, runFn, options = {}) {
   const port = 5200 + Math.floor(Math.random() * 600);
   let server = null;
   try {
-    server = await startServer({ port, fixturePath });
+    server = await startServer({ port, fixturePath, extraEnv: options.extraEnv || {} });
     const baseUrl = `http://${HOST}:${port}`;
     await waitForServer(baseUrl);
     const trustedWorkspace = options.trustedWorkspace !== false;
@@ -218,7 +219,8 @@ async function runExplicitCreatePreservesPath() {
     const res = await postJson(`${baseUrl}/proxy/chat`, {
       model: 'auto',
       messages: [{ role: 'user', content: 'Tao file proof/edit_target.py voi noi dung VALUE = 1' }],
-      autoAccept: true
+      autoAccept: true,
+      manualValidation: true
     });
     assert(res.ok, 'create exact /proxy/chat returns 200', `status=${res.status}`);
     const pending = await getPending(baseUrl);
@@ -257,7 +259,8 @@ async function runRootMismatchBlocked() {
     const res = await postJson(`${baseUrl}/proxy/chat`, {
       model: 'auto',
       messages: [{ role: 'user', content: 'Sua file proof/edit_target.py de VALUE = 2' }],
-      autoAccept: true
+      autoAccept: true,
+      manualValidation: true
     });
     assert(res.ok, 'root mismatch /proxy/chat returns 200', `status=${res.status}`);
     const writeResults = extractToolResults(res.data?.agent?.events || [], 'write_file');
@@ -659,6 +662,30 @@ async function runTraversalBlockedNoFallback() {
   removeIfExists(inferredFallbackAbs);
 }
 
+async function runManualValidationRateGuardClassification() {
+  await withServer('manual-reliability-rate-guard-classification', [], async (baseUrl) => {
+    await getJson(`${baseUrl}/api/models`);
+    await getJson(`${baseUrl}/api/models`);
+    await getJson(`${baseUrl}/api/models`);
+    const res = await postJson(`${baseUrl}/proxy/chat`, {
+      model: 'auto',
+      messages: [{ role: 'user', content: 'Validate rate guard classification' }],
+      autoAccept: true,
+      manualValidation: true
+    });
+    assert(res.ok, 'rate guard classification /proxy/chat returns 200', `status=${res.status}`);
+    const message = res.data?.choices?.[0]?.message || {};
+    const providerGuard = res.data?.providerGuard || message.providerGuard || null;
+    assert(providerGuard?.code === 'PROVIDER_RATE_GUARD_BLOCKED', 'rate guard classification exposes PROVIDER_RATE_GUARD_BLOCKED');
+    assert(Number.isFinite(providerGuard?.retryAfterSeconds) || Number.isFinite(providerGuard?.retryAfterMs) || /Retry after/i.test(String(message.content || '')), 'rate guard classification exposes retry timing');
+    assert(providerGuard?.attemptedFileOperation === false, 'rate guard classification says no file operation attempted');
+    assert(providerGuard?.diskMutated === false, 'rate guard classification says no disk mutation');
+    assert(!/Pending operation created/i.test(String(message.content || '')), 'rate guard classification does not imply pending operation');
+    assert(!/successfully/i.test(String(message.content || '')), 'rate guard classification does not fake success');
+    assert(!/failed/i.test(String(message.content || '')) || /rate guard/i.test(String(message.content || '')), 'rate guard classification stays provider-focused');
+  }, { trustedWorkspace: false, workspacePath: CONTROL_WORKSPACE, extraEnv: { NVIDIA_RATE_LIMIT_RPM: '1', NVIDIA_RATE_LIMIT_BURST_MAX: '1', NVIDIA_RATE_LIMIT_SOFT_RPM: '1' } });
+}
+
 console.log('\nManual Reliability Regression Tests\n');
 
   await runExplicitCreatePreservesPath();
@@ -673,6 +700,7 @@ console.log('\nManual Reliability Regression Tests\n');
   await runWorkspaceSwitchRejectsInvalidPathHonestly();
   await runEditDeleteMoveExactPaths();
   await runTraversalBlockedNoFallback();
+  await runManualValidationRateGuardClassification();
 
 process.stdout.write(`\nSummary: ${passed} passed, ${failed} failed\n`);
 if (failed > 0) {

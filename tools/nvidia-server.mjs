@@ -1255,7 +1255,26 @@ class LocalRateLimitError extends Error {
         this.statusCode = 429;
         this.retryAfterMs = status.retryAfterMs;
         this.rateLimit = status;
+        this.rateGuardCode = 'PROVIDER_RATE_GUARD_BLOCKED';
     }
+}
+
+function buildRateGuardBlockedMessage(error) {
+    const retrySeconds = Number.isFinite(Number(error?.retryAfterMs)) ? Math.ceil(Number(error.retryAfterMs) / 1000) : null;
+    const rateLimit = error?.rateLimit || {};
+    const retryText = retrySeconds ? ` Retry after ${retrySeconds}s.` : ' Retry later when the provider limit clears.';
+    return {
+        role: 'assistant',
+        content: `Blocked: PROVIDER_RATE_GUARD_BLOCKED. Provider/rate guard blocked the chat response before any file operation was attempted or completed. ${rateLimit.usedLastMinute ?? 0}/${rateLimit.rpmLimit ?? '?'} RPM, ${rateLimit.usedBurstWindow ?? 0}/${rateLimit.burstLimit ?? '?'} in ${Math.round((rateLimit.burstWindowMs || 1000) / 1000)}s.${retryText} No pending operation was created and no file was mutated on disk.`,
+        providerGuard: {
+            code: 'PROVIDER_RATE_GUARD_BLOCKED',
+            retryAfterMs: retrySeconds !== null ? Number(error?.retryAfterMs) : null,
+            retryAfterSeconds: retrySeconds,
+            rateLimit,
+            attemptedFileOperation: false,
+            diskMutated: false
+        }
+    };
 }
 
 function reserveNimRequest(label = 'NVIDIA API') {
@@ -3305,6 +3324,26 @@ async function handleProxyChat(req, res) {
     const data = await getBody(req);
     const providerResolved = resolveProviderForChat(data.model);
     console.log(`[POST] /proxy/chat - Provider: ${providerResolved.provider.id} Model: ${providerResolved.model}`);
+    if (data.manualValidation === true || data.manual_validation === true) {
+        const rateStatus = getRateLimitStatus();
+        if (rateStatus.limited) {
+            const blockedMessage = buildRateGuardBlockedMessage({ rateLimit: rateStatus, retryAfterMs: rateStatus.retryAfterMs });
+            const result = {
+                id: `agent-${Date.now()}`,
+                object: 'chat.completion',
+                created: Math.floor(Date.now() / 1000),
+                model: providerResolved.model,
+                choices: [{ index: 0, message: blockedMessage, finish_reason: 'stop' }],
+                providerGuard: blockedMessage.providerGuard,
+                agent: {
+                    autonomous: true,
+                    iterations: 0,
+                    events: [{ type: 'status', iteration: 0, status: 'blocked_provider_rate_guard', reason: 'PROVIDER_RATE_GUARD_BLOCKED', retryAfterMs: rateStatus.retryAfterMs, rateLimit: rateStatus }]
+                }
+            };
+            return sendJSON(res, 200, result);
+        }
+    }
     const abortController = new AbortController();
     req.on('close', () => {
         if (!res.writableEnded) abortController.abort();
@@ -4532,11 +4571,17 @@ Rewrite the selected code to fulfill the instruction. Output ONLY the rewritten 
     } catch (e) {
         console.error(`[ERR] ${req.method} ${req.url}`, e);
         if (e && Number.isInteger(e.statusCode) && e.statusCode >= 400 && e.statusCode < 600) {
-            return sendJSON(res, e.statusCode, {
+            const payload = {
                 ok: false,
                 error: redactSecrets(e.message || 'Permission denied'),
                 permission: e.permission || null
-            });
+            };
+            if (e instanceof LocalRateLimitError) {
+                payload.code = 'PROVIDER_RATE_GUARD_BLOCKED';
+                payload.rateLimit = e.rateLimit;
+                payload.retryAfterMs = e.retryAfterMs;
+            }
+            return sendJSON(res, e.statusCode, payload);
         }
         if (e.name === 'AbortError') {
             if (req.url === '/proxy/chat' && !res.headersSent && !res.writableEnded) {
