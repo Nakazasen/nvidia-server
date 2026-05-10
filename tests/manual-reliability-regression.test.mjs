@@ -411,6 +411,108 @@ async function runAbsolutePathInsideWorkspaceNormalizesToRelative() {
   }
 }
 
+async function runMoveContractStopsAfterPendingOperation() {
+  const sourceRel = 'proof/manual-contract/rename_source.txt';
+  const targetRel = 'proof/manual-contract/renamed_target.txt';
+  const sourceAbs = absFromRel(sourceRel);
+  const targetAbs = absFromRel(targetRel);
+  removeIfExists(path.join(APP_DIR, 'proof', 'manual-contract'));
+
+  await withServer('manual-reliability-move-contract-stop-after-pending', [
+    {
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          toolCall('tc_move_contract_ok', 'move_file', { sourcePath: sourceAbs, targetPath: targetAbs, reason: 'rename file' }),
+          toolCall('tc_move_contract_wrong_write', 'write_file', { filePath: targetRel, content: 'WRONG FALLBACK\n' })
+        ]
+      }
+    }
+  ], async (baseUrl) => {
+    fs.mkdirSync(path.dirname(sourceAbs), { recursive: true });
+    fs.writeFileSync(sourceAbs, 'RENAME SOURCE OK\n', 'utf8');
+    removeIfExists(targetAbs);
+
+    const res = await postJson(`${baseUrl}/proxy/chat`, {
+      model: 'auto',
+      messages: [{ role: 'user', content: `Đổi tên ${sourceAbs} thành ${targetAbs}` }],
+      autoAccept: true
+    });
+    assert(res.ok, 'move contract /proxy/chat returns 200', `status=${res.status}`);
+    const events = res.data?.agent?.events || [];
+    assert(events.some(ev => ev.type === 'tool_start' && ev.tool === 'move_file'), 'move contract uses move_file');
+    assert(!events.some(ev => ev.type === 'tool_start' && ev.tool === 'write_file'), 'move contract does not fallback to write_file after valid move_file');
+    const finalText = String(res.data?.choices?.[0]?.message?.content || '');
+    assert(!/TARGET_OPERATION_MISMATCH/i.test(finalText), 'move contract final message avoids TARGET_OPERATION_MISMATCH');
+    assert(/Pending operation created/i.test(finalText), 'move contract final message reports pending move');
+    const pending = await getPending(baseUrl);
+    const edit = pending.find(p => normalizeRelPath(p.sourceRelPath) === sourceRel && normalizeRelPath(p.targetRelPath) === targetRel);
+    assert(Boolean(edit?.id), 'move contract pending move created');
+    assert(fs.existsSync(sourceAbs) && !fs.existsSync(targetAbs), 'move contract no pre-apply mutation');
+    const apply = await applyPending(baseUrl, edit);
+    assert(apply.ok, 'move contract apply succeeds', `status=${apply.status}`);
+    assert(!fs.existsSync(sourceAbs) && fs.existsSync(targetAbs), 'move contract disk changed after apply');
+    assert(fs.readFileSync(targetAbs, 'utf8') === 'RENAME SOURCE OK\n', 'move contract preserved content');
+  });
+
+  removeIfExists(path.join(APP_DIR, 'proof', 'manual-contract'));
+}
+
+async function runExplicitEditFallbackBlocksHonestly() {
+  const relPath = 'proof/manual-revalidation/edit_target.py';
+  const rootAbs = absFromRel('edit_target.py');
+  const exactAbs = absFromRel(relPath);
+  removeIfExists(rootAbs);
+  removeIfExists(path.join(APP_DIR, 'proof', 'manual-revalidation'));
+
+  await withServer('manual-reliability-explicit-edit-blocked-honestly', [
+    { message: { role: 'assistant', content: 'I will use the write_file tool to update the file.' } }
+  ], async (baseUrl) => {
+    fs.mkdirSync(path.dirname(exactAbs), { recursive: true });
+    fs.writeFileSync(exactAbs, 'def add(a, b):\n    return a + b\n', 'utf8');
+    const before = fs.readFileSync(exactAbs, 'utf8');
+
+    const res = await postJson(`${baseUrl}/proxy/chat`, {
+      model: 'auto',
+      messages: [{ role: 'user', content: 'Sửa file proof/manual-revalidation/edit_target.py nhưng nếu không thấy thì tạo edit_target.py' }],
+      autoAccept: true
+    });
+    assert(res.ok, 'explicit edit blocked /proxy/chat returns 200', `status=${res.status}`);
+    const finalText = String(res.data?.choices?.[0]?.message?.content || '');
+    assert(/Blocked: TARGET_PATH_MISMATCH/i.test(finalText), 'explicit edit blocked final message reports TARGET_PATH_MISMATCH');
+    assert(!/I will use the write_file tool/i.test(finalText), 'explicit edit blocked final message is not tool-intent text');
+    const pending = await getPending(baseUrl);
+    assert(pending.length === 0, 'explicit edit blocked creates no pending operation');
+    assert(!fs.existsSync(rootAbs), 'explicit edit blocked does not create root fallback file');
+    assert(fs.readFileSync(exactAbs, 'utf8') === before, 'explicit edit blocked keeps exact file unchanged');
+  });
+
+  removeIfExists(rootAbs);
+  removeIfExists(path.join(APP_DIR, 'proof', 'manual-revalidation'));
+}
+
+async function runImpossibleOutsideWorkspaceRenameBlockedHonestly() {
+  await withServer('manual-reliability-impossible-outside-workspace-rename', [
+    { message: { role: 'assistant', content: 'I will use the move_file tool to rename the file.' } }
+  ], async (baseUrl) => {
+    const res = await postJson(`${baseUrl}/proxy/chat`, {
+      model: 'auto',
+      messages: [{ role: 'user', content: 'Đổi tên D:\\Sandbox\\__not_nvidia__\\missing.txt thành D:\\Sandbox\\__not_nvidia__\\moved.txt' }],
+      autoAccept: true
+    });
+    assert(res.ok, 'outside workspace impossible rename /proxy/chat returns 200', `status=${res.status}`);
+    const events = res.data?.agent?.events || [];
+    assert(events.some(ev => ev.type === 'status' && ev.status === 'blocked_preflight'), 'outside workspace impossible rename is blocked preflight');
+    assert(!events.some(ev => ev.type === 'tool_start' && ev.tool === 'execute_command'), 'outside workspace impossible rename does not call execute_command');
+    const pending = await getPending(baseUrl);
+    assert(pending.length === 0, 'outside workspace impossible rename creates no pending operation');
+    const finalText = String(res.data?.choices?.[0]?.message?.content || '');
+    assert(/BLOCKED_WORKSPACE_MISMATCH/i.test(finalText), 'outside workspace impossible rename final message is blocked');
+    assert(!/I will use the move_file tool/i.test(finalText), 'outside workspace impossible rename final message is not tool-intent text');
+  }, { trustedWorkspace: false, workspacePath: CONTROL_WORKSPACE });
+}
+
 async function runWorkspaceSwitchAcceptsValidWindowsPath() {
   await withServer('manual-reliability-workspace-switch-valid', [], async (baseUrl) => {
     const initialWorkspace = await getJson(`${baseUrl}/api/workspace`);
@@ -564,6 +666,9 @@ console.log('\nManual Reliability Regression Tests\n');
   await runExplicitPathDominatesFallbackRootPrompt();
   await runAbsolutePathOutsideWorkspaceFailsFast();
   await runAbsolutePathInsideWorkspaceNormalizesToRelative();
+  await runMoveContractStopsAfterPendingOperation();
+  await runExplicitEditFallbackBlocksHonestly();
+  await runImpossibleOutsideWorkspaceRenameBlockedHonestly();
   await runWorkspaceSwitchAcceptsValidWindowsPath();
   await runWorkspaceSwitchRejectsInvalidPathHonestly();
   await runEditDeleteMoveExactPaths();

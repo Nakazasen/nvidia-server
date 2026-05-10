@@ -2410,6 +2410,11 @@ function isFileWriteIntent(text = '') {
     return writeTokens.some(token => lower.includes(token)) || asksForMarkdownArtifact || asksForGenericProgramFile || fuzzyVietnameseWriteIntent;
 }
 
+function isEditLikeFileIntent(text = '') {
+    const lower = normalizeIntentText(text);
+    return /\b(edit|modify|update|sua|chinh sua|cap nhat)\b/.test(lower);
+}
+
 function normalizeExplicitWorkspacePath(candidate = '') {
     const raw = cleanExplicitPathCandidate(candidate);
     if (!raw || raw.length > 400) return '';
@@ -2647,6 +2652,35 @@ function getFileToolTargetMismatch(toolName, args = {}, expectation = {}) {
         return { code: 'TARGET_PATH_MISMATCH', role: 'filePath', expectedPath, actualPath: actualPath || String(rawPath) };
     }
     return null;
+}
+
+function isExpectedOperationTool(toolName, expectation = {}) {
+    if (expectation.operation === 'move') return toolName === 'move_file';
+    if (expectation.operation === 'delete') return toolName === 'delete_file';
+    if (expectation.operation === 'write') return toolName === 'write_file' || toolName === 'apply_patch';
+    return false;
+}
+
+function isToolIntentOnlyMessage(content = '') {
+    const text = String(content || '').trim();
+    if (!text) return false;
+    return /\b(i will|here is the command|i can use|i am going to use|toi se|toi co the dung|s[eẽ]\s+dung)\b/i.test(text)
+        && /\b(write_file|move_file|delete_file|apply_patch|execute_command)\b/i.test(text);
+}
+
+function buildExplicitOperationFailureMessage(expectation = {}, failure = null) {
+    const op = expectation.operation || 'requested operation';
+    const detail = failure?.error ? ` ${failure.error}` : '';
+    if (expectation.operation === 'move') {
+        return `Failed: move_file did not complete for "${expectation.sourcePath || 'requested source'}" -> "${expectation.targetPath || 'requested target'}".${detail} No pending operation was created and no file was mutated on disk.`;
+    }
+    if (expectation.operation === 'delete') {
+        return `Failed: delete_file did not complete for "${expectation.targetPath || expectation.paths?.[0] || 'requested target'}".${detail} No pending operation was created and no file was mutated on disk.`;
+    }
+    if (expectation.operation === 'write' && expectation.paths?.length) {
+        return `Blocked: TARGET_PATH_MISMATCH. No acceptable exact-path write/edit operation was produced for "${expectation.paths.join(', ')}". No pending operation was created and no file was mutated on disk.`;
+    }
+    return `Failed: the ${op} did not complete.${detail} No pending operation was created and no file was mutated on disk.`;
 }
 
 function summarizeFileOperationTarget(result = {}) {
@@ -2943,6 +2977,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
     const lastUserText = getLastUserText(messages);
     const fileExpectation = getManualFileExpectation(lastUserText);
     const requiresFileWrite = isFileWriteIntent(lastUserText);
+    const editLikeFileIntent = isEditLikeFileIntent(lastUserText);
     const writeTargetHint = requiresFileWrite ? extractExplicitOrInferredWriteTarget(lastUserText) : '';
     const explicitPathContract = buildExplicitPathContract(fileExpectation);
     if (explicitPathContract) {
@@ -2951,7 +2986,9 @@ async function runAutonomousAgent(data, callbacks = {}) {
     if (requiresFileWrite) {
         messages.unshift({
             role: 'system',
-            content: writeTargetHint
+            content: editLikeFileIntent && fileExpectation.paths?.length
+                ? 'The current user request appears to require editing an explicitly named workspace file. Use apply_patch or write_file only for the exact requested workspace-relative path(s). If an exact-path edit cannot be completed safely, report the task as blocked instead of inventing a fallback filename or claiming success.'
+                : writeTargetHint
                 ? `The current user request appears to require creating, writing, or saving a file. You must call write_file and receive its tool result before saying the file was created or saved. Use the workspace-relative relPath "${writeTargetHint}" unless the user explicitly names a different safe workspace file. In the final answer, include the exact relPath returned by write_file. If you cannot write the file, say that clearly and do not claim it exists.`
                 : 'The current user request appears to require creating, writing, or saving a file. You must call write_file and receive its tool result before saying the file was created or saved. If the user did not specify a filename and you cannot safely infer one, ask for a concrete workspace-relative filename instead of pretending the file exists. In the final answer, include the exact relPath returned by write_file. If you cannot write the file, say that clearly and do not claim it exists.'
         });
@@ -2959,10 +2996,12 @@ async function runAutonomousAgent(data, callbacks = {}) {
     const events = [];
     let finalMessage = null;
     let successfulWrite = false;
+    let successfulExpectedOperation = false;
     let writeEnforcementRetried = false;
     let forcedWriteFallbackUsed = false;
     let pendingApprovalRequest = null;
     let targetMismatch = null;
+    let expectedOperationFailure = null;
     const pendingFileOperations = [];
     const appliedFileOperations = [];
     const failedFileOperations = [];
@@ -3018,7 +3057,8 @@ async function runAutonomousAgent(data, callbacks = {}) {
         emit('status', { iteration, status, toolCalls: toolCalls.map(tc => tc.function?.name) });
         events.push({ type: 'status', iteration, status, toolCalls: toolCalls.map(tc => tc.function?.name) });
 
-        const toolResults = await Promise.all(toolCalls.map(async toolCall => {
+        const toolResults = [];
+        for (const toolCall of toolCalls) {
             if (signal?.aborted) return { role: 'tool', tool_call_id: toolCall.id, content: 'Aborted by user.' };
             const toolName = toolCall.function?.name || 'unknown';
             emit('tool_start', { iteration, tool: toolName, arguments: toolCall.function?.arguments || '{}' });
@@ -3052,6 +3092,7 @@ async function runAutonomousAgent(data, callbacks = {}) {
                 });
             if (mismatch && !targetMismatch) targetMismatch = mismatch;
             if (toolName === 'write_file' && result?.ok !== false) successfulWrite = true;
+            if (isExpectedOperationTool(toolName, fileExpectation) && result?.ok !== false) successfulExpectedOperation = true;
             if ((toolName === 'write_file' || toolName === 'delete_file' || toolName === 'move_file') && result?.approvalRequired && result?.approvalRequest && !pendingApprovalRequest) {
                 pendingApprovalRequest = result.approvalRequest;
             }
@@ -3064,6 +3105,9 @@ async function runAutonomousAgent(data, callbacks = {}) {
             }
             if (['write_file', 'apply_patch', 'delete_file', 'move_file', 'apply_pending_edit'].includes(toolName) && result?.ok === false) {
                 failedFileOperations.push({ tool: toolName, error: result.error || result.message || 'failed' });
+                if (!result?.approvalRequired && isExpectedOperationTool(toolName, fileExpectation) && !expectedOperationFailure) {
+                    expectedOperationFailure = { tool: toolName, error: result.error || result.message || 'failed' };
+                }
             }
             const content = toolResult(result);
             const ok = result?.ok !== false;
@@ -3071,8 +3115,9 @@ async function runAutonomousAgent(data, callbacks = {}) {
             emit('tool_result', { iteration, tool: toolName, ok, result: content });
             events.push({ type: 'tool_result', iteration, tool: toolName, ok, result: content });
             if (!ok) terminalStatus = 'failed';
-            return { role: 'tool', tool_call_id: toolCall.id, content };
-        }));
+            toolResults.push({ role: 'tool', tool_call_id: toolCall.id, content });
+            if (targetMismatch || pendingApprovalRequest || expectedOperationFailure || (successfulExpectedOperation && fileExpectation.operation && fileExpectation.operation !== 'write')) break;
+        }
         messages.push(...toolResults);
     };
 
@@ -3105,8 +3150,16 @@ async function runAutonomousAgent(data, callbacks = {}) {
 
         const toolCalls = message.tool_calls || [];
         if (toolCalls.length === 0) {
+            if (fileExpectation.paths?.length && isToolIntentOnlyMessage(message.content)) {
+                finalMessage = {
+                    role: 'assistant',
+                    content: buildExplicitOperationFailureMessage(fileExpectation)
+                };
+                terminalStatus = 'failed';
+                break;
+            }
             if (requiresFileWrite && !successfulWrite) {
-                if (!forcedWriteFallbackUsed && writeTargetHint) {
+                if (!editLikeFileIntent && !forcedWriteFallbackUsed && writeTargetHint) {
                     const forcedWriteMessage = await requestForcedWriteFileToolCall({
                         messages,
                         model,
@@ -3126,7 +3179,9 @@ async function runAutonomousAgent(data, callbacks = {}) {
                     writeEnforcementRetried = true;
                     messages.push({
                         role: 'system',
-                        content: 'No successful write_file tool call has happened yet. Continue the task by calling write_file now with a concrete workspace-relative filePath and complete content. Do not provide a final answer until write_file succeeds or you explicitly state that you cannot create the file.'
+                        content: editLikeFileIntent && fileExpectation.paths?.length
+                            ? 'No acceptable exact-path edit has happened yet. Continue the task by calling apply_patch or write_file for the exact requested workspace-relative path only. Do not provide a final answer until the exact-path edit succeeds or you explicitly report the task as blocked.'
+                            : 'No successful write_file tool call has happened yet. Continue the task by calling write_file now with a concrete workspace-relative filePath and complete content. Do not provide a final answer until write_file succeeds or you explicitly state that you cannot create the file.'
                     });
                     events.push({ type: 'status', iteration, status: 'retrying_missing_write_file' });
                     continue;
@@ -3142,7 +3197,23 @@ async function runAutonomousAgent(data, callbacks = {}) {
         }
 
         await executeToolCalls(toolCalls, iteration, 'acting');
-        if (pendingApprovalRequest && !successfulWrite) {
+        if (targetMismatch) {
+            finalMessage = {
+                role: 'assistant',
+                content: buildExplicitOperationFailureMessage(fileExpectation, { error: `Blocked by ${targetMismatch.code}.` })
+            };
+            terminalStatus = 'failed';
+            break;
+        }
+        if (expectedOperationFailure) {
+            finalMessage = {
+                role: 'assistant',
+                content: buildExplicitOperationFailureMessage(fileExpectation, expectedOperationFailure)
+            };
+            terminalStatus = 'failed';
+            break;
+        }
+        if (pendingApprovalRequest && !successfulExpectedOperation) {
             const targetPath = pendingApprovalRequest.targetPath || 'the requested workspace file';
             const pendingTool = pendingApprovalRequest.tool || 'write_file';
             events.push({ type: 'status', iteration, status: 'awaiting_user_approval', tool: pendingTool, targetPath });
@@ -3188,6 +3259,12 @@ async function runAutonomousAgent(data, callbacks = {}) {
             content: `Pending operation created for: ${targets}. Review + Apply is still required before any disk mutation.`
         };
         terminalStatus = terminalStatus === 'running' ? 'needs_user' : terminalStatus;
+    } else if (fileExpectation.paths?.length && (isToolIntentOnlyMessage(finalMessage?.content) || (editLikeFileIntent && requiresFileWrite && !successfulExpectedOperation))) {
+        finalMessage = {
+            role: 'assistant',
+            content: buildExplicitOperationFailureMessage(fileExpectation)
+        };
+        terminalStatus = 'failed';
     } else if (failedFileOperations.length > 0 && finalMessage?.content && /(created|edited|deleted|moved|applied|successfully|thanh cong|da tao|da sua|da xoa|da doi ten)/i.test(String(finalMessage.content))) {
         const failure = failedFileOperations[0];
         finalMessage = {
