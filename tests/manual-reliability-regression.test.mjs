@@ -5,9 +5,11 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const APP_DIR = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
+const CONTROL_WORKSPACE = path.resolve(path.join(APP_DIR, '..', 'ABW_NVIDIA_FUSION_CONTROL'));
 const SERVER_SCRIPT = path.join(APP_DIR, 'tools', 'nvidia-server.mjs');
 const HOST = '127.0.0.1';
 const APPROVED = { 'X-Agent-Approved': 'true' };
+const WRONG_DISTORTED_PATH = `${CONTROL_WORKSPACE}\\Sandbox\\Nvidia\\proof`;
 
 let passed = 0;
 let failed = 0;
@@ -163,7 +165,7 @@ function tryParseJson(value) {
   }
 }
 
-async function withServer(name, responses, runFn) {
+async function withServer(name, responses, runFn, options = {}) {
   const fixturePath = writeFixtureFile(name, responses);
   const port = 5200 + Math.floor(Math.random() * 600);
   let server = null;
@@ -171,8 +173,13 @@ async function withServer(name, responses, runFn) {
     server = await startServer({ port, fixturePath });
     const baseUrl = `http://${HOST}:${port}`;
     await waitForServer(baseUrl);
-    await postJson(`${baseUrl}/api/profile`, { uiMode: 'ide', trustedWorkspace: true });
-    await postJson(`${baseUrl}/api/trust`, { trusted: true });
+    const trustedWorkspace = options.trustedWorkspace !== false;
+    await postJson(`${baseUrl}/api/profile`, { uiMode: 'ide', trustedWorkspace });
+    if (options.workspacePath) {
+      const switched = await postJson(`${baseUrl}/api/workspace`, { path: options.workspacePath });
+      assert(switched.ok, `${name} workspace switched`, `status=${switched.status}`);
+    }
+    await postJson(`${baseUrl}/api/trust`, { trusted: trustedWorkspace });
     await runFn(baseUrl);
   } finally {
     await stopServer(server);
@@ -301,6 +308,97 @@ async function runExplicitPathDominatesFallbackRootPrompt() {
   removeIfExists(absRoot);
 }
 
+async function runAbsolutePathOutsideWorkspaceFailsFast() {
+  const sourceAbs = path.join(APP_DIR, 'proof', 'rename_source.txt');
+  const targetAbs = path.join(APP_DIR, 'proof', 'renamed_target.txt');
+  const sourceSnapshot = fs.existsSync(sourceAbs) ? fs.readFileSync(sourceAbs, 'utf8') : null;
+  const targetSnapshot = fs.existsSync(targetAbs) ? fs.readFileSync(targetAbs, 'utf8') : null;
+  removeIfExists(targetAbs);
+  fs.mkdirSync(path.dirname(sourceAbs), { recursive: true });
+  fs.writeFileSync(sourceAbs, sourceSnapshot ?? 'RENAME ABSOLUTE SOURCE\n', 'utf8');
+
+  await withServer('manual-reliability-absolute-path-outside-workspace', [
+    { message: { role: 'assistant', content: '', tool_calls: [toolCall('tc_workspace_mismatch', 'list_dir', { dirPath: 'Sandbox/Nvidia/proof' })] } },
+    { message: { role: 'assistant', content: '', tool_calls: [toolCall('tc_workspace_mismatch_exec', 'execute_command', { command: 'dir "D:\\Sandbox\\Nvidia\\proof\\rename_source.txt"' })] } }
+  ], async (baseUrl) => {
+    const res = await postJson(`${baseUrl}/proxy/chat`, {
+      model: 'auto',
+      messages: [{ role: 'user', content: 'Đổi tên D:\\Sandbox\\Nvidia\\proof\\rename_source.txt thành D:\\Sandbox\\Nvidia\\proof\\renamed_target.txt' }],
+      autoAccept: true
+    });
+    assert(res.ok, 'absolute outside workspace /proxy/chat returns 200', `status=${res.status}`);
+    const events = res.data?.agent?.events || [];
+    assert(events.some(ev => ev.type === 'status' && ev.status === 'blocked_preflight'), 'absolute outside workspace is blocked preflight');
+    assert(!events.some(ev => ev.type === 'tool_start' && ev.tool === 'list_dir'), 'absolute outside workspace does not call list_dir');
+    assert(!events.some(ev => ev.type === 'tool_start' && ev.tool === 'execute_command'), 'absolute outside workspace does not call execute_command');
+    const pending = await getPending(baseUrl);
+    assert(pending.length === 0, 'absolute outside workspace creates no pending operation');
+    const finalText = String(res.data?.choices?.[0]?.message?.content || '');
+    assert(/BLOCKED_WORKSPACE_MISMATCH/i.test(finalText), 'absolute outside workspace final message reports BLOCKED_WORKSPACE_MISMATCH');
+    assert(/outside the current workspace/i.test(finalText), 'absolute outside workspace final message explains workspace boundary');
+    assert(finalText.includes('D:\\Sandbox\\Nvidia'), 'absolute outside workspace final message preserves Windows drive prefix');
+    assert(!new RegExp(WRONG_DISTORTED_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(finalText), 'absolute outside workspace final message does not contain distorted control-workspace path');
+    assert(!/(successfully|Pending operation created|Applied successfully)/i.test(finalText), 'absolute outside workspace final message claims no success');
+    assert(!fs.existsSync(targetAbs), 'absolute outside workspace does not mutate target on disk');
+  }, { trustedWorkspace: false, workspacePath: CONTROL_WORKSPACE });
+
+  if (sourceSnapshot !== null) fs.writeFileSync(sourceAbs, sourceSnapshot, 'utf8');
+  else removeIfExists(sourceAbs);
+  if (targetSnapshot !== null) fs.writeFileSync(targetAbs, targetSnapshot, 'utf8');
+  else removeIfExists(targetAbs);
+}
+
+async function runAbsolutePathInsideWorkspaceNormalizesToRelative() {
+  const sourceRel = 'proof/rename_source.txt';
+  const targetRel = 'proof/renamed_target.txt';
+  const sourceAbs = absFromRel(sourceRel);
+  const targetAbs = absFromRel(targetRel);
+  const sourceSnapshot = fs.existsSync(sourceAbs) ? fs.readFileSync(sourceAbs, 'utf8') : null;
+  const targetSnapshot = fs.existsSync(targetAbs) ? fs.readFileSync(targetAbs, 'utf8') : null;
+  removeIfExists(targetAbs);
+  fs.mkdirSync(path.dirname(sourceAbs), { recursive: true });
+  fs.writeFileSync(sourceAbs, 'ABSOLUTE MOVE SOURCE\n', 'utf8');
+
+  await withServer('manual-reliability-absolute-path-inside-workspace', [
+    { message: { role: 'assistant', content: '', tool_calls: [toolCall('tc_workspace_absolute_move', 'move_file', { sourcePath: sourceAbs, targetPath: targetAbs })] } }
+  ], async (baseUrl) => {
+    const res = await postJson(`${baseUrl}/proxy/chat`, {
+      model: 'auto',
+      messages: [{ role: 'user', content: `Đổi tên ${sourceAbs} thành ${targetAbs}` }],
+      autoAccept: true
+    });
+    assert(res.ok, 'absolute inside workspace /proxy/chat returns 200', `status=${res.status}`);
+    const events = res.data?.agent?.events || [];
+    assert(events.some(ev => ev.type === 'tool_start' && ev.tool === 'move_file'), 'absolute inside workspace uses move_file');
+    assert(!events.some(ev => ev.type === 'tool_start' && ev.tool === 'execute_command'), 'absolute inside workspace does not call execute_command');
+    assert(!events.some(ev => ev.type === 'tool_start' && ev.tool === 'list_dir'), 'absolute inside workspace does not call list_dir');
+    assert(!events.some(ev => String(ev.result || '').includes(WRONG_DISTORTED_PATH)), 'absolute inside workspace never reports distorted path');
+    const pending = await getPending(baseUrl);
+    const edit = pending.find(p => normalizeRelPath(p.sourceRelPath) === sourceRel && normalizeRelPath(p.targetRelPath) === targetRel);
+    assert(Boolean(edit?.id), 'absolute inside workspace pending move normalized to relative paths');
+    assert(fs.existsSync(sourceAbs) && !fs.existsSync(targetAbs), 'absolute inside workspace no pre-apply mutation');
+    const finalText = String(res.data?.choices?.[0]?.message?.content || '');
+    assert(/Pending operation created/i.test(finalText), 'absolute inside workspace final message reports pending operation');
+    const apply = await applyPending(baseUrl, edit);
+    assert(apply.ok, 'absolute inside workspace apply succeeds', `status=${apply.status}`);
+    assert(!fs.existsSync(sourceAbs) && fs.existsSync(targetAbs), 'absolute inside workspace move completes after apply');
+    assert(fs.readFileSync(targetAbs, 'utf8') === 'ABSOLUTE MOVE SOURCE\n', 'absolute inside workspace content preserved after apply');
+  });
+
+  if (sourceSnapshot !== null) {
+    fs.mkdirSync(path.dirname(sourceAbs), { recursive: true });
+    fs.writeFileSync(sourceAbs, sourceSnapshot, 'utf8');
+  } else {
+    removeIfExists(sourceAbs);
+  }
+  if (targetSnapshot !== null) {
+    fs.mkdirSync(path.dirname(targetAbs), { recursive: true });
+    fs.writeFileSync(targetAbs, targetSnapshot, 'utf8');
+  } else {
+    removeIfExists(targetAbs);
+  }
+}
+
 async function runEditDeleteMoveExactPaths() {
   const editRel = 'proof/manual-validation/edit_target.py';
   const deleteRel = 'proof/manual-validation/delete_target.txt';
@@ -416,6 +514,8 @@ console.log('\nManual Reliability Regression Tests\n');
   await runExplicitCreatePreservesPath();
   await runRootMismatchBlocked();
   await runExplicitPathDominatesFallbackRootPrompt();
+  await runAbsolutePathOutsideWorkspaceFailsFast();
+  await runAbsolutePathInsideWorkspaceNormalizesToRelative();
   await runEditDeleteMoveExactPaths();
   await runTraversalBlockedNoFallback();
 

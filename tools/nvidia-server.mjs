@@ -2338,7 +2338,37 @@ function normalizeIntentText(text = '') {
     return String(text || '')
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase();
+        .toLowerCase()
+        .replace(/đ/g, 'd');
+}
+
+function cleanExplicitPathCandidate(candidate = '') {
+    return String(candidate || '').trim().replace(/^["'`]+|["'`.,:;]+$/g, '');
+}
+
+function extractAbsolutePathMatches(text = '') {
+    const input = String(text || '');
+    const pattern = /\b[A-Za-z]:[\\/][^\s"'`<>|]+?\.[A-Za-z0-9]+\b/g;
+    const matches = [];
+    for (const match of input.matchAll(pattern)) {
+        matches.push({
+            raw: match[0],
+            index: match.index ?? 0,
+            end: (match.index ?? 0) + match[0].length
+        });
+    }
+    return matches;
+}
+
+function maskRanges(input = '', ranges = []) {
+    if (!ranges.length) return String(input || '');
+    const chars = Array.from(String(input || ''));
+    for (const range of ranges) {
+        const start = Math.max(0, Math.min(chars.length, Number(range?.index) || 0));
+        const end = Math.max(start, Math.min(chars.length, Number(range?.end) || start));
+        for (let i = start; i < end; i++) chars[i] = ' ';
+    }
+    return chars.join('');
 }
 
 function isFileWriteIntent(text = '') {
@@ -2381,7 +2411,7 @@ function isFileWriteIntent(text = '') {
 }
 
 function normalizeExplicitWorkspacePath(candidate = '') {
-    const raw = String(candidate || '').trim().replace(/^["'`]+|["'`.,:;]+$/g, '');
+    const raw = cleanExplicitPathCandidate(candidate);
     if (!raw || raw.length > 400) return '';
     if (!/[A-Za-z0-9]/.test(raw) || !/\.[A-Za-z0-9]+$/.test(raw)) return '';
     if (/[*?]/.test(raw)) return '';
@@ -2413,16 +2443,24 @@ function prioritizeExplicitWorkspacePaths(paths = []) {
 
 function extractExplicitWorkspacePaths(text = '') {
     const input = String(text || '');
+    const absoluteMatches = extractAbsolutePathMatches(input);
+    const maskedInput = maskRanges(input, absoluteMatches);
     const patterns = [
         /["'`](?<path>[^"'`\r\n]+?\.[A-Za-z0-9]+)["'`]/g,
-        /\b(?<path>[A-Za-z]:[\\/][^\s"'`<>|]+?\.[A-Za-z0-9]+)\b/g,
-        /(?<![\w])(?<path>(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)\b/g,
+        /(?<![A-Za-z]:[\\/])(?<![\w])(?<path>(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)\b/g,
         /(?<![./\\])\b(?<path>[A-Za-z0-9_.-]+\.(?:py|md|txt|json|js|mjs|html|css|yml|yaml|toml|ts|tsx|jsx))\b/g
     ];
     const out = [];
     const seen = new Set();
+    for (const match of absoluteMatches) {
+        const relPath = normalizeExplicitWorkspacePath(match.raw);
+        if (relPath && !seen.has(relPath)) {
+            seen.add(relPath);
+            out.push(relPath);
+        }
+    }
     for (const pattern of patterns) {
-        for (const match of input.matchAll(pattern)) {
+        for (const match of maskedInput.matchAll(pattern)) {
             const relPath = normalizeExplicitWorkspacePath(match.groups?.path || match[1] || '');
             if (relPath && !seen.has(relPath)) {
                 seen.add(relPath);
@@ -2437,18 +2475,25 @@ function hasPathLikeMention(text = '') {
     return /(?:^|[\s"'`(])(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[A-Za-z0-9_.-]+[\\/])?[A-Za-z0-9_.-]+\.[A-Za-z0-9]+(?:$|[\s"'`).,;:!?])/m.test(String(text || ''));
 }
 
-function getUnsafeExplicitPathReason(text = '') {
+function getExplicitPathBlockReason(text = '') {
     const input = String(text || '');
     if (/(^|[\s"'`(])(?:\.{1,2}[\\/]|[^\s"'`]*[\\/]\.\.[\\/])/.test(input)) {
-        return 'Path traversal is not allowed; the requested path is outside workspace.';
+        return { code: 'UNSAFE_EXPLICIT_PATH', message: 'Path traversal is not allowed; the requested path is outside workspace.' };
     }
     if (/(^|[\s"'`(])[^ \t\r\n"'`]*[*?][^ \t\r\n"'`]*\.[A-Za-z0-9]+/.test(input)) {
-        return 'Wildcards are not allowed for file operations.';
+        return { code: 'UNSAFE_EXPLICIT_PATH', message: 'Wildcards are not allowed for file operations.' };
     }
-    if (/\b[A-Za-z]:[\\/][^\s"'`<>|]+?\.[A-Za-z0-9]+\b/.test(input) && extractExplicitWorkspacePaths(input).length === 0) {
-        return 'Absolute paths outside workspace are not allowed.';
+    const absoluteMatches = extractAbsolutePathMatches(input);
+    if (absoluteMatches.length) {
+        const mismatch = absoluteMatches.find(match => !normalizeExplicitWorkspacePath(match.raw));
+        if (mismatch) {
+            return {
+                code: 'BLOCKED_WORKSPACE_MISMATCH',
+                message: `Path "${mismatch.raw}" is outside the current workspace "${currentWorkspace}". Open the correct workspace or use a path inside the current workspace.`
+            };
+        }
     }
-    return '';
+    return null;
 }
 
 function extractExplicitWriteTarget(text = '') {
@@ -2498,8 +2543,8 @@ function extractExplicitOrInferredWriteTarget(text = '') {
 
 function getManualFileExpectation(text = '') {
     const paths = extractExplicitWorkspacePaths(text);
-    const unsafeReason = getUnsafeExplicitPathReason(text);
-    if (unsafeReason) return { operation: 'blocked', paths, unsafeReason };
+    const blockReason = getExplicitPathBlockReason(text);
+    if (blockReason) return { operation: 'blocked', paths, unsafeReason: blockReason.message, blockedCode: blockReason.code };
     if (!paths.length) return { operation: '', paths: [] };
     const lower = normalizeIntentText(text);
     const hasMoveIntent = paths.length >= 2 && (
@@ -2539,7 +2584,7 @@ function getFileToolTargetMismatch(toolName, args = {}, expectation = {}) {
     const mutatingTools = new Set(['write_file', 'apply_patch', 'delete_file', 'move_file']);
     if (!mutatingTools.has(toolName)) return null;
     if (expectation.unsafeReason) {
-        return { code: 'UNSAFE_EXPLICIT_PATH', unsafeReason: expectation.unsafeReason };
+        return { code: expectation.blockedCode || 'UNSAFE_EXPLICIT_PATH', unsafeReason: expectation.unsafeReason };
     }
     if (!expectation.paths?.length) return null;
     const normalizeArg = value => normalizeExplicitWorkspacePath(value);
@@ -2919,6 +2964,35 @@ async function runAutonomousAgent(data, callbacks = {}) {
         }
     };
 
+    if (fileExpectation.blockedCode === 'BLOCKED_WORKSPACE_MISMATCH') {
+        finalMessage = {
+            role: 'assistant',
+            content: `Blocked: BLOCKED_WORKSPACE_MISMATCH. ${fileExpectation.unsafeReason} No pending operation was created and no file was mutated on disk.`
+        };
+        events.push({ type: 'status', iteration: 0, status: 'blocked_preflight', reason: fileExpectation.blockedCode });
+        const result = {
+            id: `agent-${Date.now()}`,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model,
+            choices: [{ index: 0, message: finalMessage, finish_reason: 'stop' }],
+            agent: {
+                autonomous: true,
+                iterations: 0,
+                events
+            }
+        };
+        if (data.taskId) {
+            recordTaskEvent(data.taskId, {
+                type: 'status',
+                status: 'failed',
+                content: typeof finalMessage.content === 'string' ? finalMessage.content.slice(0, 1000) : 'Task blocked',
+                resumeAvailable: true
+            });
+        }
+        return result;
+    }
+
     const executeToolCalls = async (toolCalls, iteration, status = 'acting') => {
         emit('status', { iteration, status, toolCalls: toolCalls.map(tc => tc.function?.name) });
         events.push({ type: 'status', iteration, status, toolCalls: toolCalls.map(tc => tc.function?.name) });
@@ -3072,7 +3146,9 @@ async function runAutonomousAgent(data, callbacks = {}) {
         const actual = targetMismatch.actualPath || targetMismatch.actualOperation || 'missing target';
         finalMessage = {
             role: 'assistant',
-            content: targetMismatch.code === 'UNSAFE_EXPLICIT_PATH'
+            content: targetMismatch.code === 'BLOCKED_WORKSPACE_MISMATCH'
+                ? `Blocked: ${targetMismatch.code}. ${targetMismatch.unsafeReason} No pending operation was created and no file was mutated on disk.`
+                : targetMismatch.code === 'UNSAFE_EXPLICIT_PATH'
                 ? `Blocked: ${targetMismatch.code}. ${targetMismatch.unsafeReason} No pending operation was created and no file was mutated on disk. Retry with a safe workspace-relative path.`
                 : `Blocked: ${targetMismatch.code}. Requested "${expected}" but the tool used "${actual}". No pending operation was created and no file was mutated on disk. Retry with the exact workspace-relative path from the request.`
         };
