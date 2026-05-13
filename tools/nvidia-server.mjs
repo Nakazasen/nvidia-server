@@ -871,6 +871,7 @@ const MAX_PROVIDER_BASE_URL = 300;
 const MAX_PROVIDER_MODEL = 120;
 const MAX_PROVIDER_MESSAGE = 300;
 const MAX_PROVIDER_RECORDS = 40;
+const PROVIDER_TOOL_CALLING_UNSUPPORTED = 'PROVIDER_TOOL_CALLING_UNSUPPORTED';
 const MAX_INLINE_SELECTION_CHARS = 12000;
 const MAX_INLINE_INSTRUCTION_CHARS = 800;
 
@@ -1005,6 +1006,43 @@ function providerToClientRecord(provider) {
     };
 }
 
+function resolveProviderCapabilities(provider, model = '') {
+    const providerId = String(provider?.id || provider?.type || 'unknown').trim().toLowerCase() || 'unknown';
+    const normalizedModel = String(model || provider?.defaultModel || '').trim();
+    const supportsToolCalling = providerId === 'nvidia' || Boolean(process.env.NVIDIA_TEST_CHAT_FIXTURE);
+    return {
+        providerId,
+        model: normalizedModel,
+        supportsTools: supportsToolCalling,
+        supportsToolChoice: supportsToolCalling,
+        supportsStreamingTools: supportsToolCalling,
+        supportsNonToolFallback: false,
+        reason: supportsToolCalling
+            ? ''
+            : `Provider "${providerId}" with model "${normalizedModel || 'auto'}" is not approved for deterministic /proxy/chat tool-calling in this runtime.`
+    };
+}
+
+function resolveConfiguredProvider(requestedModel = '') {
+    const state = loadProviderState();
+    const active = state.providers.find(p => p.id === state.defaultProviderId && p.enabled !== false)
+        || state.providers.find(p => p.id === 'nvidia')
+        || normalizeProviderRecord({ id: 'nvidia', enabled: true });
+    const providerId = active.id;
+    const apiKey = active.apiKey || getProviderEnvValue(providerId, 'apiKey') || (providerId === 'nvidia' ? (process.env.NVIDIA_API_KEY || '') : '');
+    const baseUrl = active.baseUrl || getProviderEnvValue(providerId, 'baseUrl') || (providerId === 'nvidia' ? NIM_BASE_URL : '');
+    const defaultModel = active.defaultModel || getProviderEnvValue(providerId, 'defaultModel') || (providerId === 'nvidia' ? DEFAULT_MODEL : '');
+    const model = requestedModel && requestedModel !== 'auto' ? requestedModel : defaultModel;
+    return {
+        provider: active,
+        apiKey,
+        baseUrl,
+        model,
+        warnings: [],
+        capabilities: resolveProviderCapabilities(active, model)
+    };
+}
+
 function getSettingsPayload() {
     const state = loadProviderState();
     const settings = {
@@ -1135,20 +1173,21 @@ function actionTypeForTool(toolName = '') {
 }
 
 function resolveProviderForChat(requestedModel = '') {
+    const resolved = resolveConfiguredProvider(requestedModel);
+    if (resolved.provider.id === 'nvidia') return resolved;
     const state = loadProviderState();
-    const preferred = state.providers.find(p => p.id === state.defaultProviderId && p.enabled !== false) || state.providers.find(p => p.id === 'nvidia');
     const nvidia = state.providers.find(p => p.id === 'nvidia') || normalizeProviderRecord({ id: 'nvidia', enabled: true });
-    const warnings = [];
-    let active = preferred || nvidia;
-    if (active.id !== 'nvidia') {
-        warnings.push(`Provider ${active.id} is not implemented for /proxy/chat yet. Falling back to nvidia.`);
-        active = nvidia;
-    }
-    const apiKey = active.apiKey || getProviderEnvValue('nvidia', 'apiKey') || process.env.NVIDIA_API_KEY || '';
-    const baseUrl = active.baseUrl || getProviderEnvValue('nvidia', 'baseUrl') || NIM_BASE_URL;
-    const defaultModel = active.defaultModel || getProviderEnvValue('nvidia', 'defaultModel') || DEFAULT_MODEL;
-    const model = requestedModel && requestedModel !== 'auto' ? requestedModel : defaultModel;
-    return { provider: active, apiKey, baseUrl, model, warnings };
+    const model = requestedModel && requestedModel !== 'auto'
+        ? requestedModel
+        : (nvidia.defaultModel || getProviderEnvValue('nvidia', 'defaultModel') || DEFAULT_MODEL);
+    return {
+        provider: nvidia,
+        apiKey: nvidia.apiKey || getProviderEnvValue('nvidia', 'apiKey') || process.env.NVIDIA_API_KEY || '',
+        baseUrl: nvidia.baseUrl || getProviderEnvValue('nvidia', 'baseUrl') || NIM_BASE_URL,
+        model,
+        warnings: [`Provider ${resolved.provider.id} is not implemented for /proxy/chat yet. Falling back to nvidia.`],
+        capabilities: resolveProviderCapabilities(nvidia, model)
+    };
 }
 
 function makeUnifiedDiff(relPath, oldText, newText) {
@@ -1273,6 +1312,71 @@ function buildRateGuardBlockedMessage(error) {
             rateLimit,
             attemptedFileOperation: false,
             diskMutated: false
+        }
+    };
+}
+
+function getToolCallingCapabilityBlock(providerResolved, { streamRequested = false } = {}) {
+    const capabilities = providerResolved?.capabilities || resolveProviderCapabilities(providerResolved?.provider, providerResolved?.model);
+    const unsupportedFields = [];
+    if (!capabilities.supportsTools) unsupportedFields.push('tools');
+    if (!capabilities.supportsToolChoice) unsupportedFields.push('tool_choice');
+    if (streamRequested && !capabilities.supportsStreamingTools) unsupportedFields.push('stream_with_tools');
+    if (unsupportedFields.length === 0) return null;
+    return {
+        code: PROVIDER_TOOL_CALLING_UNSUPPORTED,
+        provider: providerResolved?.provider?.id || capabilities.providerId || 'unknown',
+        model: providerResolved?.model || capabilities.model || '',
+        unsupportedFields,
+        streamRequested,
+        fallbackAvailable: capabilities.supportsNonToolFallback === true,
+        providerCallAttempted: false,
+        mutationApplied: false,
+        diskMutated: false,
+        reason: capabilities.reason || `Provider "${providerResolved?.provider?.id || capabilities.providerId || 'unknown'}" cannot satisfy the runtime tool-calling contract.`
+    };
+}
+
+function buildToolCallingUnsupportedMessage(providerResolved, capabilityBlock) {
+    const providerId = capabilityBlock?.provider || providerResolved?.provider?.id || 'unknown';
+    const model = capabilityBlock?.model || providerResolved?.model || 'auto';
+    const unsupportedFields = Array.isArray(capabilityBlock?.unsupportedFields) && capabilityBlock.unsupportedFields.length
+        ? capabilityBlock.unsupportedFields.join(', ')
+        : 'tools';
+    return {
+        role: 'assistant',
+        content: `Blocked: ${PROVIDER_TOOL_CALLING_UNSUPPORTED}. Provider "${providerId}" with model "${model}" cannot run the deterministic Review + Apply workflow because ${unsupportedFields} is unsupported on this runtime path. No pending operation was created and no file was mutated on disk.`,
+        providerCapability: {
+            ...capabilityBlock,
+            provider: providerId,
+            model
+        }
+    };
+}
+
+function buildToolCallingUnsupportedResult(providerResolved, capabilityBlock, { streamRequested = false } = {}) {
+    const finalMessage = buildToolCallingUnsupportedMessage(providerResolved, capabilityBlock);
+    return {
+        id: `agent-${Date.now()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: providerResolved?.model || capabilityBlock?.model || 'auto',
+        status: PROVIDER_TOOL_CALLING_UNSUPPORTED,
+        providerCapability: finalMessage.providerCapability,
+        choices: [{ index: 0, message: finalMessage, finish_reason: 'stop' }],
+        agent: {
+            autonomous: true,
+            iterations: 0,
+            events: [{
+                type: 'status',
+                iteration: 0,
+                status: 'blocked_provider_capability',
+                reason: PROVIDER_TOOL_CALLING_UNSUPPORTED,
+                provider: finalMessage.providerCapability.provider,
+                model: finalMessage.providerCapability.model,
+                unsupportedFields: finalMessage.providerCapability.unsupportedFields || [],
+                streamRequested: streamRequested === true
+            }]
         }
     };
 }
@@ -2982,8 +3086,12 @@ async function callNimChatStream(payload, onEvent, signal, providerConfig = {}) 
 async function runAutonomousAgent(data, callbacks = {}) {
     const signal = callbacks.signal;
     const allowDestructive = data.autoAccept === true || data.auto_accept === true || data.allowDestructive === true;
-    const providerResolved = resolveProviderForChat(data.model);
+    const providerResolved = data._providerResolved || resolveConfiguredProvider(data.model);
     const model = data.model && data.model !== 'auto' ? data.model : providerResolved.model;
+    const capabilityBlock = getToolCallingCapabilityBlock(providerResolved, { streamRequested: callbacks.streamFinal === true });
+    if (capabilityBlock) {
+        return buildToolCallingUnsupportedResult(providerResolved, capabilityBlock, { streamRequested: callbacks.streamFinal === true });
+    }
     const maxIterations = Math.max(1, Math.min(Number(data.max_iterations || data.maxIterations) || DEFAULT_MAX_ITERATIONS, 20));
     const tools = getAgentTools();
     const messages = await prepareMessages(data);
@@ -3322,7 +3430,8 @@ async function runAutonomousAgent(data, callbacks = {}) {
 
 async function handleProxyChat(req, res) {
     const data = await getBody(req);
-    const providerResolved = resolveProviderForChat(data.model);
+    const providerResolved = resolveConfiguredProvider(data.model);
+    data._providerResolved = providerResolved;
     console.log(`[POST] /proxy/chat - Provider: ${providerResolved.provider.id} Model: ${providerResolved.model}`);
     if (data.manualValidation === true || data.manual_validation === true) {
         const rateStatus = getRateLimitStatus();

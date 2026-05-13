@@ -4045,6 +4045,17 @@
                                         label: `Recent action: Approval required for ${targetPath}. Next: approve pending operation, then Review + Apply.`,
                                         tone: 'blocked'
                                     });
+                                } else if (ev.status === 'blocked_provider_capability') {
+                                    const unsupported = Array.isArray(ev.unsupportedFields) && ev.unsupportedFields.length ? ev.unsupportedFields.join(', ') : 'tools';
+                                    setRecentOperationSummary({
+                                        label: `Recent action: Blocked provider capability for ${ev.provider || 'provider'} (${unsupported}). Next: switch to a supported provider/model for Review + Apply.`,
+                                        tone: 'blocked'
+                                    });
+                                } else if (ev.status === 'blocked_provider_rate_guard') {
+                                    setRecentOperationSummary({
+                                        label: `Recent action: Provider rate guard blocked the request. Next: wait for retry timing, then rerun without changing files.`,
+                                        tone: 'blocked'
+                                    });
                                 } else if (ev.status === 'retrying_missing_write_file') {
                                     setRecentOperationSummary({
                                         label: 'Recent action: Agent retried because no trusted write_file succeeded yet. Next: inspect tool call and target path.',
