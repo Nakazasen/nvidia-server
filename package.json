@@ -8,6 +8,7 @@
     "start": "node tools/nvidia-server.mjs",
     "cli": "node tools/nvidia-cli.mjs",
     "agent": "node tools/nvidia-cli-agent.mjs",
+    "test": "node tests/provider-tool-calling-capability.test.mjs && npm run manual:reliability && npm run apply:proof && npm run move:proof && npm run agent:audit && npm run browser:smoke",
     "agent:audit": "node tools/agent-capability-harness.mjs",
     "browser:smoke": "node tools/browser-smoke.mjs",
     "manual:proof": "node tests/manual-ui-create-apply-e2e.test.mjs",

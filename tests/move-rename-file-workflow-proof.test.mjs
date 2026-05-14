@@ -37,6 +37,15 @@ function removeIfExists(targetPath) {
   } catch {}
 }
 
+function removeDirIfEmpty(targetPath) {
+  try {
+    if (!fs.existsSync(targetPath)) return;
+    if (!fs.statSync(targetPath).isDirectory()) return;
+    if (fs.readdirSync(targetPath).length !== 0) return;
+    fs.rmdirSync(targetPath);
+  } catch {}
+}
+
 function writeFixtureFile(name, responses) {
   const fixturePath = path.join(os.tmpdir(), `${name}-${Date.now()}.json`);
   fs.writeFileSync(fixturePath, JSON.stringify({ responses }, null, 2), 'utf8');
@@ -245,8 +254,10 @@ function moveToolCall(fixtureName, sourcePath, targetPath) {
 async function runMoveUiScenario({ fixtureName, autoAccept, sourceRelPath, targetRelPath, initialContent, prompt }) {
   const sourceAbs = path.join(APP_DIR, ...sourceRelPath.split('/'));
   const targetAbs = path.join(APP_DIR, ...targetRelPath.split('/'));
+  const targetDirAbs = path.dirname(targetAbs);
   const sourceSnapshot = fs.existsSync(sourceAbs) ? { existed: true, content: fs.readFileSync(sourceAbs, 'utf8') } : { existed: false, content: '' };
   const targetSnapshot = fs.existsSync(targetAbs) ? { existed: true, content: fs.readFileSync(targetAbs, 'utf8') } : { existed: false, content: '' };
+  const targetDirExisted = fs.existsSync(targetDirAbs);
 
   const fixturePath = writeFixtureFile(fixtureName, [
     {
@@ -335,7 +346,7 @@ async function runMoveUiScenario({ fixtureName, autoAccept, sourceRelPath, targe
     } else {
       removeIfExists(targetAbs);
     }
-    removeIfExists(path.dirname(targetAbs));
+    if (!targetDirExisted) removeDirIfEmpty(targetDirAbs);
     if (page) await page.close().catch(() => {});
     if (context) await context.close().catch(() => {});
     if (browser) await browser.close().catch(() => {});
