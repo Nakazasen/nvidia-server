@@ -100,7 +100,8 @@ function createSpawnRunner({
   launcher = process.env.ABW_CLI_LAUNCHER || 'py',
   baseArgs = resolveBaseArgs(),
   timeoutMs = DEFAULT_TIMEOUT_MS,
-  maxOutputChars = DEFAULT_MAX_OUTPUT_CHARS
+  maxOutputChars = DEFAULT_MAX_OUTPUT_CHARS,
+  envOverrides = { ABW_READ_ONLY_QUERY: '1' }
 } = {}) {
   return ({ commandName, workspace, commandArgs = [] }) => new Promise((resolve) => {
     const childArgs = [...baseArgs, '--json', '--workspace', workspace, commandName, ...commandArgs];
@@ -131,6 +132,10 @@ function createSpawnRunner({
     let child = null;
     try {
       child = spawnImpl(launcher, childArgs, {
+        env: {
+          ...process.env,
+          ...envOverrides
+        },
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe']
       });
