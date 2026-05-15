@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import path from 'path';
 
 export const ABW_CLI_STATUS = Object.freeze({
   OK: 'ABW_CLI_OK',
@@ -20,6 +21,17 @@ export const ABW_CLI_STATUS = Object.freeze({
 const SUPPORTED_COMMANDS = new Set(['ask', 'doctor', 'version']);
 const DEFAULT_TIMEOUT_MS = Number(process.env.ABW_CLI_TIMEOUT_MS || 20000);
 const DEFAULT_MAX_OUTPUT_CHARS = Number(process.env.ABW_CLI_MAX_OUTPUT_CHARS || 400000);
+
+function resolveRepoPath(value = process.env.ABW_REPO_PATH) {
+  const normalized = String(value || '').trim();
+  return normalized ? path.resolve(normalized) : '';
+}
+
+function buildPythonPath(repoPath, env = process.env) {
+  const repoSrc = path.join(repoPath, 'src');
+  const existing = String(env.PYTHONPATH || '').trim();
+  return existing ? `${repoSrc}${path.delimiter}${existing}` : repoSrc;
+}
 
 function resolveBaseArgs(value = process.env.ABW_CLI_BASE_ARGS) {
   if (!value) return ['-m', 'abw.cli'];
@@ -50,7 +62,8 @@ function makeErrorResult(status, details = {}) {
     stdout: details.stdout || '',
     exitCode: details.exitCode ?? null,
     durationMs: details.durationMs ?? 0,
-    command: Array.isArray(details.command) ? details.command : []
+    command: Array.isArray(details.command) ? details.command : [],
+    runtime: details.runtime && typeof details.runtime === 'object' ? details.runtime : null
   };
 }
 
@@ -91,7 +104,8 @@ function makeSuccessResult(status, payload, details = {}) {
     stdout: details.stdout || '',
     exitCode: details.exitCode ?? 0,
     durationMs: details.durationMs ?? 0,
-    command: Array.isArray(details.command) ? details.command : []
+    command: Array.isArray(details.command) ? details.command : [],
+    runtime: details.runtime && typeof details.runtime === 'object' ? details.runtime : null
   };
 }
 
@@ -101,11 +115,28 @@ function createSpawnRunner({
   baseArgs = resolveBaseArgs(),
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxOutputChars = DEFAULT_MAX_OUTPUT_CHARS,
-  envOverrides = { ABW_READ_ONLY_QUERY: '1' }
+  envOverrides = { ABW_READ_ONLY_QUERY: '1' },
+  abwRepoPath = resolveRepoPath()
 } = {}) {
   return ({ commandName, workspace, commandArgs = [] }) => new Promise((resolve) => {
     const childArgs = [...baseArgs, '--json', '--workspace', workspace, commandName, ...commandArgs];
     const fullCommand = [launcher, ...childArgs];
+    const normalizedRepoPath = resolveRepoPath(abwRepoPath);
+    const spawnCwd = normalizedRepoPath || process.cwd();
+    const runtimeEnv = {
+      ...process.env,
+      ...envOverrides
+    };
+    if (normalizedRepoPath) {
+      runtimeEnv.PYTHONPATH = buildPythonPath(normalizedRepoPath, runtimeEnv);
+    }
+    const runtime = {
+      runtimeSource: normalizedRepoPath ? 'repo' : 'default',
+      abwRepoPath: normalizedRepoPath || null,
+      pythonExecutable: launcher,
+      commandArgs: childArgs,
+      cwd: spawnCwd
+    };
     const startedAt = Date.now();
     let stdout = '';
     let stderr = '';
@@ -125,17 +156,16 @@ function createSpawnRunner({
         stderr: truncate(stderr, maxOutputChars),
         exitCode,
         durationMs: Date.now() - startedAt,
-        command: fullCommand
+        command: fullCommand,
+        runtime
       });
     };
 
     let child = null;
     try {
       child = spawnImpl(launcher, childArgs, {
-        env: {
-          ...process.env,
-          ...envOverrides
-        },
+        cwd: spawnCwd,
+        env: runtimeEnv,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe']
       });
@@ -224,7 +254,8 @@ export function createAbwCliReader(options = {}) {
         stdout: result.stdout || '',
         exitCode: result.exitCode,
         durationMs: result.durationMs,
-        command: result.command
+        command: result.command,
+        runtime: result.runtime
       });
     }
     if (result?.timedOut) {
@@ -235,7 +266,8 @@ export function createAbwCliReader(options = {}) {
         stdout: result.stdout || '',
         exitCode: result.exitCode,
         durationMs: result.durationMs,
-        command: result.command
+        command: result.command,
+        runtime: result.runtime
       });
     }
     if (result?.outputExceeded) {
@@ -246,7 +278,8 @@ export function createAbwCliReader(options = {}) {
         stdout: result.stdout || '',
         exitCode: result.exitCode,
         durationMs: result.durationMs,
-        command: result.command
+        command: result.command,
+        runtime: result.runtime
       });
     }
     if (result?.exitCode !== 0) {
@@ -257,7 +290,8 @@ export function createAbwCliReader(options = {}) {
         stdout: result.stdout || '',
         exitCode: result.exitCode,
         durationMs: result.durationMs,
-        command: result.command
+        command: result.command,
+        runtime: result.runtime
       });
     }
 
@@ -272,7 +306,8 @@ export function createAbwCliReader(options = {}) {
         stdout: result.stdout || '',
         exitCode: result.exitCode,
         durationMs: result.durationMs,
-        command: result.command
+        command: result.command,
+        runtime: result.runtime
       });
     }
 

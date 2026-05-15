@@ -2668,11 +2668,17 @@ function abwPermissionFailureStatus(error) {
 
 function buildAbwBridgePayload(result) {
     const data = result?.data && typeof result.data === 'object' ? result.data : {};
+    const runtime = result?.runtime && typeof result.runtime === 'object' ? result.runtime : {};
     return {
         ok: result?.ok === true,
         status: result?.status || ABW_CLI_STATUS.INVALID_JSON,
         abw: result?.abw || null,
         readOnly: true,
+        runtimeSource: runtime.runtimeSource || 'default',
+        abwRepoPath: runtime.abwRepoPath || null,
+        pythonExecutable: runtime.pythonExecutable || null,
+        commandArgs: Array.isArray(runtime.commandArgs) ? runtime.commandArgs : [],
+        commandCwd: runtime.cwd || null,
         answer: data.answer || '',
         retrievalStatus: data.retrieval_status || null,
         trustScore: Number.isFinite(data.trust_score) ? data.trust_score : null,

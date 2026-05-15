@@ -2,6 +2,7 @@ import { sleep, fetchText, requestJson, waitForServer } from './smoke/core.mjs';
 import { runApiRegressionChecks } from './smoke/api-regression.mjs';
 import { runGuardMatrixChecks } from './smoke/guard-matrix.mjs';
 import { spawn, execSync } from 'child_process';
+import net from 'net';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -150,6 +151,38 @@ function startLocalServer(port, host) {
       reject(new Error(`Server exited early with code ${code}`));
     });
   });
+}
+
+function checkPortAvailable(port, host) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.once('error', () => resolve(false));
+    server.listen({ port, host }, () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+function findFreePort(host) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once('error', reject);
+    server.listen({ port: 0, host }, () => {
+      const address = server.address();
+      const port = address && typeof address === 'object' ? address.port : 0;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port);
+      });
+    });
+  });
+}
+
+async function resolveStartPort(port, host) {
+  if (await checkPortAvailable(port, host)) return port;
+  return findFreePort(host);
 }
 
 function isProcessRunning(pid) {
@@ -1258,6 +1291,13 @@ async function main() {
 
   try {
     if (opts.startServer) {
+      const resolvedPort = await resolveStartPort(opts.port, opts.host);
+      if (resolvedPort !== opts.port) {
+        log('warn', `Port ${opts.port} is busy; starting smoke server on ${resolvedPort} instead.`);
+        opts.port = resolvedPort;
+        opts.url = `http://${opts.host}:${opts.port}`;
+        SUMMARY.url = opts.url;
+      }
       serverChild = await startLocalServer(opts.port, opts.host);
       SUMMARY.server.pid = serverChild.pid;
       log('info', `Started NVIDIA server PID ${serverChild.pid}`);

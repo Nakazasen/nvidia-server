@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
+import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
 import { ABW_CLI_STATUS, createAbwCliReader } from '../tools/abw-cli-reader.mjs';
 
@@ -30,6 +31,24 @@ function makeRunner(result) {
   return async () => ({ ...result });
 }
 
+function createSpawnRecorder({ stdout = '', stderr = '', exitCode = 0 } = {}) {
+  const calls = [];
+  const spawnImpl = (command, args, options) => {
+    calls.push({ command, args, options });
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    process.nextTick(() => {
+      if (stdout) child.stdout.emit('data', stdout);
+      if (stderr) child.stderr.emit('data', stderr);
+      child.emit('close', exitCode);
+    });
+    return child;
+  };
+  return { calls, spawnImpl };
+}
+
 function makeEnvelope(commandName, status, data, workspace = 'D:/tmp/mock-workspace') {
   return JSON.stringify({
     schema_version: '1',
@@ -53,6 +72,7 @@ function startServer({ port, trustAlways = true, mockMode = 'ask-success' }) {
         ABW_CLI_LAUNCHER: 'node',
         ABW_CLI_BASE_ARGS: JSON.stringify([MOCK_ABW_SCRIPT]),
         ABW_MOCK_MODE: mockMode,
+        ABW_REPO_PATH: process.env.ABW_REPO_PATH || '',
         ...(trustAlways ? { NVIDIA_WORKSPACE_TRUST: 'always' } : {})
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -173,6 +193,42 @@ console.log('\nABW CLI Reader Bridge Tests\n');
   const result = await reader.readDoctor({ workspace: 'D:/tmp/mock-workspace' });
   assert(result.status === ABW_CLI_STATUS.OK, '2. doctor JSON parse success', `status=${result.status}`);
   assert(Array.isArray(result.data?.checks), '2a. doctor checks preserved');
+}
+
+{
+  const recorder = createSpawnRecorder({
+    stdout: makeEnvelope('ask', 'success', {
+      answer: 'AGV communication uses MQTT.',
+      retrieval_status: 'grounded',
+      trust_score: 70,
+      sources: [{ path: 'wiki/agv.md' }],
+      warnings: [],
+      gap_logged: false,
+      gap_id: null,
+      current_state: 'knowledge_answered',
+      knowledge_evidence_tier: 'E2_wiki',
+      knowledge_source_score: 3,
+      source_summary: 'local_wiki',
+      logs: [],
+      provider: 'local'
+    }),
+    exitCode: 0
+  });
+  const reader = createAbwCliReader({
+    spawnImpl: recorder.spawnImpl,
+    launcher: 'py',
+    baseArgs: ['-m', 'abw.cli'],
+    abwRepoPath: 'D:/Sandbox/skill-Anti-brain-wiki_note'
+  });
+  const result = await reader.ask({ workspace: 'D:/tmp/mock-workspace', question: 'How does AGV communication work?' });
+  const call = recorder.calls[0] || {};
+  assert(result.status === ABW_CLI_STATUS.OK, '3c. repo-runtime ask stays machine-readable', `status=${result.status}`);
+  assert(call.options?.env?.ABW_READ_ONLY_QUERY === '1', '3d. reader forces ABW_READ_ONLY_QUERY=1');
+  assert(call.options?.cwd === path.resolve('D:/Sandbox/skill-Anti-brain-wiki_note'), '3e. reader runs from configured ABW repo path', `cwd=${call.options?.cwd}`);
+  assert(String(call.options?.env?.PYTHONPATH || '').includes(path.join(path.resolve('D:/Sandbox/skill-Anti-brain-wiki_note'), 'src')), '3f. reader injects repo src into PYTHONPATH');
+  assert(result.runtime?.runtimeSource === 'repo', '3g. reader exposes repo runtime source');
+  assert(result.runtime?.abwRepoPath === path.resolve('D:/Sandbox/skill-Anti-brain-wiki_note'), '3h. reader exposes resolved repo path');
+  assert(Array.isArray(result.runtime?.commandArgs) && result.runtime.commandArgs.includes('ask'), '3i. reader exposes command args');
 }
 
 {
@@ -346,11 +402,13 @@ console.log('\nABW CLI Reader Bridge Tests\n');
     assert(ask.json?.retrievalStatus === 'exact_match', '10c. endpoint exposes retrievalStatus');
     assert(ask.json?.evidenceTier === 'E2_wiki', '10d. endpoint exposes evidenceTier');
     assert(ask.json?.readOnly === true, '10e. endpoint exposes readOnly=true');
-    assert(Array.isArray(ask.json?.sources) && ask.json.sources.length === 1, '10f. endpoint exposes sources');
+    assert(ask.json?.runtimeSource === 'default', '10f. endpoint exposes runtimeSource');
+    assert(Array.isArray(ask.json?.commandArgs) && ask.json.commandArgs.includes('ask'), '10g. endpoint exposes command args');
+    assert(Array.isArray(ask.json?.sources) && ask.json.sources.length === 1, '10h. endpoint exposes sources');
     const pendingEdits = await getPendingEdits(baseUrl);
-    assert(Array.isArray(pendingEdits) && pendingEdits.length === 0, '10g. bridge does not create pending edit');
+    assert(Array.isArray(pendingEdits) && pendingEdits.length === 0, '10i. bridge does not create pending edit');
     const afterMarker = fs.readFileSync(markerPath, 'utf8');
-    assert(afterMarker === beforeMarker, '10h. bridge does not mutate disk');
+    assert(afterMarker === beforeMarker, '10j. bridge does not mutate disk');
   } finally {
     await stopServer(server);
     try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
