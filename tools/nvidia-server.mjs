@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createWorkspaceCore } from './agent-core.mjs';
+import { ABW_CLI_STATUS, createAbwCliReader } from './abw-cli-reader.mjs';
 import { createExtensionHost } from './extension-host.mjs';
 import { tryHandleHealthRoute } from './routes/health-routes.mjs';
 
@@ -696,6 +697,16 @@ const workspaceCore = createWorkspaceCore({
     maxToolResultChars: MAX_TOOL_RESULT_CHARS,
     maxFileReadChars: MAX_FILE_READ_CHARS
 });
+const abwCliReader = createAbwCliReader();
+
+function sameResolvedPath(left, right) {
+    const a = path.resolve(String(left || ''));
+    const b = path.resolve(String(right || ''));
+    if (process.platform === 'win32') {
+        return a.toLowerCase() === b.toLowerCase();
+    }
+    return a === b;
+}
 const extensionHost = createExtensionHost({
     appDir: APP_DIR,
     workspace: currentWorkspace,
@@ -2624,6 +2635,62 @@ function normalizeWorkspaceInputPath(input = '') {
     return { ok: true, path: resolved };
 }
 
+function normalizeAbwBridgeWorkspace(input = '') {
+    const normalized = normalizeWorkspaceInputPath(input);
+    if (!normalized.ok) {
+        return { ok: false, status: ABW_CLI_STATUS.WORKSPACE_REQUIRED, error: normalized.error };
+    }
+    if (!sameResolvedPath(normalized.path, currentWorkspace)) {
+        return {
+            ok: false,
+            status: ABW_CLI_STATUS.WRONG_WORKSPACE,
+            error: `Requested ABW workspace "${normalized.path}" does not match the active NVIDIA workspace "${currentWorkspace}". Switch workspace first.`
+        };
+    }
+    return normalized;
+}
+
+function getAbwBridgeHttpStatus(status) {
+    if (status === ABW_CLI_STATUS.TIMEOUT) return 504;
+    if ([ABW_CLI_STATUS.NOT_FOUND, ABW_CLI_STATUS.NONZERO_EXIT, ABW_CLI_STATUS.INVALID_JSON, ABW_CLI_STATUS.SCHEMA_UNSUPPORTED].includes(status)) {
+        return 502;
+    }
+    if (status === ABW_CLI_STATUS.TRUST_REQUIRED) return 403;
+    if ([ABW_CLI_STATUS.WORKSPACE_REQUIRED, ABW_CLI_STATUS.WRONG_WORKSPACE].includes(status)) return 400;
+    return 200;
+}
+
+function abwPermissionFailureStatus(error) {
+    const message = String(error?.message || '');
+    if (/trusted workspace/i.test(message)) return ABW_CLI_STATUS.TRUST_REQUIRED;
+    return ABW_CLI_STATUS.BLOCKED;
+}
+
+function buildAbwBridgePayload(result) {
+    const data = result?.data && typeof result.data === 'object' ? result.data : {};
+    return {
+        ok: result?.ok === true,
+        status: result?.status || ABW_CLI_STATUS.INVALID_JSON,
+        abw: result?.abw || null,
+        answer: data.answer || '',
+        retrievalStatus: data.retrieval_status || null,
+        trustScore: Number.isFinite(data.trust_score) ? data.trust_score : null,
+        sources: Array.isArray(data.sources) ? data.sources : [],
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        gapLogged: data.gap_logged === true,
+        gapId: data.gap_id ?? null,
+        currentState: data.current_state ?? null,
+        knowledgeEvidenceTier: data.knowledge_evidence_tier ?? null,
+        knowledgeSourceScore: Number.isFinite(data.knowledge_source_score) ? data.knowledge_source_score : null,
+        sourceSummary: data.source_summary ?? null,
+        logs: Array.isArray(data.logs) ? data.logs : [],
+        provider: data.provider ?? null,
+        error: result?.error || '',
+        stderr: result?.stderr || '',
+        exitCode: result?.exitCode ?? null
+    };
+}
+
 function getExplicitPathBlockReason(text = '') {
     const input = String(text || '');
     if (/(^|[\s"'`(])(?:\.{1,2}[\\/]|[^\s"'`]*[\\/]\.\.[\\/])/.test(input)) {
@@ -3798,6 +3865,87 @@ const server = http.createServer(async (req, res) => {
             res.writeHead(405);
             res.end();
             return;
+        }
+
+        if (req.url === '/proxy/abw/version') {
+            const body = await getBody(req);
+            const normalizedWorkspace = normalizeAbwBridgeWorkspace(body.workspace);
+            if (!normalizedWorkspace.ok) {
+                return sendJSON(res, getAbwBridgeHttpStatus(normalizedWorkspace.status), {
+                    ok: false,
+                    status: normalizedWorkspace.status,
+                    error: normalizedWorkspace.error,
+                    abw: null
+                });
+            }
+            try {
+                enforcePermission(req, 'abw.read', { targetSummary: `abw.version:${normalizedWorkspace.path}` });
+            } catch (e) {
+                const status = abwPermissionFailureStatus(e);
+                return sendJSON(res, getAbwBridgeHttpStatus(status), {
+                    ok: false,
+                    status,
+                    error: redactSecrets(e.message),
+                    abw: null
+                });
+            }
+            const result = await abwCliReader.readVersion({ workspace: normalizedWorkspace.path });
+            return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwBridgePayload(result));
+        }
+
+        if (req.url === '/proxy/abw/doctor') {
+            const body = await getBody(req);
+            const normalizedWorkspace = normalizeAbwBridgeWorkspace(body.workspace);
+            if (!normalizedWorkspace.ok) {
+                return sendJSON(res, getAbwBridgeHttpStatus(normalizedWorkspace.status), {
+                    ok: false,
+                    status: normalizedWorkspace.status,
+                    error: normalizedWorkspace.error,
+                    abw: null
+                });
+            }
+            try {
+                enforcePermission(req, 'abw.read', { targetSummary: `abw.doctor:${normalizedWorkspace.path}` });
+            } catch (e) {
+                const status = abwPermissionFailureStatus(e);
+                return sendJSON(res, getAbwBridgeHttpStatus(status), {
+                    ok: false,
+                    status,
+                    error: redactSecrets(e.message),
+                    abw: null
+                });
+            }
+            const result = await abwCliReader.readDoctor({ workspace: normalizedWorkspace.path });
+            return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwBridgePayload(result));
+        }
+
+        if (req.url === '/proxy/abw/ask') {
+            const body = await getBody(req);
+            const normalizedWorkspace = normalizeAbwBridgeWorkspace(body.workspace);
+            if (!normalizedWorkspace.ok) {
+                return sendJSON(res, getAbwBridgeHttpStatus(normalizedWorkspace.status), {
+                    ok: false,
+                    status: normalizedWorkspace.status,
+                    error: normalizedWorkspace.error,
+                    abw: null
+                });
+            }
+            try {
+                enforcePermission(req, 'abw.read', { targetSummary: `abw.ask:${normalizedWorkspace.path}` });
+            } catch (e) {
+                const status = abwPermissionFailureStatus(e);
+                return sendJSON(res, getAbwBridgeHttpStatus(status), {
+                    ok: false,
+                    status,
+                    error: redactSecrets(e.message),
+                    abw: null
+                });
+            }
+            const result = await abwCliReader.ask({
+                workspace: normalizedWorkspace.path,
+                question: body.question || body.text || ''
+            });
+            return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwBridgePayload(result));
         }
 
         if (req.url === '/proxy/chat') return await handleProxyChat(req, res);
