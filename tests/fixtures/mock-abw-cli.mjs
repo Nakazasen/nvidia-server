@@ -82,6 +82,51 @@ if (mode === 'ask-no-match') {
   process.exit(0);
 }
 
+if (mode === 'ask-no-match-read-only') {
+  process.stdout.write(JSON.stringify(envelope('no_match', {
+    answer: 'No grounded answer found.',
+    retrieval_status: 'no_match',
+    trust_score: 0,
+    sources: [],
+    warnings: ['No supporting sources were returned.'],
+    gap_logged: false,
+    gap_id: null,
+    current_state: 'knowledge_gap_logged',
+    knowledge_evidence_tier: 'E0_unknown',
+    knowledge_source_score: 0,
+    source_summary: 'unknown',
+    logs: [],
+    provider: 'local',
+    gap_log_suppressed: true,
+    would_log_gap: true,
+    runtime_write_suppressed: true
+  })));
+  process.exit(0);
+}
+
+if (mode === 'ask-raw-only') {
+  process.stdout.write(JSON.stringify(envelope('success', {
+    answer: 'Raw note says AGV dispatch uses MQTT.',
+    retrieval_status: 'raw_or_draft_only',
+    trust_score: 45,
+    sources: [{ path: 'raw/agv-raw.md', title: 'agv raw', snippet: 'AGV dispatch note says MQTT is used for queue handoff.', confidence: 45 }],
+    warnings: [
+      'Weak evidence: trust score is below 50.',
+      'Weak evidence: answer is based on raw or draft material, not grounded wiki.'
+    ],
+    gap_logged: false,
+    gap_id: null,
+    current_state: 'knowledge_answered',
+    knowledge_evidence_tier: 'E1_fallback',
+    knowledge_source_score: 2,
+    source_summary: 'raw_source',
+    logs: [],
+    provider: 'local',
+    runtime_write_suppressed: true
+  })));
+  process.exit(0);
+}
+
 process.stdout.write(JSON.stringify(envelope('success', {
   answer: question ? `Mock answer for: ${question}` : 'Mock answer',
   retrieval_status: 'exact_match',
@@ -96,5 +141,6 @@ process.stdout.write(JSON.stringify(envelope('success', {
   sourceSummary: 'local_wiki',
   source_summary: 'local_wiki',
   logs: [],
-  provider: 'local'
+  provider: 'local',
+  runtime_write_suppressed: true
 })));

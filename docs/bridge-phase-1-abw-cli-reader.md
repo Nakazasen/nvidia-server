@@ -50,6 +50,35 @@ future bridge consumers:
 - `logs`
 - `provider`
 
+The server bridge payload also keeps the original `abw` envelope and exposes
+bounded UI-facing fields:
+
+- `readOnly`
+- `answer`
+- `retrievalStatus`
+- `trustScore`
+- `evidenceTier`
+- `sources`
+- `warnings`
+- `gapLogged`
+- `gapLogSuppressed`
+- `wouldLogGap`
+- `runtimeWriteSuppressed`
+
+## Read-Only Answer Display
+
+NVIDIA now renders `/abw-ask` results in the chat surface as a read-only ABW
+answer card that shows:
+
+- answer text
+- retrieval status
+- trust score
+- evidence tier
+- sources with path/confidence/snippet
+- warnings
+- read-only indicators
+- explicit no-mutation boundary text
+
 ## NVIDIA Bridge Statuses
 
 - `ABW_CLI_OK`

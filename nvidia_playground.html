@@ -655,6 +655,128 @@
             color: #e0e0e0;
         }
 
+        .abw-card {
+            border: 1px solid rgba(var(--primary-rgb), 0.35);
+            background: rgba(var(--primary-rgb), 0.08);
+            border-radius: 12px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .abw-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .abw-card-title {
+            font-weight: 700;
+            color: var(--primary);
+            letter-spacing: 0.02em;
+        }
+
+        .abw-pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .abw-pill {
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 0.72rem;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: rgba(255, 255, 255, 0.05);
+            color: #d7d7d7;
+        }
+
+        .abw-pill.strong {
+            border-color: rgba(var(--primary-rgb), 0.5);
+            background: rgba(var(--primary-rgb), 0.16);
+            color: #d9f7a6;
+        }
+
+        .abw-pill.weak {
+            border-color: rgba(245, 177, 66, 0.45);
+            background: rgba(245, 177, 66, 0.12);
+            color: #ffd48a;
+        }
+
+        .abw-pill.blocked {
+            border-color: rgba(255, 107, 107, 0.45);
+            background: rgba(255, 107, 107, 0.12);
+            color: #ffb0b0;
+        }
+
+        .abw-section {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .abw-section-label {
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            opacity: 0.68;
+        }
+
+        .abw-answer {
+            line-height: 1.6;
+            color: #f0f0f0;
+            white-space: pre-wrap;
+        }
+
+        .abw-note {
+            font-size: 0.8rem;
+            color: #a6a6a6;
+        }
+
+        .abw-warning-list,
+        .abw-source-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .abw-warning-item,
+        .abw-source-item {
+            border-radius: 10px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .abw-warning-item {
+            border-color: rgba(245, 177, 66, 0.3);
+            background: rgba(245, 177, 66, 0.08);
+            color: #ffd48a;
+        }
+
+        .abw-source-path {
+            font-family: Consolas, monospace;
+            font-size: 0.78rem;
+            color: #fff;
+        }
+
+        .abw-source-meta {
+            font-size: 0.76rem;
+            color: #a7a7a7;
+            margin-top: 4px;
+        }
+
+        .abw-source-snippet {
+            margin-top: 6px;
+            font-size: 0.82rem;
+            line-height: 1.45;
+            color: #d4d4d4;
+            white-space: pre-wrap;
+        }
+
         .tool-message {
             align-self: center;
             background: rgba(255, 255, 255, 0.05);
@@ -3700,7 +3822,9 @@
                 saveSessions();
             } else {
                 s.messages.forEach((m, index) => {
-                    if (m.content || m.tool_calls) {
+                    if (m.abwResult) {
+                        addAbwResultMessage(m.abwResult, index);
+                    } else if (m.content || m.tool_calls) {
                         addMessage(m.role, typeof m.content === 'string' ? m.content : (m.content ? "Media Content" : "Running tool..."), [], index);
                     }
                 });
@@ -3780,6 +3904,112 @@
             userInput.focus();
             userInput.selectionStart = userInput.selectionEnd = userInput.value.length;
             logDebug(' a prompt c vo  nhp chh sa v gi li.');
+        }
+
+        function getAbwStatusTone(payload = {}) {
+            const retrievalStatus = String(payload.retrievalStatus || '').trim();
+            const evidenceTier = String(payload.evidenceTier || '').trim();
+            if (retrievalStatus === 'no_match' || retrievalStatus === 'knowledge_gap_logged' || evidenceTier === 'E0_unknown') return 'blocked';
+            if (retrievalStatus === 'raw_or_draft_only' || evidenceTier === 'E1_fallback') return 'weak';
+            return 'strong';
+        }
+
+        function formatAbwAssistantSummary(payload = {}) {
+            const status = payload.retrievalStatus || payload.status || 'unknown';
+            const evidenceTier = payload.evidenceTier || 'unknown';
+            const trustScore = Number.isFinite(payload.trustScore) ? payload.trustScore : 'n/a';
+            const answer = String(payload.answer || '').trim() || 'No grounded answer found.';
+            return [
+                `ABW read-only result`,
+                `status: ${status}`,
+                `evidence: ${evidenceTier}`,
+                `trust: ${trustScore}`,
+                '',
+                answer
+            ].join('\n');
+        }
+
+        function renderAbwResultCard(payload = {}) {
+            const tone = getAbwStatusTone(payload);
+            const retrievalStatus = String(payload.retrievalStatus || payload.status || 'unknown').trim() || 'unknown';
+            const evidenceTier = String(payload.evidenceTier || 'unknown').trim() || 'unknown';
+            const answer = String(payload.answer || '').trim() || 'No grounded answer found.';
+            const trustScore = Number.isFinite(payload.trustScore) ? payload.trustScore : null;
+            const warnings = Array.isArray(payload.warnings) ? payload.warnings.filter(Boolean) : [];
+            const sources = Array.isArray(payload.sources) ? payload.sources : [];
+            const readOnlyIndicators = [
+                `read-only bridge: ${payload.readOnly === true ? 'true' : 'false'}`,
+                `runtimeWriteSuppressed: ${payload.runtimeWriteSuppressed === true ? 'true' : 'false'}`,
+                `gapLogSuppressed: ${payload.gapLogSuppressed === true ? 'true' : 'false'}`,
+                `wouldLogGap: ${payload.wouldLogGap === true ? 'true' : 'false'}`
+            ];
+            const noMatchNote = retrievalStatus === 'no_match' || evidenceTier === 'E0_unknown'
+                ? '<div class="abw-note">No-match means no file changes happened. Review + Apply is separate and this response did not mutate disk.</div>'
+                : '<div class="abw-note">This is a read-only ABW answer. Review + Apply is separate and no file mutation happened here.</div>';
+            const warningItems = warnings.length
+                ? warnings.map(item => `<div class="abw-warning-item">${escapeHtml(String(item))}</div>`).join('')
+                : '<div class="abw-note">No warnings returned.</div>';
+            const sourceItems = sources.length
+                ? sources.map(source => `
+                    <div class="abw-source-item">
+                        <div class="abw-source-path">${escapeHtml(String(source.path || 'unknown'))}</div>
+                        <div class="abw-source-meta">confidence: ${Number.isFinite(source.confidence) ? source.confidence : 'n/a'}</div>
+                        ${source.snippet ? `<div class="abw-source-snippet">${escapeHtml(String(source.snippet))}</div>` : ''}
+                    </div>
+                `).join('')
+                : '<div class="abw-note">No supporting sources were returned.</div>';
+            const indicatorPills = readOnlyIndicators.map(item => `<span class="abw-pill">${escapeHtml(item)}</span>`).join('');
+            const statusPills = [
+                `<span class="abw-pill ${tone}">retrieval: ${escapeHtml(retrievalStatus)}</span>`,
+                `<span class="abw-pill ${tone}">evidence: ${escapeHtml(evidenceTier)}</span>`,
+                `<span class="abw-pill ${tone}">trust: ${trustScore !== null ? trustScore : 'n/a'}</span>`
+            ].join('');
+
+            return `
+                <div class="abw-card">
+                    <div class="abw-card-header">
+                        <div class="abw-card-title">ABW Read-Only Answer</div>
+                        <div class="abw-pill-row">${statusPills}</div>
+                    </div>
+                    <div class="abw-section">
+                        <div class="abw-section-label">Answer</div>
+                        <div class="abw-answer">${escapeHtml(answer)}</div>
+                        ${noMatchNote}
+                    </div>
+                    <div class="abw-section">
+                        <div class="abw-section-label">Warnings</div>
+                        <div class="abw-warning-list">${warningItems}</div>
+                    </div>
+                    <div class="abw-section">
+                        <div class="abw-section-label">Sources</div>
+                        <div class="abw-source-list">${sourceItems}</div>
+                    </div>
+                    <div class="abw-section">
+                        <div class="abw-section-label">Read-Only Indicators</div>
+                        <div class="abw-pill-row">${indicatorPills}</div>
+                    </div>
+                    <div class="abw-note">No pending edit was created. No Apply action ran. No sync or auto-promote occurred.</div>
+                </div>
+            `;
+        }
+
+        function addAbwResultMessage(payload, messageIndex = null) {
+            const div = document.createElement('div');
+            div.className = 'message assistant-message';
+            const actionIndex = Number.isInteger(messageIndex) ? messageIndex : -1;
+            const content = document.createElement('div');
+            content.className = 'message-content';
+            content.innerHTML = renderAbwResultCard(payload);
+            div.appendChild(content);
+            if (actionIndex >= 0) {
+                const actions = document.createElement('div');
+                actions.className = 'message-actions';
+                actions.innerHTML = `<button class="message-action-btn" title="Copy n dung" onclick="copyMessage(${actionIndex})">Copy</button>`;
+                div.appendChild(actions);
+            }
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            return div;
         }
 
         function addMessage(role, text, images = [], messageIndex = null) {
@@ -3914,6 +4144,56 @@
             sendMessage();
         }
 
+        async function handleAbwAskCommand(rawText) {
+            const text = String(rawText || '').trim();
+            const question = text.replace(/^\/abw-ask\b/i, '').trim();
+            if (!question) {
+                addMessage('assistant', 'ABW read-only ask requires a question.\nExample: /abw-ask What does the spec say about AGV communication?');
+                return;
+            }
+            const workspace = (document.getElementById('current-workspace-path')?.innerText || '').trim();
+            if (!workspace) {
+                addMessage('assistant', 'ABW read-only ask is blocked because the active NVIDIA workspace is empty.');
+                return;
+            }
+
+            const loading = addMessage('assistant', 'ABW read-only bridge is querying local knowledge...');
+            try {
+                const payload = await fetchJsonOrThrow('/proxy/abw/ask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ workspace, question })
+                });
+                loading.remove();
+                const summary = formatAbwAssistantSummary(payload);
+                const s = sessions[currentSessionId];
+                const assistantMessage = {
+                    role: 'assistant',
+                    content: summary,
+                    abwResult: payload
+                };
+                addAbwResultMessage(payload, s.messages.length);
+                s.messages.push(assistantMessage);
+                saveSessions();
+                setRecentOperationSummary({
+                    label: `Recent action: ABW read-only answer returned ${payload.retrievalStatus || payload.status || 'unknown'} with trust ${Number.isFinite(payload.trustScore) ? payload.trustScore : 'n/a'}. No file mutation happened.`,
+                    tone: getAbwStatusTone(payload) === 'blocked' ? 'blocked' : (getAbwStatusTone(payload) === 'weak' ? 'pending' : 'completed')
+                });
+                logDebug(`ABW read-only ask: ${payload.status} / ${payload.retrievalStatus || 'n/a'}`);
+            } catch (e) {
+                loading.remove();
+                const errorText = `ABW read-only ask failed.\n${e.message}`;
+                const s = sessions[currentSessionId];
+                addMessage('assistant', errorText, [], s.messages.length);
+                s.messages.push({ role: 'assistant', content: errorText });
+                saveSessions();
+                setRecentOperationSummary({
+                    label: 'Recent action: ABW read-only ask failed. No pending edit was created and no file mutation happened.',
+                    tone: 'blocked'
+                });
+            }
+        }
+
         async function sendMessage() {
             if (isAgentRunning) return;
             const text = userInput.value.trim();
@@ -3942,6 +4222,11 @@
             mediaPreview.innerHTML = '';
             mediaPreview.style.display = 'none';
             saveSessions();
+
+            if (/^\/abw-ask\b/i.test(text)) {
+                await handleAbwAskCommand(text);
+                return;
+            }
 
             const activeContexts = isIdeMode() ? attachedContexts : [];
             const contextPayload = {

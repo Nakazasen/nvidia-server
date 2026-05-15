@@ -202,6 +202,7 @@ console.log('\nABW CLI Reader Bridge Tests\n');
   const result = await reader.ask({ workspace: 'D:/tmp/mock-workspace', question: 'How does AGV communication work?' });
   assert(result.status === ABW_CLI_STATUS.OK, '3. ask known-source JSON success', `status=${result.status}`);
   assert(result.data?.retrieval_status === 'exact_match', '3a. ask retrieval_status preserved');
+  assert(result.data?.knowledge_evidence_tier === 'E2_wiki', '3b. ask evidence tier preserved');
 }
 
 {
@@ -230,6 +231,36 @@ console.log('\nABW CLI Reader Bridge Tests\n');
   });
   const result = await reader.ask({ workspace: 'D:/tmp/mock-workspace', question: 'Who is missing?' });
   assert(result.status === ABW_CLI_STATUS.GAP_LOGGED, '4. ask no-match gap maps to machine status', `status=${result.status}`);
+}
+
+{
+  const reader = createAbwCliReader({
+    runProcess: makeRunner({
+      exitCode: 0,
+      stdout: makeEnvelope('ask', 'success', {
+        answer: 'Raw note says AGV dispatch uses MQTT.',
+        retrieval_status: 'raw_or_draft_only',
+        trust_score: 45,
+        sources: [{ path: 'raw/agv-raw.md' }],
+        warnings: ['Weak evidence: answer is based on raw or draft material, not grounded wiki.'],
+        gap_logged: false,
+        gap_id: null,
+        current_state: 'knowledge_answered',
+        knowledge_evidence_tier: 'E1_fallback',
+        knowledge_source_score: 2,
+        source_summary: 'raw_source',
+        logs: [],
+        provider: 'local'
+      }),
+      stderr: '',
+      durationMs: 7,
+      command: ['py', '-m', 'abw.cli', '--json', '--workspace', 'D:/tmp/mock-workspace', 'ask', 'What does the raw AGV note say?']
+    })
+  });
+  const result = await reader.ask({ workspace: 'D:/tmp/mock-workspace', question: 'What does the raw AGV note say?' });
+  assert(result.status === ABW_CLI_STATUS.OK, '4a. ask raw-only success remains machine-readable', `status=${result.status}`);
+  assert(result.data?.retrieval_status === 'raw_or_draft_only', '4b. raw-only retrieval_status preserved');
+  assert(result.data?.knowledge_evidence_tier === 'E1_fallback', '4c. raw-only evidence tier preserved');
 }
 
 {
@@ -313,11 +344,75 @@ console.log('\nABW CLI Reader Bridge Tests\n');
     assert(ask.ok, '10a. /proxy/abw/ask returns 200', `status=${ask.status}`);
     assert(ask.json?.status === ABW_CLI_STATUS.OK, '10b. endpoint returns ABW_CLI_OK', `status=${ask.json?.status}`);
     assert(ask.json?.retrievalStatus === 'exact_match', '10c. endpoint exposes retrievalStatus');
-    assert(Array.isArray(ask.json?.sources) && ask.json.sources.length === 1, '10d. endpoint exposes sources');
+    assert(ask.json?.evidenceTier === 'E2_wiki', '10d. endpoint exposes evidenceTier');
+    assert(ask.json?.readOnly === true, '10e. endpoint exposes readOnly=true');
+    assert(Array.isArray(ask.json?.sources) && ask.json.sources.length === 1, '10f. endpoint exposes sources');
     const pendingEdits = await getPendingEdits(baseUrl);
-    assert(Array.isArray(pendingEdits) && pendingEdits.length === 0, '10e. bridge does not create pending edit');
+    assert(Array.isArray(pendingEdits) && pendingEdits.length === 0, '10g. bridge does not create pending edit');
     const afterMarker = fs.readFileSync(markerPath, 'utf8');
-    assert(afterMarker === beforeMarker, '10f. bridge does not mutate disk');
+    assert(afterMarker === beforeMarker, '10h. bridge does not mutate disk');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4863;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-reader-raw-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'ask-raw-only' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '12. workspace switch for raw-only bridge test succeeds', `status=${switched.status}`);
+    const ask = await requestJson(`${baseUrl}/proxy/abw/ask`, {
+      body: {
+        workspace,
+        question: 'What does the raw AGV note say?'
+      }
+    });
+    assert(ask.ok, '12a. raw-only /proxy/abw/ask returns 200', `status=${ask.status}`);
+    assert(ask.json?.status === ABW_CLI_STATUS.OK, '12b. raw-only endpoint stays ABW_CLI_OK', `status=${ask.json?.status}`);
+    assert(ask.json?.retrievalStatus === 'raw_or_draft_only', '12c. raw-only retrievalStatus exposed');
+    assert(ask.json?.evidenceTier === 'E1_fallback', '12d. raw-only evidenceTier exposed');
+    assert(Array.isArray(ask.json?.warnings) && ask.json.warnings.some(w => /raw or draft material/i.test(w)), '12e. raw-only warnings preserved');
+    assert(ask.json?.readOnly === true, '12f. raw-only endpoint stays readOnly');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4864;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-reader-nomatch-'));
+  const markerPath = path.join(workspace, 'proof', 'marker.txt');
+  fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+  fs.writeFileSync(markerPath, 'before\n', 'utf8');
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'ask-no-match-read-only' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '13. workspace switch for no-match bridge test succeeds', `status=${switched.status}`);
+    const ask = await requestJson(`${baseUrl}/proxy/abw/ask`, {
+      body: {
+        workspace,
+        question: 'Who is Chu Van?'
+      }
+    });
+    assert(ask.ok, '13a. no-match /proxy/abw/ask returns 200', `status=${ask.status}`);
+    assert(ask.json?.status === ABW_CLI_STATUS.NO_MATCH, '13b. no-match endpoint returns ABW_CLI_NO_MATCH', `status=${ask.json?.status}`);
+    assert(ask.json?.retrievalStatus === 'no_match', '13c. no-match retrievalStatus exposed');
+    assert(Array.isArray(ask.json?.sources) && ask.json.sources.length === 0, '13d. no-match keeps empty sources');
+    assert(ask.json?.gapLogSuppressed === true && ask.json?.wouldLogGap === true, '13e. no-match suppression flags preserved');
+    assert(ask.json?.runtimeWriteSuppressed === true, '13f. no-match runtime write suppression preserved');
+    assert(ask.json?.readOnly === true, '13g. no-match endpoint stays readOnly');
+    const afterMarker = fs.readFileSync(markerPath, 'utf8');
+    assert(afterMarker === 'before\n', '13h. no-match endpoint does not mutate disk');
   } finally {
     await stopServer(server);
     try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
