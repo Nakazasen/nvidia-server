@@ -104,6 +104,26 @@ if (mode === 'ask-no-match-read-only') {
   process.exit(0);
 }
 
+if (mode === 'ask-ambiguous-nonzero-json') {
+  process.stdout.write(JSON.stringify(envelope('ambiguous', {
+    answer: 'Question is ambiguous. Narrow the request.',
+    retrieval_status: 'ambiguous',
+    trust_score: 0,
+    sources: [],
+    warnings: ['The request matched multiple possible intents.'],
+    gap_logged: false,
+    gap_id: null,
+    current_state: 'blocked',
+    knowledge_evidence_tier: null,
+    knowledge_source_score: 0,
+    source_summary: 'unknown',
+    logs: [],
+    provider: 'local',
+    runtime_write_suppressed: true
+  })));
+  process.exit(3);
+}
+
 if (mode === 'ask-raw-only') {
   process.stdout.write(JSON.stringify(envelope('success', {
     answer: 'Raw note says AGV dispatch uses MQTT.',

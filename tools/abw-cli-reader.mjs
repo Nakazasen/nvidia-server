@@ -78,6 +78,19 @@ function validateEnvelope(payload, commandName) {
   return '';
 }
 
+function parseEnvelopeCandidate(text, commandName) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return { payload: null, error: 'empty' };
+  try {
+    const payload = JSON.parse(trimmed);
+    const validationError = validateEnvelope(payload, commandName);
+    if (validationError) return { payload: null, error: validationError };
+    return { payload, error: '' };
+  } catch (error) {
+    return { payload: null, error: error.message };
+  }
+}
+
 function classifyEnvelope(payload) {
   const status = String(payload?.status || '').trim().toLowerCase();
   const data = payload?.data && typeof payload.data === 'object' ? payload.data : {};
@@ -282,7 +295,15 @@ export function createAbwCliReader(options = {}) {
         runtime: result.runtime
       });
     }
+    let payload = null;
+    const stdoutCandidate = parseEnvelopeCandidate(result.stdout, normalizedCommand);
+    const stderrCandidate = parseEnvelopeCandidate(result.stderr, normalizedCommand);
+    payload = stdoutCandidate.payload || stderrCandidate.payload;
+
     if (result?.exitCode !== 0) {
+      if (payload) {
+        return makeSuccessResult(classifyEnvelope(payload), payload, result);
+      }
       return makeErrorResult(ABW_CLI_STATUS.NONZERO_EXIT, {
         commandName: normalizedCommand,
         error: `ABW CLI exited with code ${result.exitCode}`,
@@ -295,32 +316,17 @@ export function createAbwCliReader(options = {}) {
       });
     }
 
-    let payload = null;
-    try {
-      payload = JSON.parse(String(result.stdout || '').trim());
-    } catch (error) {
+    if (!payload) {
+      const parseError = stdoutCandidate.error !== 'empty' ? stdoutCandidate.error : stderrCandidate.error;
       return makeErrorResult(ABW_CLI_STATUS.INVALID_JSON, {
         commandName: normalizedCommand,
-        error: `ABW CLI returned invalid JSON: ${error.message}`,
+        error: `ABW CLI returned invalid JSON: ${parseError}`,
         stderr: result.stderr || '',
         stdout: result.stdout || '',
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         command: result.command,
         runtime: result.runtime
-      });
-    }
-
-    const validationError = validateEnvelope(payload, normalizedCommand);
-    if (validationError) {
-      return makeErrorResult(ABW_CLI_STATUS.SCHEMA_UNSUPPORTED, {
-        commandName: normalizedCommand,
-        error: validationError,
-        stderr: result.stderr || '',
-        stdout: result.stdout || '',
-        exitCode: result.exitCode,
-        durationMs: result.durationMs,
-        command: result.command
       });
     }
 

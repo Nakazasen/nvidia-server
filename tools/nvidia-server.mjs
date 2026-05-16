@@ -2657,6 +2657,9 @@ function getAbwBridgeHttpStatus(status) {
     }
     if (status === ABW_CLI_STATUS.TRUST_REQUIRED) return 403;
     if ([ABW_CLI_STATUS.WORKSPACE_REQUIRED, ABW_CLI_STATUS.WRONG_WORKSPACE].includes(status)) return 400;
+    if ([ABW_CLI_STATUS.NO_MATCH, ABW_CLI_STATUS.GAP_LOGGED, ABW_CLI_STATUS.AMBIGUOUS, ABW_CLI_STATUS.NO_CONFIDENT_WORKSPACE, ABW_CLI_STATUS.BLOCKED].includes(status)) {
+        return 200;
+    }
     return 200;
 }
 

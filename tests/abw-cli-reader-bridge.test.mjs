@@ -371,6 +371,34 @@ console.log('\nABW CLI Reader Bridge Tests\n');
 
 {
   const reader = createAbwCliReader({
+    runProcess: makeRunner({
+      exitCode: 3,
+      stdout: makeEnvelope('ask', 'ambiguous', {
+        answer: 'Question is ambiguous. Narrow the request.',
+        retrieval_status: 'ambiguous',
+        trust_score: 0,
+        sources: [],
+        warnings: ['The request matched multiple possible intents.'],
+        gap_logged: false,
+        gap_id: null,
+        current_state: 'blocked',
+        knowledge_evidence_tier: null,
+        knowledge_source_score: 0,
+        source_summary: 'unknown',
+        logs: [],
+        provider: 'local'
+      }),
+      stderr: '',
+      durationMs: 5,
+      command: ['py', '-m', 'abw.cli']
+    })
+  });
+  const result = await reader.ask({ workspace: 'D:/tmp/mock-workspace', question: 'Which one?' });
+  assert(result.status === ABW_CLI_STATUS.AMBIGUOUS, '8a. nonzero exit with valid ambiguous JSON maps to ABW_CLI_AMBIGUOUS', `status=${result.status}`);
+}
+
+{
+  const reader = createAbwCliReader({
     runProcess: async () => ({ exitCode: 0, stdout: '', stderr: '', durationMs: 0, command: [] })
   });
   const result = await reader.ask({ workspace: '', question: 'Where is AGV?' });
@@ -471,6 +499,32 @@ console.log('\nABW CLI Reader Bridge Tests\n');
     assert(ask.json?.readOnly === true, '13g. no-match endpoint stays readOnly');
     const afterMarker = fs.readFileSync(markerPath, 'utf8');
     assert(afterMarker === 'before\n', '13h. no-match endpoint does not mutate disk');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4865;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-reader-ambiguous-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'ask-ambiguous-nonzero-json' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '14. workspace switch for ambiguous bridge test succeeds', `status=${switched.status}`);
+    const ask = await requestJson(`${baseUrl}/proxy/abw/ask`, {
+      body: {
+        workspace,
+        question: 'Which workflow should I use?'
+      }
+    });
+    assert(ask.ok, '14a. ambiguous /proxy/abw/ask returns 200 instead of opaque 502', `status=${ask.status}`);
+    assert(ask.json?.status === ABW_CLI_STATUS.AMBIGUOUS, '14b. ambiguous endpoint exposes ABW_CLI_AMBIGUOUS', `status=${ask.json?.status}`);
+    assert(ask.json?.retrievalStatus === 'ambiguous', '14c. ambiguous retrievalStatus preserved');
+    assert(Array.isArray(ask.json?.warnings) && ask.json.warnings.length > 0, '14d. ambiguous warnings preserved');
   } finally {
     await stopServer(server);
     try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
