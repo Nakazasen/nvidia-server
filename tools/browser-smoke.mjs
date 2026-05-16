@@ -580,6 +580,10 @@ async function runRealBrowserSmoke(url) {
       let approvalModalClarityOk = false;
       let multiFileCountVisibleOk = false;
       let noOverclaimUiTextOk = false;
+      let nonTechAssistantPanelOk = false;
+      let nonTechIngestCopyOk = false;
+      let nonTechNoMatchCopyOk = false;
+      let nonTechPromoteLimitVisibleOk = false;
       let keyWorkflowControlsVisibleOk = false;
       let noCriticalBottomActionClippedOk = false;
       let visibilityDiagnostic = '';
@@ -777,6 +781,19 @@ async function runRealBrowserSmoke(url) {
 
           const fullUiText = document.body?.textContent || '';
           noOverclaimUiTextOk = !/DAILY_USE_READY|PRODUCTION_READY|FULL_BRIDGE_READY|COGNITIVE_OS_ACHIEVED|ENTERPRISE_GRADE_SECURITY/i.test(fullUiText);
+          nonTechAssistantPanelOk =
+            /Tro ly tai lieu|Chat voi tai lieu/i.test(fullUiText) &&
+            /Buoc 1: Chon thu muc tai lieu/i.test(fullUiText) &&
+            /Buoc 2: Nap tai lieu/i.test(fullUiText) &&
+            /Buoc 3: Kiem tra va hoi chatbot/i.test(fullUiText);
+          nonTechIngestCopyOk =
+            /Bo file can hoi vao thu muc raw/i.test(fullUiText) &&
+            /Ingest chi tao ban nhap/i.test(fullUiText) &&
+            /Da doc:|Da bo qua:|File chua ho tro|File loi doc|Ban nhap da tao/i.test(fullUiText);
+          nonTechNoMatchCopyOk =
+            /Chua tim thay thong tin dang tin cay trong tai lieu da nap/i.test(fullUiText);
+          nonTechPromoteLimitVisibleOk =
+            /Chua ho tro danh dau nguon tin cay tu dong an toan trong UI/i.test(fullUiText);
           const inViewport = (el) => {
             if (!el) return false;
             const rect = el.getBoundingClientRect();
@@ -900,6 +917,10 @@ async function runRealBrowserSmoke(url) {
       add('Approval modal includes operation type and target path', approvalModalClarityOk, 'approval modal text includes operation, target path, and Review + Apply guidance', true);
       add('Changed Files shows multi-file affected count', multiFileCountVisibleOk, 'multi-file pending summary and ready-to-apply label visible', true);
       add('UI text avoids readiness/production/full-bridge overclaim', noOverclaimUiTextOk, 'forbidden overclaim labels absent from UI shell text', true);
+      add('Non-tech document assistant panel exists', nonTechAssistantPanelOk, 'non-tech 3-step ABW assistant copy is visible', true);
+      add('Ingest copy is understandable for non-tech users', nonTechIngestCopyOk, 'ingest panel copy explains raw and draft-first behavior', true);
+      add('No-match copy is understandable', nonTechNoMatchCopyOk, 'no-match wording explains trusted-source gap clearly', true);
+      add('Review/promote limitation is visible', nonTechPromoteLimitVisibleOk, 'promotion limitation warning stays explicit in UI', true);
       add('Key workflow controls are visible', keyWorkflowControlsVisibleOk, visibilityDiagnostic || 'send/review/changed-files/recent-action are visible in viewport', true);
       add('Critical bottom actions are not clipped', noCriticalBottomActionClippedOk, visibilityDiagnostic || 'review/apply button stays inside viewport bounds', true);
       add('Inline edit action exists', inlineEditActionOk, inlineEditActionOk ? 'monaco action nvidia-inline-edit registered' : 'action not observable in current smoke state', false);
