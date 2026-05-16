@@ -651,6 +651,105 @@ console.log('\nABW CLI Reader Bridge Tests\n');
   }
 }
 
+{
+  const port = 4871;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-review-success-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'review-success' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '20. workspace switch for review success test succeeds', `status=${switched.status}`);
+    const review = await requestJson(`${baseUrl}/proxy/abw/review`, { body: { workspace } });
+    assert(review.ok, '20a. /proxy/abw/review returns 200 on success', `status=${review.status}`);
+    assert(review.json?.status === ABW_CLI_STATUS.OK, '20b. review success maps to ABW_CLI_OK', `status=${review.json?.status}`);
+    assert(Number.isFinite(review.json?.pending) && Number.isFinite(review.json?.reviewed), '20c. review counters are machine-readable');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4872;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-review-fail-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'review-fail-nonzero' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '21. workspace switch for review fail test succeeds', `status=${switched.status}`);
+    const review = await requestJson(`${baseUrl}/proxy/abw/review`, { body: { workspace } });
+    assert(review.status === 502, '21a. review nonzero maps to 502', `status=${review.status}`);
+    assert(review.json?.status === ABW_CLI_STATUS.NONZERO_EXIT, '21b. review nonzero status preserved', `status=${review.json?.status}`);
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4873;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-promote-failclosed-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'review-success' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '22. workspace switch for promote fail-closed test succeeds', `status=${switched.status}`);
+    const promote = await requestJson(`${baseUrl}/proxy/abw/promote`, { body: { workspace, draftPath: 'drafts/doc-1.md' } });
+    assert(promote.status === 502, '22a. promote is fail-closed when safe JSON contract is unavailable', `status=${promote.status}`);
+    assert(promote.json?.manualReviewRequired === true, '22b. promote fail-closed marks manualReviewRequired');
+    assert(promote.json?.promotionPerformed === false, '22c. promote fail-closed does not fake promotion');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4874;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-promote-untrusted-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: false, mockMode: 'review-success' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '23. workspace switch for promote untrusted test succeeds', `status=${switched.status}`);
+    const promote = await requestJson(`${baseUrl}/proxy/abw/promote`, { body: { workspace, draftPath: 'drafts/doc-1.md' } });
+    assert(promote.status === 403, '23a. promote requires trusted workspace', `status=${promote.status}`);
+    assert(promote.json?.status === ABW_CLI_STATUS.TRUST_REQUIRED, '23b. promote untrusted status preserved', `status=${promote.json?.status}`);
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4875;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-promote-ws-'));
+  const otherWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-promote-ws-other-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'review-success' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '24. workspace switch for promote mismatch test succeeds', `status=${switched.status}`);
+    const promote = await requestJson(`${baseUrl}/proxy/abw/promote`, { body: { workspace: otherWorkspace, draftPath: 'drafts/doc-1.md' } });
+    assert(promote.status === 400, '24a. promote rejects wrong workspace', `status=${promote.status}`);
+    assert(promote.json?.status === ABW_CLI_STATUS.WRONG_WORKSPACE, '24b. promote wrong workspace classified', `status=${promote.json?.status}`);
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(otherWorkspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
 console.log('\n---');
 console.log(`Total: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);
 

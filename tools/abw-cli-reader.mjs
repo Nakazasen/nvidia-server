@@ -18,7 +18,7 @@ export const ABW_CLI_STATUS = Object.freeze({
   BLOCKED: 'ABW_CLI_BLOCKED'
 });
 
-const SUPPORTED_COMMANDS = new Set(['ask', 'doctor', 'version', 'ingest']);
+const SUPPORTED_COMMANDS = new Set(['ask', 'doctor', 'version', 'ingest', 'review']);
 const DEFAULT_TIMEOUT_MS = Number(process.env.ABW_CLI_TIMEOUT_MS || 20000);
 const DEFAULT_MAX_OUTPUT_CHARS = Number(process.env.ABW_CLI_MAX_OUTPUT_CHARS || 400000);
 
@@ -342,6 +342,7 @@ export function createAbwCliReader(options = {}) {
     readVersion: (options = {}) => invoke('version', options),
     readDoctor: (options = {}) => invoke('doctor', options),
     ask: (options = {}) => invoke('ask', options),
-    ingestRaw: (options = {}) => invoke('ingest', { ...options, ingestTarget: 'raw' })
+    ingestRaw: (options = {}) => invoke('ingest', { ...options, ingestTarget: 'raw' }),
+    readReview: (options = {}) => invoke('review', options)
   };
 }

@@ -168,6 +168,23 @@ if (mode === 'ingest-fail-nonzero') {
   process.exit(9);
 }
 
+if (mode === 'review-success') {
+  process.stdout.write(JSON.stringify(envelope('success', {
+    pending: 2,
+    reviewed: 2,
+    actions: ['approve draft drafts/doc-1.md', 'approve draft drafts/doc-2.md'],
+    warnings: ['Manual review required before trusted wiki use.'],
+    current_state: 'knowledge_review',
+    runner_status: 'completed'
+  })));
+  process.exit(0);
+}
+
+if (mode === 'review-fail-nonzero') {
+  process.stderr.write('mock review failed\n');
+  process.exit(11);
+}
+
 process.stdout.write(JSON.stringify(envelope('success', {
   answer: question ? `Mock answer for: ${question}` : 'Mock answer',
   retrieval_status: 'exact_match',

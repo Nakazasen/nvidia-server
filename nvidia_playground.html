@@ -2291,8 +2291,9 @@
                 <button class="btn-small" onclick="changeWorkspace()">Change...</button>
             </div>
             <div class="abw-chat-panel">
-                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Chat</div>
+                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Status</div>
                 <div class="abw-chat-row">Active workspace: <span id="abw-active-workspace" class="abw-chat-value">Loading...</span></div>
+                <div class="abw-chat-row">Workspace trust: <span id="abw-workspace-trust" class="abw-chat-value">unknown</span></div>
                 <div class="abw-chat-row">ABW runtime source: <span id="abw-runtime-source" class="abw-chat-value">unknown</span></div>
                 <div class="abw-chat-row">ABW repo path: <span id="abw-repo-path" class="abw-chat-value">unknown</span></div>
                 <div class="abw-chat-row">Read-only mode: <span id="abw-readonly-flag" class="abw-chat-value">true</span></div>
@@ -2302,9 +2303,7 @@
                     <button class="btn-small" onclick="refreshAbwBridgeHealth()">Refresh ABW status</button>
                     <button class="btn-small" onclick="changeWorkspace()">Switch workspace</button>
                 </div>
-                <input id="abw-chat-question" class="abw-chat-input" type="text" placeholder="Hỏi tài liệu ABW..." />
-                <button class="btn-small" onclick="askAbwFromPanel()">Hỏi ABW</button>
-                <div id="abw-chat-note" class="abw-chat-warn">Ingest/review hiện vẫn chạy qua ABW CLI. Draft cần review trước khi dùng như trusted wiki.</div>
+                <div id="abw-chat-note" class="abw-chat-warn">Khong tu dong ghi/sync/write-back. Neu du lieu nhay cam, hay dung va sanitize truoc.</div>
             </div>
             <div class="abw-chat-panel" style="margin-top:10px;">
                 <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Ingest / Nạp tài liệu ABW</div>
@@ -2325,6 +2324,30 @@
                 <div id="abw-ingest-errors" class="abw-chat-row"></div>
                 <div id="abw-ingest-warnings" class="abw-chat-row"></div>
                 <button class="btn-small" style="margin-top:6px;" onclick="focusAbwChatQuestion()">Hỏi trong ABW Chat</button>
+            </div>
+            <div class="abw-chat-panel" style="margin-top:10px;">
+                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Review / Drafts</div>
+                <div id="abw-review-note" class="abw-chat-warn">Draft can review/promote truoc khi dung lam nguon chinh thuc.</div>
+                <div class="abw-chat-row">Review status: <span id="abw-review-status" class="abw-chat-value">Chua review</span></div>
+                <div id="abw-review-summary" class="abw-chat-value" style="margin-top:6px;">Chua co du lieu review.</div>
+                <div id="abw-review-actions" class="abw-chat-row"></div>
+                <label for="abw-promote-path" style="display:block; margin-top:6px; font-size:0.72rem; opacity:0.8;">Draft path de promote thu cong (1 draft)</label>
+                <input id="abw-promote-path" class="abw-chat-input" type="text" placeholder="drafts/example_draft.md" />
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button class="btn-small" id="abw-review-btn" onclick="runAbwReviewDrafts()">Review drafts</button>
+                    <button class="btn-small" id="abw-promote-btn" onclick="runAbwPromoteSelectedDraft()">Promote selected draft</button>
+                </div>
+                <div id="abw-promote-result" class="abw-chat-row"></div>
+                <div id="abw-promote-warning" class="abw-chat-warn">Review/promote co the bi fail-closed neu contract JSON an toan chua san sang trong sprint nay.</div>
+            </div>
+            <div class="abw-chat-panel" style="margin-top:10px;">
+                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Chat</div>
+                <input id="abw-chat-question" class="abw-chat-input" type="text" placeholder="Hoi tai lieu ABW..." />
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button class="btn-small" onclick="askAbwFromPanel()">Hoi ABW</button>
+                    <button class="btn-small" onclick="focusAbwChatQuestion()">Hoi lai sau khi review/promote</button>
+                </div>
+                <div class="abw-chat-warn">Can review/promote truoc khi hoi nhu nguon chinh thuc.</div>
             </div>
         </div>
 
@@ -4028,11 +4051,13 @@
             const repoPathEl = document.getElementById('abw-repo-path');
             const readOnlyEl = document.getElementById('abw-readonly-flag');
             const healthEl = document.getElementById('abw-health-status');
+            const trustEl = document.getElementById('abw-workspace-trust');
             if (activeWorkspaceEl) activeWorkspaceEl.innerText = workspace || 'empty';
             if (runtimeSourceEl) runtimeSourceEl.innerText = payload.runtimeSource || 'unknown';
             if (repoPathEl) repoPathEl.innerText = payload.abwRepoPath || 'unknown';
             if (readOnlyEl) readOnlyEl.innerText = payload.readOnly === true ? 'true' : 'unknown';
             if (healthEl) healthEl.innerText = summarizeAbwHumanStatus(payload);
+            if (trustEl) trustEl.innerText = abwWorkspaceTrusted === true ? 'trusted' : (abwWorkspaceTrusted === false ? 'untrusted' : 'unknown');
             renderAbwWorkspaceHint(payload, workspace);
         }
 
@@ -4251,6 +4276,9 @@
             sendMessage();
         }
 
+        let abwLastGeneratedDrafts = [];
+        let abwWorkspaceTrusted = null;
+
         async function handleAbwAskCommand(rawText) {
             const text = String(rawText || '').trim();
             const question = text.replace(/^\/abw-ask\b/i, '').trim();
@@ -4324,6 +4352,13 @@
                 return;
             }
             try {
+                try {
+                    const trustRes = await fetch('/api/trust');
+                    const trustPayload = await trustRes.json();
+                    abwWorkspaceTrusted = trustPayload?.trusted === true;
+                } catch {
+                    abwWorkspaceTrusted = null;
+                }
                 const version = await fetchJsonOrThrow('/proxy/abw/version', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -4387,6 +4422,15 @@
             if (unsupportedEl) unsupportedEl.innerHTML = `unsupported_files: ${(payload.unsupportedFiles || []).length ? `<code>${escapeHtml((payload.unsupportedFiles || []).join(', '))}</code>` : 'none'}`;
             if (errorsEl) errorsEl.innerHTML = `parse_errors: ${(payload.parseErrors || []).length ? `<code>${escapeHtml((payload.parseErrors || []).join(' | '))}</code>` : 'none'}`;
             if (warningsEl) warningsEl.innerHTML = `warnings: ${(payload.warnings || []).length ? `<code>${escapeHtml((payload.warnings || []).join(' | '))}</code>` : 'none'}`;
+            abwLastGeneratedDrafts = Array.isArray(payload.generatedDrafts) ? payload.generatedDrafts : [];
+            const promoteInput = document.getElementById('abw-promote-path');
+            if (promoteInput && !String(promoteInput.value || '').trim() && abwLastGeneratedDrafts.length > 0) {
+                promoteInput.value = abwLastGeneratedDrafts[0];
+            }
+            const reviewSummaryEl = document.getElementById('abw-review-summary');
+            if (reviewSummaryEl && abwLastGeneratedDrafts.length > 0) {
+                reviewSummaryEl.innerText = `Co ${abwLastGeneratedDrafts.length} draft can review/promote thu cong.`;
+            }
         }
 
         async function refreshAbwIngestPanel() {
@@ -4400,6 +4444,15 @@
             const health = document.getElementById('abw-health-status');
             const ingestStatus = document.getElementById('abw-ingest-status');
             if (ingestStatus) ingestStatus.innerText = health ? health.innerText : 'unknown';
+        }
+
+        async function refreshAbwReviewPanel() {
+            const workspace = updateAbwIngestWorkspaceInfo();
+            if (!workspace) {
+                renderAbwReviewResult({ status: 'ABW_CLI_WRONG_WORKSPACE', warnings: ['Khong tim thay workspace hop le.'] });
+                return;
+            }
+            await runAbwReviewDrafts();
         }
 
         async function runAbwIngestRaw() {
@@ -4420,6 +4473,7 @@
                     body: JSON.stringify({ workspace })
                 });
                 renderAbwIngestResult(payload);
+                await refreshAbwReviewPanel();
             } catch (e) {
                 const summaryEl = document.getElementById('abw-ingest-summary');
                 if (summaryEl) summaryEl.innerText = `Ingest thất bại, xem lỗi bên dưới. ${String(e.message || '')}`;
@@ -4427,6 +4481,81 @@
             } finally {
                 if (btn) btn.disabled = false;
                 if (running) running.style.display = 'none';
+            }
+        }
+
+        function renderAbwReviewResult(payload = {}) {
+            const statusEl = document.getElementById('abw-review-status');
+            const summaryEl = document.getElementById('abw-review-summary');
+            const actionsEl = document.getElementById('abw-review-actions');
+            if (statusEl) statusEl.innerText = payload.status || 'unknown';
+            if (summaryEl) {
+                const pending = Number.isFinite(payload.pending) ? payload.pending : 0;
+                const reviewed = Number.isFinite(payload.reviewed) ? payload.reviewed : 0;
+                summaryEl.innerText = `pending=${pending}, reviewed=${reviewed}`;
+            }
+            if (actionsEl) {
+                const actions = Array.isArray(payload.actions) ? payload.actions : [];
+                const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+                actionsEl.innerHTML = `actions: ${actions.length ? `<code>${escapeHtml(actions.join(' | '))}</code>` : 'none'}<br>warnings: ${warnings.length ? `<code>${escapeHtml(warnings.join(' | '))}</code>` : 'none'}`;
+            }
+        }
+
+        async function runAbwReviewDrafts() {
+            const workspace = updateAbwIngestWorkspaceInfo();
+            if (!workspace) {
+                renderAbwReviewResult({ status: 'ABW_CLI_WRONG_WORKSPACE', warnings: ['Khong tim thay workspace hop le.'] });
+                return;
+            }
+            const btn = document.getElementById('abw-review-btn');
+            if (btn) btn.disabled = true;
+            try {
+                const payload = await fetchJsonOrThrow('/proxy/abw/review', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ workspace })
+                });
+                renderAbwReviewResult(payload);
+            } catch (e) {
+                renderAbwReviewResult({
+                    status: 'ABW_CLI_NONZERO_EXIT',
+                    warnings: [`Review that bai: ${String(e.message || 'unknown error')}`]
+                });
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function runAbwPromoteSelectedDraft() {
+            const workspace = updateAbwIngestWorkspaceInfo();
+            const input = document.getElementById('abw-promote-path');
+            const resultEl = document.getElementById('abw-promote-result');
+            const draftPath = String(input?.value || '').trim();
+            if (!workspace) {
+                if (resultEl) resultEl.innerText = 'Workspace chua trusted hoac chua dung.';
+                return;
+            }
+            if (!draftPath) {
+                if (resultEl) resultEl.innerText = 'Can nhap draft path de promote 1 draft da chon.';
+                return;
+            }
+            const btn = document.getElementById('abw-promote-btn');
+            if (btn) btn.disabled = true;
+            try {
+                const payload = await fetchJsonOrThrow('/proxy/abw/promote', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ workspace, draftPath })
+                });
+                if (resultEl) {
+                    resultEl.innerText = payload.ok
+                        ? `Promote thanh cong: ${draftPath}`
+                        : `Promote that bai: ${payload.error || payload.status || 'unknown error'}`;
+                }
+            } catch (e) {
+                if (resultEl) resultEl.innerText = `Promote that bai: ${String(e.message || 'unknown error')}`;
+            } finally {
+                if (btn) btn.disabled = false;
             }
         }
 
@@ -7022,6 +7151,7 @@
                     await loadWorkflows();
                     await refreshAbwBridgeHealth();
                     await refreshAbwIngestPanel();
+                    await refreshAbwReviewPanel();
                 } else {
                     alert("Workspace switch failed: " + data.error);
                 }
@@ -7374,6 +7504,7 @@
                 await loadWorkspaceInfo();
                 await refreshAbwBridgeHealth();
                 await refreshAbwIngestPanel();
+                await refreshAbwReviewPanel();
                 await refreshTrustStatus();
                 await initializeUIMode();
                 await loadWorkflows();

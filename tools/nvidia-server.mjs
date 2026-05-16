@@ -2733,6 +2733,31 @@ function buildAbwIngestPayload(result) {
     };
 }
 
+function buildAbwReviewPayload(result) {
+    const data = result?.data && typeof result.data === 'object' ? result.data : {};
+    const runtime = result?.runtime && typeof result.runtime === 'object' ? result.runtime : {};
+    return {
+        ok: result?.ok === true,
+        status: result?.status || ABW_CLI_STATUS.INVALID_JSON,
+        abw: result?.abw || null,
+        readOnly: false,
+        runtimeSource: runtime.runtimeSource || 'default',
+        abwRepoPath: runtime.abwRepoPath || null,
+        pythonExecutable: runtime.pythonExecutable || null,
+        commandArgs: Array.isArray(runtime.commandArgs) ? runtime.commandArgs : [],
+        commandCwd: runtime.cwd || null,
+        pending: Number.isFinite(data.pending) ? data.pending : 0,
+        reviewed: Number.isFinite(data.reviewed) ? data.reviewed : 0,
+        actions: Array.isArray(data.actions) ? data.actions : [],
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        currentState: data.current_state ?? null,
+        runnerStatus: data.runner_status ?? null,
+        error: result?.error || '',
+        stderr: result?.stderr || '',
+        exitCode: result?.exitCode ?? null
+    };
+}
+
 function getExplicitPathBlockReason(text = '') {
     const input = String(text || '');
     if (/(^|[\s"'`(])(?:\.{1,2}[\\/]|[^\s"'`]*[\\/]\.\.[\\/])/.test(input)) {
@@ -4013,6 +4038,70 @@ const server = http.createServer(async (req, res) => {
                 workspace: normalizedWorkspace.path
             });
             return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwIngestPayload(result));
+        }
+
+        if (req.url === '/proxy/abw/review') {
+            const body = await getBody(req);
+            const normalizedWorkspace = normalizeAbwBridgeWorkspace(body.workspace);
+            if (!normalizedWorkspace.ok) {
+                return sendJSON(res, getAbwBridgeHttpStatus(normalizedWorkspace.status), {
+                    ok: false,
+                    status: normalizedWorkspace.status,
+                    error: normalizedWorkspace.error,
+                    abw: null
+                });
+            }
+            if (!isWorkspaceTrusted()) {
+                return sendJSON(res, getAbwBridgeHttpStatus(ABW_CLI_STATUS.TRUST_REQUIRED), {
+                    ok: false,
+                    status: ABW_CLI_STATUS.TRUST_REQUIRED,
+                    error: 'Workspace chua trusted hoac chua dung. Hay trust workspace hien tai truoc khi review draft.',
+                    abw: null
+                });
+            }
+            const result = await abwCliIngestRunner.readReview({
+                workspace: normalizedWorkspace.path
+            });
+            return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwReviewPayload(result));
+        }
+
+        if (req.url === '/proxy/abw/promote') {
+            const body = await getBody(req);
+            const normalizedWorkspace = normalizeAbwBridgeWorkspace(body.workspace);
+            if (!normalizedWorkspace.ok) {
+                return sendJSON(res, getAbwBridgeHttpStatus(normalizedWorkspace.status), {
+                    ok: false,
+                    status: normalizedWorkspace.status,
+                    error: normalizedWorkspace.error,
+                    abw: null
+                });
+            }
+            if (!isWorkspaceTrusted()) {
+                return sendJSON(res, getAbwBridgeHttpStatus(ABW_CLI_STATUS.TRUST_REQUIRED), {
+                    ok: false,
+                    status: ABW_CLI_STATUS.TRUST_REQUIRED,
+                    error: 'Workspace chua trusted hoac chua dung.',
+                    abw: null
+                });
+            }
+            const draftPath = String(body.draftPath || body.path || '').trim();
+            if (!draftPath) {
+                return sendJSON(res, 400, {
+                    ok: false,
+                    status: ABW_CLI_STATUS.INVALID_JSON,
+                    error: 'draftPath is required for manual promote action.',
+                    abw: null
+                });
+            }
+            return sendJSON(res, getAbwBridgeHttpStatus(ABW_CLI_STATUS.SCHEMA_UNSUPPORTED), {
+                ok: false,
+                status: ABW_CLI_STATUS.SCHEMA_UNSUPPORTED,
+                error: 'Review/promote chua co contract JSON an toan trong sprint nay. Vui long review thu cong bang ABW CLI.',
+                manualReviewRequired: true,
+                draftPath,
+                promotionPerformed: false,
+                abw: null
+            });
         }
 
         if (req.url === '/proxy/chat') return await handleProxyChat(req, res);
