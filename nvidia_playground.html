@@ -1888,6 +1888,42 @@
             margin-bottom: 8px;
             font-family: monospace;
         }
+        .abw-chat-panel {
+            margin-top: 10px;
+            padding: 10px;
+            border: 1px solid #2b3647;
+            border-radius: 8px;
+            background: #0f141b;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .abw-chat-row {
+            font-size: 0.72rem;
+            color: #bbb;
+            line-height: 1.4;
+        }
+        .abw-chat-value {
+            color: #fff;
+            word-break: break-all;
+        }
+        .abw-chat-warn {
+            color: #ffcc66;
+            font-size: 0.72rem;
+        }
+        .abw-chat-error {
+            color: #ff7d7d;
+            font-size: 0.72rem;
+        }
+        .abw-chat-input {
+            width: 100%;
+            background: #0b0f14;
+            color: #fff;
+            border: 1px solid #33445b;
+            border-radius: 6px;
+            padding: 8px;
+            font-size: 0.78rem;
+        }
 
         .btn-small {
             background: none;
@@ -2253,6 +2289,22 @@
             <div id="current-workspace-path" class="workspace-path">Loading...</div>
             <div style="display: flex; gap: 5px;">
                 <button class="btn-small" onclick="changeWorkspace()">Change...</button>
+            </div>
+            <div class="abw-chat-panel">
+                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Chat</div>
+                <div class="abw-chat-row">Active workspace: <span id="abw-active-workspace" class="abw-chat-value">Loading...</span></div>
+                <div class="abw-chat-row">ABW runtime source: <span id="abw-runtime-source" class="abw-chat-value">unknown</span></div>
+                <div class="abw-chat-row">ABW repo path: <span id="abw-repo-path" class="abw-chat-value">unknown</span></div>
+                <div class="abw-chat-row">Read-only mode: <span id="abw-readonly-flag" class="abw-chat-value">true</span></div>
+                <div class="abw-chat-row">Version/Doctor: <span id="abw-health-status" class="abw-chat-value">Not checked</span></div>
+                <div id="abw-workspace-hint" class="abw-chat-warn">Dùng đúng workspace tài liệu trước khi hỏi ABW.</div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button class="btn-small" onclick="refreshAbwBridgeHealth()">Refresh ABW status</button>
+                    <button class="btn-small" onclick="changeWorkspace()">Switch workspace</button>
+                </div>
+                <input id="abw-chat-question" class="abw-chat-input" type="text" placeholder="Hỏi tài liệu ABW..." />
+                <button class="btn-small" onclick="askAbwFromPanel()">Hỏi ABW</button>
+                <div id="abw-chat-note" class="abw-chat-warn">Ingest/review hiện vẫn chạy qua ABW CLI. Draft cần review trước khi dùng như trusted wiki.</div>
             </div>
         </div>
 
@@ -3929,6 +3981,45 @@
             ].join('\n');
         }
 
+        function summarizeAbwHumanStatus(payload = {}) {
+            const status = String(payload.status || '').trim();
+            if (status === 'ABW_CLI_WRONG_WORKSPACE') return 'Workspace hiện tại chưa phải workspace tài liệu cần hỏi.';
+            if (status === 'ABW_CLI_NO_MATCH') return 'Không tìm thấy thông tin đáng tin cậy.';
+            if (status === 'ABW_CLI_AMBIGUOUS') return 'Câu hỏi mơ hồ; cần hỏi rõ hơn để tránh trả lời sai.';
+            if (status === 'ABW_CLI_BLOCKED') return 'Yêu cầu đang bị chặn bởi điều kiện an toàn hoặc quyền.';
+            if (status === 'ABW_CLI_TRUST_REQUIRED') return 'Workspace chưa được trust.';
+            if (status === 'ABW_CLI_OK') return 'Kết quả ABW đã sẵn sàng.';
+            return 'ABW bridge chưa sẵn sàng hoặc lỗi hạ tầng.';
+        }
+
+        function renderAbwWorkspaceHint(payload = {}, workspace = '') {
+            const hintEl = document.getElementById('abw-workspace-hint');
+            if (!hintEl) return;
+            const status = String(payload.status || '').trim();
+            if (status === 'ABW_CLI_WRONG_WORKSPACE') {
+                hintEl.className = 'abw-chat-error';
+                hintEl.innerText = 'Workspace hiện tại chưa phải workspace tài liệu cần hỏi. Hãy bấm "Switch workspace".';
+                return;
+            }
+            const wsText = workspace ? `Workspace hiện tại: ${workspace}` : 'Workspace chưa có.';
+            hintEl.className = 'abw-chat-warn';
+            hintEl.innerText = `${wsText} Read-only ABW bridge không tạo pending edit/Apply/sync/write-back.`;
+        }
+
+        function updateAbwStatusPanel(payload = {}, workspace = '') {
+            const activeWorkspaceEl = document.getElementById('abw-active-workspace');
+            const runtimeSourceEl = document.getElementById('abw-runtime-source');
+            const repoPathEl = document.getElementById('abw-repo-path');
+            const readOnlyEl = document.getElementById('abw-readonly-flag');
+            const healthEl = document.getElementById('abw-health-status');
+            if (activeWorkspaceEl) activeWorkspaceEl.innerText = workspace || 'empty';
+            if (runtimeSourceEl) runtimeSourceEl.innerText = payload.runtimeSource || 'unknown';
+            if (repoPathEl) repoPathEl.innerText = payload.abwRepoPath || 'unknown';
+            if (readOnlyEl) readOnlyEl.innerText = payload.readOnly === true ? 'true' : 'unknown';
+            if (healthEl) healthEl.innerText = summarizeAbwHumanStatus(payload);
+            renderAbwWorkspaceHint(payload, workspace);
+        }
+
         function renderAbwResultCard(payload = {}) {
             const tone = getAbwStatusTone(payload);
             const retrievalStatus = String(payload.retrievalStatus || payload.status || 'unknown').trim() || 'unknown';
@@ -4164,6 +4255,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ workspace, question })
                 });
+                updateAbwStatusPanel(payload, workspace);
                 loading.remove();
                 const summary = formatAbwAssistantSummary(payload);
                 const s = sessions[currentSessionId];
@@ -4182,7 +4274,11 @@
                 logDebug(`ABW read-only ask: ${payload.status} / ${payload.retrievalStatus || 'n/a'}`);
             } catch (e) {
                 loading.remove();
-                const errorText = `ABW read-only ask failed.\n${e.message}`;
+                const reason = String(e.message || '');
+                const humanHint = /Requested ABW workspace/.test(reason)
+                    ? 'Workspace hiện tại chưa phải workspace tài liệu cần hỏi. Hãy switch workspace rồi hỏi lại.'
+                    : `ABW read-only ask failed.\n${reason}`;
+                const errorText = humanHint;
                 const s = sessions[currentSessionId];
                 addMessage('assistant', errorText, [], s.messages.length);
                 s.messages.push({ role: 'assistant', content: errorText });
@@ -4191,6 +4287,52 @@
                     label: 'Recent action: ABW read-only ask failed. No pending edit was created and no file mutation happened.',
                     tone: 'blocked'
                 });
+            }
+        }
+
+        async function askAbwFromPanel() {
+            const input = document.getElementById('abw-chat-question');
+            const question = String(input?.value || '').trim();
+            if (!question) {
+                addMessage('assistant', 'ABW Chat cần câu hỏi. Ví dụ: Quy trình nhập biểu mẫu chuẩn là gì?');
+                return;
+            }
+            if (input) input.value = '';
+            await handleAbwAskCommand(`/abw-ask ${question}`);
+        }
+
+        async function refreshAbwBridgeHealth() {
+            const workspace = (document.getElementById('current-workspace-path')?.innerText || '').trim();
+            if (!workspace || workspace === 'Loading...') {
+                updateAbwStatusPanel({ status: 'ABW_CLI_WRONG_WORKSPACE' }, '');
+                return;
+            }
+            try {
+                const version = await fetchJsonOrThrow('/proxy/abw/version', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ workspace })
+                });
+                const doctor = await fetchJsonOrThrow('/proxy/abw/doctor', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ workspace })
+                });
+                const merged = { ...version };
+                if (doctor.status && doctor.status !== 'ABW_CLI_OK') merged.status = doctor.status;
+                if (Array.isArray(doctor.warnings) && doctor.warnings.length > 0) {
+                    merged.status = merged.status || doctor.status;
+                }
+                updateAbwStatusPanel(merged, workspace);
+                const healthEl = document.getElementById('abw-health-status');
+                if (healthEl) {
+                    const doctorWarnCount = Array.isArray(doctor.warnings) ? doctor.warnings.length : 0;
+                    healthEl.innerText = `version=${version.status || 'unknown'}, doctor=${doctor.status || 'unknown'}, warnings=${doctorWarnCount}`;
+                }
+            } catch (e) {
+                updateAbwStatusPanel({ status: 'ABW_CLI_BLOCKED', readOnly: true }, workspace);
+                const healthEl = document.getElementById('abw-health-status');
+                if (healthEl) healthEl.innerText = `Không thể kiểm tra ABW: ${String(e.message || 'unknown error')}`;
             }
         }
 
@@ -6746,6 +6888,7 @@
                 const res = await fetch('/api/workspace');
                 const data = await res.json();
                 document.getElementById('current-workspace-path').innerText = data.path;
+                updateAbwStatusPanel({ status: 'ABW_CLI_OK', readOnly: true }, data.path);
             } catch (e) { logDebug("L load workspace: " + e.message); }
         }
 
@@ -6777,6 +6920,7 @@
                     renderRecentFiles();
                     await loadIndexStatus();
                     await loadWorkflows();
+                    await refreshAbwBridgeHealth();
                 } else {
                     alert("Workspace switch failed: " + data.error);
                 }
@@ -7127,6 +7271,7 @@
                 renderEditorTabs();
                 renderRecentFiles();
                 await loadWorkspaceInfo();
+                await refreshAbwBridgeHealth();
                 await refreshTrustStatus();
                 await initializeUIMode();
                 await loadWorkflows();
