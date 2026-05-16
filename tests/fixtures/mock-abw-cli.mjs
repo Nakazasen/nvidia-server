@@ -147,6 +147,27 @@ if (mode === 'ask-raw-only') {
   process.exit(0);
 }
 
+if (mode === 'ingest-success' || mode === 'ingest-with-issues' || mode === 'ingest-review-required') {
+  const withIssues = mode === 'ingest-with-issues';
+  const reviewRequired = mode === 'ingest-review-required';
+  process.stdout.write(JSON.stringify(envelope('success', {
+    ingested: withIssues ? 1 : 3,
+    skipped: withIssues ? 2 : 0,
+    unsupported_files: withIssues ? ['raw/bad.exe', 'raw/scan.bin'] : [],
+    parse_errors: withIssues ? ['raw/spec.txt: invalid frontmatter'] : [],
+    generated_drafts: withIssues ? ['drafts/spec-draft.md'] : ['drafts/doc-1.md', 'drafts/doc-2.md'],
+    review_required: reviewRequired || withIssues,
+    promotion_performed: false,
+    warnings: withIssues ? ['Một số file không hỗ trợ hoặc parse lỗi.'] : ['Ingest chỉ tạo bản nháp; cần review trước khi dùng như wiki đáng tin.']
+  })));
+  process.exit(0);
+}
+
+if (mode === 'ingest-fail-nonzero') {
+  process.stderr.write('mock ingest failed\n');
+  process.exit(9);
+}
+
 process.stdout.write(JSON.stringify(envelope('success', {
   answer: question ? `Mock answer for: ${question}` : 'Mock answer',
   retrieval_status: 'exact_match',

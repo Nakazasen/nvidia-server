@@ -18,7 +18,7 @@ export const ABW_CLI_STATUS = Object.freeze({
   BLOCKED: 'ABW_CLI_BLOCKED'
 });
 
-const SUPPORTED_COMMANDS = new Set(['ask', 'doctor', 'version']);
+const SUPPORTED_COMMANDS = new Set(['ask', 'doctor', 'version', 'ingest']);
 const DEFAULT_TIMEOUT_MS = Number(process.env.ABW_CLI_TIMEOUT_MS || 20000);
 const DEFAULT_MAX_OUTPUT_CHARS = Number(process.env.ABW_CLI_MAX_OUTPUT_CHARS || 400000);
 
@@ -228,7 +228,7 @@ function createSpawnRunner({
 export function createAbwCliReader(options = {}) {
   const runProcess = options.runProcess || createSpawnRunner(options);
 
-  async function invoke(commandName, { workspace = '', question = '' } = {}) {
+  async function invoke(commandName, { workspace = '', question = '', ingestTarget = 'raw' } = {}) {
     const normalizedCommand = String(commandName || '').trim();
     const normalizedWorkspace = String(workspace || '').trim();
 
@@ -255,6 +255,10 @@ export function createAbwCliReader(options = {}) {
         });
       }
       commandArgs.push(normalizedQuestion);
+    }
+    if (normalizedCommand === 'ingest') {
+      const normalizedTarget = String(ingestTarget || '').trim() || 'raw';
+      commandArgs.push(normalizedTarget);
     }
 
     const result = await runProcess({ commandName: normalizedCommand, workspace: normalizedWorkspace, commandArgs });
@@ -337,6 +341,7 @@ export function createAbwCliReader(options = {}) {
     invoke,
     readVersion: (options = {}) => invoke('version', options),
     readDoctor: (options = {}) => invoke('doctor', options),
-    ask: (options = {}) => invoke('ask', options)
+    ask: (options = {}) => invoke('ask', options),
+    ingestRaw: (options = {}) => invoke('ingest', { ...options, ingestTarget: 'raw' })
   };
 }

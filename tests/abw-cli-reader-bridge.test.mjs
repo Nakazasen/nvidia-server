@@ -550,6 +550,107 @@ console.log('\nABW CLI Reader Bridge Tests\n');
   }
 }
 
+{
+  const port = 4866;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ingest-success-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'ingest-success' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '15. workspace switch for ingest success test succeeds', `status=${switched.status}`);
+    const ingest = await requestJson(`${baseUrl}/proxy/abw/ingest`, { body: { workspace } });
+    assert(ingest.ok, '15a. /proxy/abw/ingest returns 200 on success', `status=${ingest.status}`);
+    assert(ingest.json?.status === ABW_CLI_STATUS.OK, '15b. ingest success maps to ABW_CLI_OK', `status=${ingest.json?.status}`);
+    assert(Array.isArray(ingest.json?.generatedDrafts) && ingest.json.generatedDrafts.length >= 1, '15c. generatedDrafts exposed');
+    assert(ingest.json?.promotionPerformed === false, '15d. ingest does not auto-promote');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4867;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ingest-issues-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'ingest-with-issues' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '16. workspace switch for ingest issue test succeeds', `status=${switched.status}`);
+    const ingest = await requestJson(`${baseUrl}/proxy/abw/ingest`, { body: { workspace } });
+    assert(ingest.ok, '16a. ingest with issues returns 200', `status=${ingest.status}`);
+    assert(Array.isArray(ingest.json?.unsupportedFiles) && ingest.json.unsupportedFiles.length > 0, '16b. unsupportedFiles preserved');
+    assert(Array.isArray(ingest.json?.parseErrors) && ingest.json.parseErrors.length > 0, '16c. parseErrors preserved');
+    assert(ingest.json?.reviewRequired === true, '16d. reviewRequired preserved');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4868;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ingest-fail-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'ingest-fail-nonzero' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '17. workspace switch for ingest nonzero test succeeds', `status=${switched.status}`);
+    const ingest = await requestJson(`${baseUrl}/proxy/abw/ingest`, { body: { workspace } });
+    assert(ingest.status === 502, '17a. nonzero ingest maps to 502', `status=${ingest.status}`);
+    assert(ingest.json?.status === ABW_CLI_STATUS.NONZERO_EXIT, '17b. nonzero ingest status preserved', `status=${ingest.json?.status}`);
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4869;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ingest-untrusted-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: false, mockMode: 'ingest-success' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '18. workspace switch for ingest untrusted test succeeds', `status=${switched.status}`);
+    const ingest = await requestJson(`${baseUrl}/proxy/abw/ingest`, { body: { workspace } });
+    assert(ingest.status === 403, '18a. ingest requires trusted workspace', `status=${ingest.status}`);
+    assert(ingest.json?.status === ABW_CLI_STATUS.TRUST_REQUIRED, '18b. ingest trust error classified', `status=${ingest.json?.status}`);
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4870;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ingest-ws-'));
+  const otherWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ingest-ws-other-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'ingest-success' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '19. workspace switch for ingest mismatch test succeeds', `status=${switched.status}`);
+    const ingest = await requestJson(`${baseUrl}/proxy/abw/ingest`, { body: { workspace: otherWorkspace } });
+    assert(ingest.status === 400, '19a. ingest rejects wrong workspace', `status=${ingest.status}`);
+    assert(ingest.json?.status === ABW_CLI_STATUS.WRONG_WORKSPACE, '19b. wrong workspace classified', `status=${ingest.json?.status}`);
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(otherWorkspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
 console.log('\n---');
 console.log(`Total: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);
 

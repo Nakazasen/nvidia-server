@@ -2306,6 +2306,26 @@
                 <button class="btn-small" onclick="askAbwFromPanel()">Hỏi ABW</button>
                 <div id="abw-chat-note" class="abw-chat-warn">Ingest/review hiện vẫn chạy qua ABW CLI. Draft cần review trước khi dùng như trusted wiki.</div>
             </div>
+            <div class="abw-chat-panel" style="margin-top:10px;">
+                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Ingest / Nạp tài liệu ABW</div>
+                <div class="abw-chat-row">Workspace active: <span id="abw-ingest-workspace" class="abw-chat-value">Loading...</span></div>
+                <div class="abw-chat-row">ABW status: <span id="abw-ingest-status" class="abw-chat-value">unknown</span></div>
+                <div class="abw-chat-row">Raw folder: <span id="abw-ingest-raw-hint" class="abw-chat-value">unknown</span></div>
+                <div id="abw-ingest-note" class="abw-chat-warn">Đặt file cần nạp vào thư mục raw của workspace.</div>
+                <div id="abw-ingest-note-2" class="abw-chat-warn">Ingest chỉ tạo bản nháp, chưa tự động coi là nguồn tin cậy. Cần review trước khi dùng như wiki đáng tin.</div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button class="btn-small" onclick="refreshAbwIngestPanel()">Refresh ABW status</button>
+                    <button class="btn-small" id="abw-ingest-btn" onclick="runAbwIngestRaw()">Ingest raw</button>
+                </div>
+                <div id="abw-ingest-running" class="abw-chat-warn" style="display:none;">Đang ingest raw...</div>
+                <div id="abw-ingest-summary" class="abw-chat-value" style="margin-top:6px;">Chưa chạy ingest.</div>
+                <div id="abw-ingest-badges" class="abw-pill-row" style="margin-top:6px;"></div>
+                <div id="abw-ingest-drafts" class="abw-chat-row"></div>
+                <div id="abw-ingest-unsupported" class="abw-chat-row"></div>
+                <div id="abw-ingest-errors" class="abw-chat-row"></div>
+                <div id="abw-ingest-warnings" class="abw-chat-row"></div>
+                <button class="btn-small" style="margin-top:6px;" onclick="focusAbwChatQuestion()">Hỏi trong ABW Chat</button>
+            </div>
         </div>
 
         <div class="sidebar-section-title">[EXP] Project Files</div>
@@ -2383,7 +2403,7 @@
         </div>
 
         <div class="sidebar-section-title">Timeline</div>
-        <div id="task-timeline" style="flex: 1; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 8px;">
+        <div id="task-timeline" style="max-height: 34vh; min-height: 120px; overflow-y: auto; margin-bottom: 20px; display: flex; flex-direction: column; gap: 8px;">
             <div style="opacity: 0.3; text-align: center; padding: 10px;">No active tasks</div>
         </div>
         <button class="btn-small" onclick="clearCompletedTasks()" style="margin: -10px 0 15px 0;">Clear Completed</button>
@@ -3402,10 +3422,6 @@
         }
 
         function switchSidebarTab(tabId) {
-            if (!isIdeMode() && IDE_ONLY_TABS.has(tabId)) {
-                document.querySelectorAll('.sidebar').forEach(s => s.style.display = 'none');
-                return;
-            }
             const sidebars = document.querySelectorAll('.sidebar');
             const btns = document.querySelectorAll('.activity-btn');
             
@@ -4334,6 +4350,89 @@
                 const healthEl = document.getElementById('abw-health-status');
                 if (healthEl) healthEl.innerText = `Không thể kiểm tra ABW: ${String(e.message || 'unknown error')}`;
             }
+        }
+
+        function updateAbwIngestWorkspaceInfo() {
+            const workspace = (document.getElementById('current-workspace-path')?.innerText || '').trim();
+            const workspaceText = workspace && workspace !== 'Loading...' ? workspace : 'Không tìm thấy workspace hợp lệ.';
+            const rawHint = workspace && workspace !== 'Loading...' ? `${workspace}\\raw` : 'unknown';
+            const wsEl = document.getElementById('abw-ingest-workspace');
+            const rawEl = document.getElementById('abw-ingest-raw-hint');
+            if (wsEl) wsEl.innerText = workspaceText;
+            if (rawEl) rawEl.innerText = rawHint;
+            return workspace && workspace !== 'Loading...' ? workspace : '';
+        }
+
+        function renderAbwIngestResult(payload = {}) {
+            const summaryEl = document.getElementById('abw-ingest-summary');
+            const badgeEl = document.getElementById('abw-ingest-badges');
+            const draftsEl = document.getElementById('abw-ingest-drafts');
+            const unsupportedEl = document.getElementById('abw-ingest-unsupported');
+            const errorsEl = document.getElementById('abw-ingest-errors');
+            const warningsEl = document.getElementById('abw-ingest-warnings');
+            const statusEl = document.getElementById('abw-ingest-status');
+            if (statusEl) statusEl.innerText = payload.status || 'unknown';
+            if (summaryEl) {
+                summaryEl.innerText = `ingested=${payload.ingested ?? 0}, skipped=${payload.skipped ?? 0}`;
+            }
+            const reviewRequired = payload.reviewRequired === true;
+            const promotionPerformed = payload.promotionPerformed === true;
+            if (badgeEl) {
+                badgeEl.innerHTML = `
+                    <span class="abw-pill ${reviewRequired ? 'weak' : ''}">review_required: ${reviewRequired}</span>
+                    <span class="abw-pill ${promotionPerformed ? 'blocked' : 'strong'}">promotion_performed: ${promotionPerformed}</span>
+                `;
+            }
+            if (draftsEl) draftsEl.innerHTML = `generated_drafts: ${(payload.generatedDrafts || []).length ? `<code>${escapeHtml((payload.generatedDrafts || []).join(', '))}</code>` : 'none'}`;
+            if (unsupportedEl) unsupportedEl.innerHTML = `unsupported_files: ${(payload.unsupportedFiles || []).length ? `<code>${escapeHtml((payload.unsupportedFiles || []).join(', '))}</code>` : 'none'}`;
+            if (errorsEl) errorsEl.innerHTML = `parse_errors: ${(payload.parseErrors || []).length ? `<code>${escapeHtml((payload.parseErrors || []).join(' | '))}</code>` : 'none'}`;
+            if (warningsEl) warningsEl.innerHTML = `warnings: ${(payload.warnings || []).length ? `<code>${escapeHtml((payload.warnings || []).join(' | '))}</code>` : 'none'}`;
+        }
+
+        async function refreshAbwIngestPanel() {
+            const workspace = updateAbwIngestWorkspaceInfo();
+            if (!workspace) {
+                const statusEl = document.getElementById('abw-ingest-status');
+                if (statusEl) statusEl.innerText = 'ABW_CLI_WRONG_WORKSPACE';
+                return;
+            }
+            await refreshAbwBridgeHealth();
+            const health = document.getElementById('abw-health-status');
+            const ingestStatus = document.getElementById('abw-ingest-status');
+            if (ingestStatus) ingestStatus.innerText = health ? health.innerText : 'unknown';
+        }
+
+        async function runAbwIngestRaw() {
+            const workspace = updateAbwIngestWorkspaceInfo();
+            if (!workspace) {
+                const summaryEl = document.getElementById('abw-ingest-summary');
+                if (summaryEl) summaryEl.innerText = 'Không tìm thấy workspace hợp lệ.';
+                return;
+            }
+            const btn = document.getElementById('abw-ingest-btn');
+            const running = document.getElementById('abw-ingest-running');
+            if (btn) btn.disabled = true;
+            if (running) running.style.display = 'block';
+            try {
+                const payload = await fetchJsonOrThrow('/proxy/abw/ingest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ workspace })
+                });
+                renderAbwIngestResult(payload);
+            } catch (e) {
+                const summaryEl = document.getElementById('abw-ingest-summary');
+                if (summaryEl) summaryEl.innerText = `Ingest thất bại, xem lỗi bên dưới. ${String(e.message || '')}`;
+                renderAbwIngestResult({ status: 'ABW_CLI_NONZERO_EXIT', warnings: [String(e.message || 'unknown error')] });
+            } finally {
+                if (btn) btn.disabled = false;
+                if (running) running.style.display = 'none';
+            }
+        }
+
+        function focusAbwChatQuestion() {
+            const input = document.getElementById('abw-chat-question');
+            if (input) input.focus();
         }
 
         async function sendMessage() {
@@ -6889,6 +6988,7 @@
                 const data = await res.json();
                 document.getElementById('current-workspace-path').innerText = data.path;
                 updateAbwStatusPanel({ status: 'ABW_CLI_OK', readOnly: true }, data.path);
+                updateAbwIngestWorkspaceInfo();
             } catch (e) { logDebug("L load workspace: " + e.message); }
         }
 
@@ -6921,6 +7021,7 @@
                     await loadIndexStatus();
                     await loadWorkflows();
                     await refreshAbwBridgeHealth();
+                    await refreshAbwIngestPanel();
                 } else {
                     alert("Workspace switch failed: " + data.error);
                 }
@@ -7272,6 +7373,7 @@
                 renderRecentFiles();
                 await loadWorkspaceInfo();
                 await refreshAbwBridgeHealth();
+                await refreshAbwIngestPanel();
                 await refreshTrustStatus();
                 await initializeUIMode();
                 await loadWorkflows();

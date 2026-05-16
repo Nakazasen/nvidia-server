@@ -698,6 +698,7 @@ const workspaceCore = createWorkspaceCore({
     maxFileReadChars: MAX_FILE_READ_CHARS
 });
 const abwCliReader = createAbwCliReader();
+const abwCliIngestRunner = createAbwCliReader({ envOverrides: {} });
 
 function sameResolvedPath(left, right) {
     const a = path.resolve(String(left || ''));
@@ -2705,6 +2706,33 @@ function buildAbwBridgePayload(result) {
     };
 }
 
+function buildAbwIngestPayload(result) {
+    const data = result?.data && typeof result.data === 'object' ? result.data : {};
+    const runtime = result?.runtime && typeof result.runtime === 'object' ? result.runtime : {};
+    return {
+        ok: result?.ok === true,
+        status: result?.status || ABW_CLI_STATUS.INVALID_JSON,
+        abw: result?.abw || null,
+        readOnly: false,
+        runtimeSource: runtime.runtimeSource || 'default',
+        abwRepoPath: runtime.abwRepoPath || null,
+        pythonExecutable: runtime.pythonExecutable || null,
+        commandArgs: Array.isArray(runtime.commandArgs) ? runtime.commandArgs : [],
+        commandCwd: runtime.cwd || null,
+        ingested: Number.isFinite(data.ingested) ? data.ingested : 0,
+        skipped: Number.isFinite(data.skipped) ? data.skipped : 0,
+        unsupportedFiles: Array.isArray(data.unsupported_files) ? data.unsupported_files : [],
+        parseErrors: Array.isArray(data.parse_errors) ? data.parse_errors : [],
+        generatedDrafts: Array.isArray(data.generated_drafts) ? data.generated_drafts : [],
+        reviewRequired: data.review_required === true,
+        promotionPerformed: data.promotion_performed === true,
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        error: result?.error || '',
+        stderr: result?.stderr || '',
+        exitCode: result?.exitCode ?? null
+    };
+}
+
 function getExplicitPathBlockReason(text = '') {
     const input = String(text || '');
     if (/(^|[\s"'`(])(?:\.{1,2}[\\/]|[^\s"'`]*[\\/]\.\.[\\/])/.test(input)) {
@@ -3960,6 +3988,31 @@ const server = http.createServer(async (req, res) => {
                 question: body.question || body.text || ''
             });
             return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwBridgePayload(result));
+        }
+
+        if (req.url === '/proxy/abw/ingest') {
+            const body = await getBody(req);
+            const normalizedWorkspace = normalizeAbwBridgeWorkspace(body.workspace);
+            if (!normalizedWorkspace.ok) {
+                return sendJSON(res, getAbwBridgeHttpStatus(normalizedWorkspace.status), {
+                    ok: false,
+                    status: normalizedWorkspace.status,
+                    error: normalizedWorkspace.error,
+                    abw: null
+                });
+            }
+            if (!isWorkspaceTrusted()) {
+                return sendJSON(res, getAbwBridgeHttpStatus(ABW_CLI_STATUS.TRUST_REQUIRED), {
+                    ok: false,
+                    status: ABW_CLI_STATUS.TRUST_REQUIRED,
+                    error: 'Workspace chưa trusted. Hãy trust workspace hiện tại trước khi ingest raw.',
+                    abw: null
+                });
+            }
+            const result = await abwCliIngestRunner.ingestRaw({
+                workspace: normalizedWorkspace.path
+            });
+            return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwIngestPayload(result));
         }
 
         if (req.url === '/proxy/chat') return await handleProxyChat(req, res);
