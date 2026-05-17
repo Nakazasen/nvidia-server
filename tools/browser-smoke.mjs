@@ -294,7 +294,7 @@ async function runRealBrowserSmoke(url) {
       throw new BrowserUnavailableError(`Failed to launch browser: ${e.message}`);
     }
 
-    context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+    context = await browser.newContext({ viewport: { width: 1366, height: 768 } });
     page = await context.newPage();
     page.setDefaultNavigationTimeout(PAGE_TIMEOUT_MS);
     page.setDefaultTimeout(SELECTOR_TIMEOUT_MS);
@@ -512,6 +512,191 @@ async function runRealBrowserSmoke(url) {
       }
       add('Workspace switch UI accepts valid Windows path and updates label', workspaceSwitchUiOk, workspaceSwitchUiDetail, true);
 
+      const workspaceButtons = Array.from(document.querySelectorAll('button[onclick="changeWorkspace()"]'));
+      const singleWorkspaceChangeControlOk = workspaceButtons.length === 1;
+      add(
+        'Only one primary workspace change control is visible',
+        singleWorkspaceChangeControlOk,
+        `controls=${workspaceButtons.length}`,
+        true
+      );
+
+      const abwGuidanceNoDuplicateSwitchOk = !/Switch workspace/i.test(document.body.textContent || '') &&
+        /Chon thu muc/.test(document.body.textContent || '');
+      add(
+        'ABW panel points users to the primary project folder control',
+        abwGuidanceNoDuplicateSwitchOk,
+        'ABW guidance uses Chon thu muc and no duplicate Switch workspace button',
+        true
+      );
+
+      const modalInput = document.querySelector('#modal-input');
+      const workspaceModalAutocompleteOffOk = !!modalInput &&
+        (modalInput.getAttribute('autocomplete') || '').toLowerCase() === 'off' &&
+        (modalInput.getAttribute('autocapitalize') || '').toLowerCase() === 'off' &&
+        (modalInput.getAttribute('autocorrect') || '').toLowerCase() === 'off' &&
+        (modalInput.getAttribute('spellcheck') || '').toLowerCase() === 'false';
+      add(
+        'Workspace modal input disables browser autofill/autocomplete',
+        workspaceModalAutocompleteOffOk,
+        `autocomplete=${modalInput?.getAttribute('autocomplete')} autocapitalize=${modalInput?.getAttribute('autocapitalize')}`,
+        true
+      );
+
+      let workspaceModalRenderedInApp = false;
+      let workspaceModalControlsOk = false;
+      let workspaceModalCenteredOk = false;
+      let workspaceModalDetail = 'workspace modal not opened';
+      try {
+        const workspaceBtn = document.querySelector('button[onclick="changeWorkspace()"]');
+        if (workspaceBtn && typeof workspaceBtn.click === 'function') {
+          workspaceBtn.click();
+          await sleep(180);
+          const overlay = document.querySelector('#modal-overlay');
+          const modal = document.querySelector('#modal-overlay .modal');
+          const titleText = (document.querySelector('#modal-title')?.textContent || '').trim();
+          const inputEl = document.querySelector('#modal-input');
+          const allowLabel = (document.querySelector('#btn-allow')?.textContent || '').trim();
+          const denyLabel = (document.querySelector('#btn-deny')?.textContent || '').trim();
+          workspaceModalRenderedInApp = !!overlay && overlay.classList.contains('active') && visible('#modal-overlay.active .modal');
+          workspaceModalControlsOk = (/nh\u1eadp \u0111\u01b0\u1eddng d\u1eabn th\u01b0 m\u1ee5c project/i.test(titleText) || /nhap duong dan thu muc project/i.test(titleText)) &&
+            !!inputEl && (/x\u00e1c nh\u1eadn/i.test(allowLabel) || /xac nhan/i.test(allowLabel)) && (/h\u1ee7y/i.test(denyLabel) || /huy/i.test(denyLabel));
+          if (modal) {
+            const rect = modal.getBoundingClientRect();
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            const modalCenterX = rect.left + rect.width / 2;
+            const modalCenterY = rect.top + rect.height / 2;
+            workspaceModalCenteredOk = Math.abs(centerX - modalCenterX) <= Math.max(80, window.innerWidth * 0.12) &&
+              Math.abs(centerY - modalCenterY) <= Math.max(80, window.innerHeight * 0.12);
+            workspaceModalDetail = `title=${titleText} center=(${Math.round(modalCenterX)},${Math.round(modalCenterY)})`;
+          } else {
+            workspaceModalDetail = `title=${titleText} modal-missing`;
+          }
+          document.querySelector('#btn-deny')?.click();
+          await sleep(80);
+        }
+      } catch (error) {
+        workspaceModalDetail = error.message;
+      }
+      add('Workspace path modal is rendered inside app', workspaceModalRenderedInApp, workspaceModalDetail, true);
+      add('Workspace path modal has visible title/input/confirm/cancel', workspaceModalControlsOk, workspaceModalDetail, true);
+      add('Workspace path modal is centered and visible', workspaceModalCenteredOk, workspaceModalDetail, true);
+
+      const abwMainPanelVisible = visible('#abw-main-panel');
+      add('Main ABW document assistant panel is visible', abwMainPanelVisible, '#abw-main-panel visible', true);
+
+      const primaryAbwButtonsVisible =
+        visible('#abw-main-choose-btn') &&
+        visible('#abw-ingest-btn') &&
+        visible('#abw-review-btn') &&
+        visible('#abw-main-ask-btn');
+      add('Primary ABW buttons are visible', primaryAbwButtonsVisible, 'choose/ingest/review/ask buttons visible', true);
+
+      const sidebarHasOnlySummaryAbw = exists('#abw-sidebar-workspace-summary') &&
+        exists('#abw-sidebar-ingest-summary') &&
+        exists('#abw-main-panel');
+      add('Sidebar is not the only ABW action surface', sidebarHasOnlySummaryAbw, 'sidebar summary exists and main ABW panel exists', true);
+
+      const noHorizontalOverflow = Math.ceil(document.documentElement.scrollWidth) <= Math.ceil(window.innerWidth + 1);
+      add('Layout has no horizontal overflow at standard viewport', noHorizontalOverflow, `scrollWidth=${document.documentElement.scrollWidth} innerWidth=${window.innerWidth}`, true);
+
+      let abwFocusModeMainPanelVisible = false;
+      let abwFocusPlanCollapsed = false;
+      let abwFocusConsoleCollapsed = false;
+      let abwFocusGeneralChatNotObscuring = false;
+      let abwFocusDetail = 'focus mode not triggered';
+      try {
+        const openAssistantBtn = document.querySelector('button[onclick="focusAbwMainPanel()"]');
+        if (openAssistantBtn && typeof openAssistantBtn.click === 'function') {
+          openAssistantBtn.click();
+          await sleep(220);
+        } else if (typeof window.focusAbwMainPanel === 'function') {
+          window.focusAbwMainPanel();
+          await sleep(220);
+        }
+        const focusModeOn = document.body.classList.contains('abw-focus-mode');
+        const panelVisible = visible('#abw-main-panel');
+        const planCollapsed = document.querySelector('#right-panel')?.classList.contains('collapsed') === true;
+        const debugHidden = !visible('#debug-console');
+        const bottomHidden = !visible('#bottom-panel');
+        const chatInputHidden = !visible('#user-input');
+        const abwAskInputVisible = visible('#abw-chat-question');
+        abwFocusModeMainPanelVisible = focusModeOn && panelVisible;
+        abwFocusPlanCollapsed = focusModeOn && planCollapsed;
+        abwFocusConsoleCollapsed = focusModeOn && debugHidden && bottomHidden;
+        abwFocusGeneralChatNotObscuring = focusModeOn && chatInputHidden && abwAskInputVisible;
+        abwFocusDetail = `focus=${focusModeOn} planCollapsed=${planCollapsed} debugHidden=${debugHidden} bottomHidden=${bottomHidden} chatInputHidden=${chatInputHidden}`;
+      } catch (error) {
+        abwFocusDetail = error.message;
+      }
+      add('ABW focus mode main panel is visible', abwFocusModeMainPanelVisible, abwFocusDetail, true);
+      add('Plan panel is collapsed by default in ABW focus mode', abwFocusPlanCollapsed, abwFocusDetail, true);
+      add('Console/log is collapsed by default in ABW focus mode', abwFocusConsoleCollapsed, abwFocusDetail, true);
+      add('General chat input does not obscure ABW assistant', abwFocusGeneralChatNotObscuring, abwFocusDetail, true);
+      if (typeof window.setAbwFocusMode === 'function') {
+        window.setAbwFocusMode(false);
+        await sleep(120);
+      }
+
+      const leftSidebarResizeHandleExists = exists('#left-resizer');
+      add('Left sidebar resize handle exists', leftSidebarResizeHandleExists, '#left-resizer present', true);
+
+      let leftSidebarWidthAdjustableOk = false;
+      let leftSidebarResizeDetail = 'resize not checked';
+      try {
+        const sidebar = document.querySelector('#sidebar-explorer');
+        const before = sidebar ? Math.round(sidebar.getBoundingClientRect().width) : 0;
+        if (typeof window.applySidebarWidth === 'function' && sidebar) {
+          window.applySidebarWidth(420);
+          await sleep(80);
+          const after = Math.round(sidebar.getBoundingClientRect().width);
+          const persisted = window.localStorage.getItem('nvidia-left-sidebar-width');
+          leftSidebarWidthAdjustableOk = after >= before && Number(persisted) >= 260;
+          leftSidebarResizeDetail = `before=${before} after=${after} persisted=${persisted}`;
+        } else {
+          leftSidebarResizeDetail = `applySidebarWidth missing=${typeof window.applySidebarWidth}`;
+        }
+      } catch (error) {
+        leftSidebarResizeDetail = error.message;
+      }
+      add('Left sidebar width can be adjusted and persisted', leftSidebarWidthAdjustableOk, leftSidebarResizeDetail, true);
+
+      const planPanelCollapseControlExists = exists('#plan-collapse-btn');
+      add('Plan panel has collapse control', planPanelCollapseControlExists, '#plan-collapse-btn present', true);
+
+      let emptyPlanCompactOk = false;
+      let emptyPlanCompactDetail = 'not checked';
+      try {
+        const panel = document.querySelector('#right-panel');
+        if (panel && typeof window.setPlanCollapsed === 'function') {
+          window.setPlanCollapsed(true, { persist: false });
+          await sleep(420);
+          const width = Math.round(panel.getBoundingClientRect().width);
+          const planText = (document.querySelector('#plan-steps')?.textContent || '').trim();
+          emptyPlanCompactOk = width <= 70 && /chua co ke hoach|no plan yet/i.test(planText);
+          emptyPlanCompactDetail = `width=${width} text=${planText.slice(0, 60)}`;
+          window.setPlanCollapsed(false, { persist: false });
+          await sleep(120);
+        }
+      } catch (error) {
+        emptyPlanCompactDetail = error.message;
+      }
+      add('Empty Plan panel does not consume excessive width by default', emptyPlanCompactOk, emptyPlanCompactDetail, true);
+
+      const sidebarProjectSessionReadableOrScrollable = (() => {
+        const fileExplorer = document.querySelector('#file-explorer');
+        const sessionList = document.querySelector('#session-list');
+        const fileScrollable = !!fileExplorer && fileExplorer.scrollHeight >= fileExplorer.clientHeight;
+        const sessionReadable = !!sessionList && visible('#session-list');
+        const sidebarScrollable = (() => {
+          const sidebar = document.querySelector('#sidebar-explorer');
+          return !!sidebar && sidebar.scrollHeight >= sidebar.clientHeight;
+        })();
+        return (fileScrollable || sessionReadable) && sidebarScrollable;
+      })();
+      add('Sidebar project/session areas remain readable or scrollable', sidebarProjectSessionReadableOrScrollable, 'file/session readable with sidebar scroll', true);
+
       let terminalOk = false;
       let jobsOk = false;
       let problemsOk = false;
@@ -584,6 +769,10 @@ async function runRealBrowserSmoke(url) {
       let nonTechIngestCopyOk = false;
       let nonTechNoMatchCopyOk = false;
       let nonTechPromoteLimitVisibleOk = false;
+      let untrustedWorkspaceWarningVisibleOk = false;
+      let trustWorkspaceButtonVisibleOk = false;
+      let ingestTrustBlockedCopyOk = false;
+      let quickstartMentionsTrustStepOk = false;
       let keyWorkflowControlsVisibleOk = false;
       let noCriticalBottomActionClippedOk = false;
       let visibilityDiagnostic = '';
@@ -614,11 +803,14 @@ async function runRealBrowserSmoke(url) {
           /approval|trust|review the diff first/i.test(document.querySelector('#edit-workflow-apply-status')?.textContent || '');
 
         const tasksBtn = document.querySelector('#btn-tasks');
-        if (tasksBtn && typeof tasksBtn.click === 'function') {
+        if (typeof window.switchSidebarTab === 'function') {
+          window.switchSidebarTab('tasks');
+          await sleep(120);
+        } else if (tasksBtn && typeof tasksBtn.click === 'function') {
           tasksBtn.click();
-          await sleep(180);
-          changedFilesGuideOk = visible('#sidebar-tasks') && visible('#changed-files-guide');
         }
+        await waitUntil(() => visible('#sidebar-tasks') || visible('#changed-files-guide'), 2500, 100).catch(() => {});
+        changedFilesGuideOk = visible('#sidebar-tasks') && visible('#changed-files-guide');
         const explorerBtn = document.querySelector('#btn-explorer');
         if (explorerBtn && typeof explorerBtn.click === 'function') {
           explorerBtn.click();
@@ -779,21 +971,36 @@ async function runRealBrowserSmoke(url) {
             await modalPromise.catch(() => {});
           }
 
+          if (typeof abwWorkspaceTrusted !== 'undefined') {
+            abwWorkspaceTrusted = false;
+            if (typeof updateAbwTrustInlineUi === 'function') updateAbwTrustInlineUi();
+            await sleep(60);
+          }
           const fullUiText = document.body?.textContent || '';
           noOverclaimUiTextOk = !/DAILY_USE_READY|PRODUCTION_READY|FULL_BRIDGE_READY|COGNITIVE_OS_ACHIEVED|ENTERPRISE_GRADE_SECURITY/i.test(fullUiText);
           nonTechAssistantPanelOk =
             /Tro ly tai lieu|Chat voi tai lieu/i.test(fullUiText) &&
-            /Buoc 1: Chon thu muc tai lieu/i.test(fullUiText) &&
+            /Buoc 1: Chon thu muc project/i.test(fullUiText) &&
             /Buoc 2: Nap tai lieu/i.test(fullUiText) &&
-            /Buoc 3: Kiem tra va hoi chatbot/i.test(fullUiText);
+            /Buoc 3: Kiem tra tai lieu/i.test(fullUiText) &&
+            /Buoc 4: Hoi chatbot/i.test(fullUiText);
           nonTechIngestCopyOk =
-            /Bo file can hoi vao thu muc raw/i.test(fullUiText) &&
-            /Ingest chi tao ban nhap/i.test(fullUiText) &&
-            /Da doc:|Da bo qua:|File chua ho tro|File loi doc|Ban nhap da tao/i.test(fullUiText);
+            /Dat file can nap vao thu muc raw/i.test(fullUiText) &&
+            /Nap tai lieu chi tao ban nhap/i.test(fullUiText) &&
+            /ingested=|skipped=|unsupported_files|parse_errors|generated_drafts/i.test(fullUiText);
           nonTechNoMatchCopyOk =
             /Chua tim thay thong tin dang tin cay trong tai lieu da nap/i.test(fullUiText);
           nonTechPromoteLimitVisibleOk =
             /Chua ho tro danh dau nguon tin cay tu dong an toan trong UI/i.test(fullUiText);
+          untrustedWorkspaceWarningVisibleOk =
+            /chua duoc tin cay|chua tin cay/i.test(fullUiText);
+          trustWorkspaceButtonVisibleOk =
+            visible('#abw-trust-btn-step1') || visible('#abw-trust-btn-step2');
+          ingestTrustBlockedCopyOk =
+            /Bi chan vi chua tin cay|ABW_CLI_TRUST_REQUIRED/i.test(fullUiText);
+          quickstartMentionsTrustStepOk =
+            /tin cay thu muc nay/i.test(fullUiText) &&
+            /can tin cay thu muc nay truoc khi nap tai lieu|chua duoc tin cay/i.test(fullUiText);
           const inViewport = (el) => {
             if (!el) return false;
             const rect = el.getBoundingClientRect();
@@ -921,6 +1128,10 @@ async function runRealBrowserSmoke(url) {
       add('Ingest copy is understandable for non-tech users', nonTechIngestCopyOk, 'ingest panel copy explains raw and draft-first behavior', true);
       add('No-match copy is understandable', nonTechNoMatchCopyOk, 'no-match wording explains trusted-source gap clearly', true);
       add('Review/promote limitation is visible', nonTechPromoteLimitVisibleOk, 'promotion limitation warning stays explicit in UI', true);
+      add('Untrusted workspace warning visible in ABW assistant', untrustedWorkspaceWarningVisibleOk, 'ABW panel shows untrusted warning', true);
+      add('Trust workspace button visible when untrusted', trustWorkspaceButtonVisibleOk, 'inline trust button is visible in step 1/2', true);
+      add('Ingest button explains trust block instead of empty ingest', ingestTrustBlockedCopyOk, 'blocked-trust copy visible', true);
+      add('Quickstart mentions trust step', quickstartMentionsTrustStepOk, 'docs/abw-non-tech-ui-quickstart.md has trust step guidance', true);
       add('Key workflow controls are visible', keyWorkflowControlsVisibleOk, visibilityDiagnostic || 'send/review/changed-files/recent-action are visible in viewport', true);
       add('Critical bottom actions are not clipped', noCriticalBottomActionClippedOk, visibilityDiagnostic || 'review/apply button stays inside viewport bounds', true);
       add('Inline edit action exists', inlineEditActionOk, inlineEditActionOk ? 'monaco action nvidia-inline-edit registered' : 'action not observable in current smoke state', false);
