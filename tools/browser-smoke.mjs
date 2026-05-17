@@ -781,6 +781,12 @@ async function runRealBrowserSmoke(url) {
       let abwTriageTrustedHonestyOk = false;
       let abwTriageRecentAnswersOk = false;
       let abwTriageCandidateSafetyOk = false;
+      let abwCandidateSuggestionVisibleOk = false;
+      let abwCandidateMarkFlowOk = false;
+      let abwCandidateNoApproveCallOk = false;
+      let abwMissingSourceNoCandidateOk = false;
+      let abwUnsupportedNoCandidateOk = false;
+      let abwAmbiguousNoCandidateOk = false;
       let abwTriageNoBulkCopyOk = false;
       let untrustedWorkspaceWarningVisibleOk = false;
       let trustWorkspaceButtonVisibleOk = false;
@@ -1129,7 +1135,7 @@ async function runRealBrowserSmoke(url) {
               answer: 'Synthetic weak-evidence smoke answer.',
               warnings: ['Backend weak-evidence warning.'],
               sources: [{ path: 'drafts/smoke.md', title: 'Draft smoke', confidence: 40, snippet: 'draft evidence' }]
-            });
+            }, { messageIndex: 1 });
             const tempCard = document.createElement('div');
             tempCard.innerHTML = weakHtml;
             document.body.appendChild(tempCard);
@@ -1139,6 +1145,12 @@ async function runRealBrowserSmoke(url) {
               /Low trust score \(45\)/i.test(weakText) &&
               /draft\/raw\/fallback evidence/i.test(weakText) &&
               /Backend weak-evidence warning/i.test(weakText);
+            abwCandidateSuggestionVisibleOk =
+              /This answer used an untrusted draft source\./i.test(weakText) &&
+              /If this source is useful, you may review it later\./i.test(weakText) &&
+              /Review candidate only .* not trusted yet\./i.test(weakText) &&
+              /Mark as candidate/i.test(weakText) &&
+              /No approval happens here\./i.test(weakText);
             tempCard.remove();
           }
           if (typeof window.renderAbwTriageDashboard === 'function' && sessions[currentSessionId]) {
@@ -1213,6 +1225,7 @@ async function runRealBrowserSmoke(url) {
                 }
               }
             ];
+            sessions[currentSessionId].abwReviewCandidates = [];
             if (typeof abwLastIngestPayload !== 'undefined') {
               abwLastIngestPayload = {
                 status: 'ABW_CLI_OK',
@@ -1243,7 +1256,26 @@ async function runRealBrowserSmoke(url) {
                 warnings: ['Drafts remain draft/raw evidence until approved through a governed path.']
               };
             }
-            window.renderAbwTriageDashboard();
+            if (typeof loadSession === 'function') {
+              loadSession(currentSessionId);
+              await sleep(120);
+            } else {
+              window.renderAbwTriageDashboard();
+              await sleep(80);
+            }
+            const candidateBeforeText = document.querySelector('#abw-triage-candidates')?.textContent || '';
+            const weakCandidateButton = [...document.querySelectorAll('button')].find((btn) => /Mark as candidate/i.test(btn.textContent || ''));
+            const fetchCalls = [];
+            const originalFetch = window.fetch.bind(window);
+            window.fetch = (...args) => {
+              fetchCalls.push(String(args?.[0] || ''));
+              return originalFetch(...args);
+            };
+            if (weakCandidateButton && typeof weakCandidateButton.click === 'function') {
+              weakCandidateButton.click();
+              await sleep(100);
+            }
+            window.fetch = originalFetch;
             await sleep(80);
             const candidateText = document.querySelector('#abw-triage-candidates')?.textContent || '';
             const unreadableText = document.querySelector('#abw-triage-unreadable')?.textContent || '';
@@ -1262,9 +1294,59 @@ async function runRealBrowserSmoke(url) {
               /What protocol does the approved guide use\?/i.test(recentText) &&
               /Supplier contract terms\?/i.test(recentText);
             abwTriageCandidateSafetyOk =
+              !/drafts\/restart-guide\.md/i.test(candidateBeforeText) &&
               /drafts\/restart-guide\.md/i.test(candidateText) &&
+              /Not trusted yet/i.test(candidateText) &&
               !/Supplier contract terms\?/i.test(candidateText) &&
               !/Which reset path\?/i.test(candidateText);
+            abwCandidateMarkFlowOk =
+              /Marked from answer: How do I restart the AGV\?/i.test(candidateText) &&
+              /Review candidate only .* not trusted yet\./i.test(candidateText) &&
+              /E1_fallback/i.test(candidateText);
+            abwCandidateNoApproveCallOk =
+              fetchCalls.every((url) => !/\/proxy\/abw\/approve-draft|\/proxy\/abw\/promote/i.test(url));
+
+            const missingHtml = window.renderAbwResultCard({
+              retrievalStatus: 'no_match',
+              evidenceTier: 'E0_unknown',
+              trustScore: 0,
+              answer: 'No grounded answer found.',
+              sources: [],
+              warnings: ['No trusted source found.']
+            }, { messageIndex: 11 });
+            const ambiguousHtml = window.renderAbwResultCard({
+              status: 'ABW_CLI_AMBIGUOUS',
+              retrievalStatus: 'ambiguous',
+              evidenceTier: 'E0_unknown',
+              trustScore: 0,
+              answer: 'Need clarification.',
+              sources: [{ path: 'drafts/ambiguous.md', title: 'Ambiguous draft', confidence: 30, snippet: 'ambiguous' }],
+              warnings: ['Clarify the question.']
+            }, { messageIndex: 12 });
+            const unsupportedHtml = window.renderAbwResultCard({
+              retrievalStatus: 'parse_error',
+              evidenceTier: 'E0_unknown',
+              trustScore: 0,
+              answer: 'The file could not be parsed.',
+              sources: [{ path: 'raw/malformed.docx', title: 'Malformed docx', confidence: 0, snippet: 'invalid zip' }],
+              warnings: ['invalid zip container', 'skipped_parse_error']
+            }, { messageIndex: 13 });
+            const tempCases = document.createElement('div');
+            tempCases.innerHTML = `${missingHtml}${ambiguousHtml}${unsupportedHtml}`;
+            document.body.appendChild(tempCases);
+            const tempCasesText = tempCases.textContent || '';
+            const tempCaseButtons = tempCases.querySelectorAll('button');
+            abwMissingSourceNoCandidateOk =
+              /No trusted source was found for this answer yet\./i.test(tempCasesText) &&
+              !/Mark as candidate/i.test(tempCases.children[0]?.textContent || '');
+            abwAmbiguousNoCandidateOk =
+              /Clarify the question before reviewing any source\./i.test(tempCases.children[1]?.textContent || '') &&
+              !/Mark as candidate/i.test(tempCases.children[1]?.textContent || '');
+            abwUnsupportedNoCandidateOk =
+              /unsupported or broken file path/i.test(tempCases.children[2]?.textContent || '') &&
+              !/Mark as candidate/i.test(tempCases.children[2]?.textContent || '') &&
+              tempCaseButtons.length === 0;
+            tempCases.remove();
           }
           untrustedWorkspaceWarningVisibleOk =
             /chua duoc tin cay|chua tin cay/i.test(fullUiText);
@@ -1404,6 +1486,7 @@ async function runRealBrowserSmoke(url) {
       add('ABW review actions render readably', abwReviewActionsReadableOk, 'review action objects render as readable rows and never as [object Object]', true);
       add('ABW ingest object rows render readably', abwIngestObjectRowsReadableOk, 'unsupported/parse error objects render as path: reason rows', true);
       add('ABW weak/fallback warning signals are visible', abwWeakSignalWarningsVisibleOk, 'weak/fallback/low-trust/draft-source signals render as warnings', true);
+      add('ABW weak sourceful answer shows candidate suggestion', abwCandidateSuggestionVisibleOk, 'weak sourceful answer card offers local candidate suggestion only', true);
       add('ABW triage dashboard is visible', abwTriagePanelVisibleOk, 'read-only triage panel renders in the ABW assistant', true);
       add('ABW triage group labels are visible', abwTriageLabelsOk, 'all Stage B group labels render', true);
       add('ABW triage copy explains ask-first and optional approval later', abwTriageCopyOk, 'ask-first and per-item optional approval copy is visible', true);
@@ -1412,6 +1495,11 @@ async function runRealBrowserSmoke(url) {
       add('ABW triage trusted group does not confuse review items with wiki trust', abwTriageTrustedHonestyOk, 'trusted group shows wiki evidence only', true);
       add('ABW triage recent answers group shows session answer history', abwTriageRecentAnswersOk, 'recent answer entries render with readable labels', true);
       add('ABW triage candidate safety excludes missing-source and ambiguous items', abwTriageCandidateSafetyOk, 'candidate group stays read-only and source-bounded', true);
+      add('ABW candidate mark flow adds local review candidate', abwCandidateMarkFlowOk, 'marking a weak answer source adds a not-trusted candidate to the dashboard', true);
+      add('ABW candidate flow never calls approve or promote endpoints', abwCandidateNoApproveCallOk, 'candidate action stays local/session-only', true);
+      add('ABW missing-source answer does not offer candidate action', abwMissingSourceNoCandidateOk, 'missing-source result shows no review-candidate action', true);
+      add('ABW unsupported/parse result does not offer candidate action', abwUnsupportedNoCandidateOk, 'unsupported/parse result stays non-candidate', true);
+      add('ABW ambiguous result asks for clarification instead of candidate action', abwAmbiguousNoCandidateOk, 'ambiguous result avoids review suggestion', true);
       add('ABW triage copy avoids bulk or corpus approval language', abwTriageNoBulkCopyOk, 'no approve-all/batch/corpus wording is present', true);
       add('No-match copy is understandable', nonTechNoMatchCopyOk, 'no-match wording explains trusted-source gap clearly', true);
       add('Review/promote limitation is visible', nonTechPromoteLimitVisibleOk, 'promotion limitation warning stays explicit in UI', true);

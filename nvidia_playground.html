@@ -772,6 +772,50 @@
             color: #a6a6a6;
         }
 
+        .abw-candidate-box {
+            border-radius: 10px;
+            padding: 12px;
+            border: 1px solid rgba(245, 177, 66, 0.28);
+            background: rgba(245, 177, 66, 0.08);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .abw-candidate-copy {
+            font-size: 0.82rem;
+            line-height: 1.5;
+            color: #f3deb0;
+        }
+
+        .abw-candidate-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .abw-candidate-inline-note {
+            font-size: 0.76rem;
+            color: #b8b8b8;
+        }
+
+        .abw-secondary-btn {
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            transition: 0.2s;
+        }
+
+        .abw-secondary-btn:hover {
+            border-color: rgba(var(--primary-rgb), 0.5);
+            background: rgba(var(--primary-rgb), 0.12);
+        }
+
         .abw-warning-list,
         .abw-source-list {
             display: flex;
@@ -4469,7 +4513,49 @@
             }
         }
 
-        function renderAbwResultCard(payload = {}) {
+        function renderAbwCandidateActionMarkup(payload = {}, messageIndex = -1) {
+            const state = getAbwAnswerCandidateState(payload);
+            if (state.reason === 'missing-source' || state.reason === 'unsupported-or-parse' || state.reason === 'ambiguous') {
+                return `
+                    <div class="abw-candidate-box">
+                        <div class="abw-candidate-copy">${escapeHtml(state.detail)}</div>
+                        <div class="abw-candidate-inline-note">No approval happens here.</div>
+                    </div>
+                `;
+            }
+            if (!state.eligible || messageIndex < 0) return '';
+
+            const marked = isAbwAnswerMarkedCandidate(payload);
+            const trustLabel = state.trustScore !== null ? `Trust ${state.trustScore}` : 'Trust n/a';
+            return `
+                <div class="abw-candidate-box">
+                    <div class="abw-candidate-copy">This answer used an untrusted draft source.</div>
+                    <div class="abw-candidate-copy">If this source is useful, you may review it later.</div>
+                    <div class="abw-candidate-copy">Review candidate only - not trusted yet.</div>
+                    <div class="abw-candidate-actions" id="abw-candidate-actions-${messageIndex}">
+                        ${marked
+                            ? `<button class="abw-secondary-btn" type="button" onclick="removeAbwAnswerCandidateFromMessage(${messageIndex})">Remove candidate</button>`
+                            : `<button class="abw-secondary-btn" type="button" onclick="addAbwAnswerCandidate(${messageIndex})">Mark as candidate</button>`
+                        }
+                        <span class="abw-pill weak">Not trusted yet</span>
+                        <span class="abw-pill weak">${escapeHtml(state.evidenceTier)}</span>
+                        <span class="abw-pill weak">${escapeHtml(trustLabel)}</span>
+                    </div>
+                    <div class="abw-candidate-inline-note">No approval happens here.</div>
+                </div>
+            `;
+        }
+
+        function renderAbwCandidateActions(messageIndex, payload = null) {
+            const container = document.getElementById(`abw-candidate-section-${messageIndex}`);
+            if (!container) return;
+            const session = getCurrentAbwSession();
+            const messagePayload = payload || session?.messages?.[messageIndex]?.abwResult || {};
+            container.innerHTML = renderAbwCandidateActionMarkup(messagePayload, messageIndex);
+        }
+
+        function renderAbwResultCard(payload = {}, options = {}) {
+            const messageIndex = Number.isInteger(options?.messageIndex) ? options.messageIndex : -1;
             const tone = getAbwStatusTone(payload);
             const retrievalStatus = String(payload.retrievalStatus || payload.status || 'unknown').trim() || 'unknown';
             const evidenceTier = String(payload.evidenceTier || 'unknown').trim() || 'unknown';
@@ -4557,6 +4643,10 @@
                         <div class="abw-source-list">${sourceItems}</div>
                     </div>
                     <div class="abw-section">
+                        <div class="abw-section-label">Review Candidate</div>
+                        <div id="abw-candidate-section-${messageIndex}">${renderAbwCandidateActionMarkup(payload, messageIndex)}</div>
+                    </div>
+                    <div class="abw-section">
                         <div class="abw-section-label">Read-Only Indicators</div>
                         <div class="abw-pill-row">${indicatorPills}</div>
                     </div>
@@ -4571,7 +4661,7 @@
             const actionIndex = Number.isInteger(messageIndex) ? messageIndex : -1;
             const content = document.createElement('div');
             content.className = 'message-content';
-            content.innerHTML = renderAbwResultCard(payload);
+            content.innerHTML = renderAbwResultCard(payload, { messageIndex: actionIndex });
             div.appendChild(content);
             if (actionIndex >= 0) {
                 const actions = document.createElement('div');
@@ -4721,6 +4811,20 @@
         let abwLastIngestPayload = null;
         let abwLastReviewPayload = null;
 
+        function getCurrentAbwSession() {
+            if (!currentSessionId || !sessions[currentSessionId]) return null;
+            const session = sessions[currentSessionId];
+            if (!Array.isArray(session.messages)) session.messages = [];
+            if (!Array.isArray(session.abwReviewCandidates)) session.abwReviewCandidates = [];
+            return session;
+        }
+
+        function getAbwCandidateWarnings(payload = {}) {
+            return Array.isArray(payload.warnings)
+                ? payload.warnings.map((item) => String(item || '').trim()).filter(Boolean)
+                : [];
+        }
+
         function normalizeAbwPath(value = '') {
             return String(value || '').trim().replace(/\\/g, '/');
         }
@@ -4751,6 +4855,16 @@
             return /(^|\/)(drafts?|raw)\//i.test(combined) || /draft|raw|fallback|unreviewed/i.test(combined);
         }
 
+        function getAbwCandidateSource(source = {}) {
+            if (!source || typeof source !== 'object') return null;
+            const pathValue = normalizeAbwPath(source.path || source.title || '');
+            if (!pathValue || !sourceLooksWeak(source)) return null;
+            return {
+                sourcePath: pathValue,
+                sourceTitle: String(source.title || pathValue || 'Draft source').trim() || pathValue || 'Draft source'
+            };
+        }
+
         function isAbwNoMatchPayload(payload = {}) {
             const retrieval = String(payload.retrievalStatus || payload.status || '').trim().toLowerCase();
             const tier = String(payload.evidenceTier || payload.knowledgeEvidenceTier || '').trim();
@@ -4775,10 +4889,83 @@
             return /ambiguous/.test(combined);
         }
 
+        function getAbwUnsupportedOrParseSignal(payload = {}) {
+            const combined = [
+                payload.status,
+                payload.retrievalStatus,
+                payload.currentState,
+                payload.knowledgeEvidenceTier,
+                payload.sourceSummary,
+                ...(Array.isArray(payload.warnings) ? payload.warnings : [])
+            ].filter(Boolean).join(' ').toLowerCase();
+            return /unsupported|parse[_ -]?error|parse error|malformed|broken file|invalid zip|skipped_parse_error|skipped_unsupported_extension/.test(combined);
+        }
+
         function formatAbwQuestionLabel(text = '') {
             const normalized = String(text || '').replace(/^\/abw-ask\b/i, '').trim();
             if (!normalized) return 'Recent question';
             return normalized.length > 96 ? `${normalized.slice(0, 93)}...` : normalized;
+        }
+
+        function getAbwAnswerCandidateState(payload = {}) {
+            const sources = Array.isArray(payload.sources) ? payload.sources : [];
+            const weakSource = sources.map((source) => getAbwCandidateSource(source)).find(Boolean);
+            const noMatch = isAbwNoMatchPayload(payload);
+            const ambiguous = isAbwAmbiguousPayload(payload);
+            const unsupportedOrParse = getAbwUnsupportedOrParseSignal(payload);
+            const weak = isAbwWeakPayload(payload);
+            const answerText = String(payload.answer || '').trim();
+            const hasUsefulAnswer = !!answerText && !/^no grounded answer found\.?$/i.test(answerText);
+
+            if (unsupportedOrParse) {
+                return {
+                    eligible: false,
+                    reason: 'unsupported-or-parse',
+                    detail: 'This result came from an unsupported or broken file path. Review candidate suggestion is not available here.'
+                };
+            }
+            if (ambiguous) {
+                return {
+                    eligible: false,
+                    reason: 'ambiguous',
+                    detail: 'This answer was ambiguous. Clarify the question before reviewing any source.'
+                };
+            }
+            if (noMatch) {
+                return {
+                    eligible: false,
+                    reason: 'missing-source',
+                    detail: 'No trusted source was found for this answer yet. Review is not available from this result.'
+                };
+            }
+            if (!weak || !weakSource || !hasUsefulAnswer) {
+                return { eligible: false, reason: 'not-eligible', detail: '' };
+            }
+
+            return {
+                eligible: true,
+                reason: 'weak-sourceful',
+                question: formatAbwQuestionLabel(payload.questionLabel || ''),
+                sourcePath: weakSource.sourcePath,
+                sourceTitle: weakSource.sourceTitle,
+                evidenceTier: String(payload.evidenceTier || payload.knowledgeEvidenceTier || 'unknown').trim() || 'unknown',
+                retrievalStatus: String(payload.retrievalStatus || payload.status || 'unknown').trim() || 'unknown',
+                trustScore: Number.isFinite(payload.trustScore) ? payload.trustScore : null,
+                warnings: getAbwCandidateWarnings(payload)
+            };
+        }
+
+        function getAbwCandidateKey(candidate = {}) {
+            return normalizeAbwPath(`${candidate.sourcePath || 'draft-source'}|${candidate.question || 'recent-question'}`);
+        }
+
+        function isAbwAnswerMarkedCandidate(payload = {}) {
+            const session = getCurrentAbwSession();
+            if (!session) return false;
+            const candidate = getAbwAnswerCandidateState(payload);
+            if (!candidate.eligible) return false;
+            const key = getAbwCandidateKey(candidate);
+            return session.abwReviewCandidates.some((item) => item?.key === key);
         }
 
         function getAbwRecentAnswerEntries(limit = 6) {
@@ -4790,12 +4977,67 @@
                 const previous = index > 0 ? sessionMessages[index - 1] : null;
                 const payload = message.abwResult || {};
                 entries.push({
+                    messageIndex: index,
                     payload,
                     question: formatAbwQuestionLabel(payload.questionLabel || (previous?.role === 'user' ? previous.content : '')),
                     sources: Array.isArray(payload.sources) ? payload.sources : []
                 });
             }
             return entries.slice(-limit).reverse();
+        }
+
+        function addAbwAnswerCandidate(messageIndex) {
+            const session = getCurrentAbwSession();
+            const message = session?.messages?.[messageIndex];
+            const payload = message?.abwResult || {};
+            const candidate = getAbwAnswerCandidateState(payload);
+            if (!session || !candidate.eligible) return false;
+            const key = getAbwCandidateKey(candidate);
+            if (!session.abwReviewCandidates.some((item) => item?.key === key)) {
+                session.abwReviewCandidates.push({
+                    key,
+                    sourcePath: candidate.sourcePath,
+                    sourceTitle: candidate.sourceTitle,
+                    question: candidate.question,
+                    evidenceTier: candidate.evidenceTier,
+                    retrievalStatus: candidate.retrievalStatus,
+                    trustScore: candidate.trustScore,
+                    warnings: candidate.warnings,
+                    addedAt: new Date().toISOString(),
+                    whySuggested: 'Marked from a weak but sourceful answer.'
+                });
+                saveSessions();
+            }
+            renderAbwCandidateActions(messageIndex, payload);
+            renderAbwTriageDashboard();
+            return true;
+        }
+
+        function removeAbwReviewCandidate(key = '') {
+            const session = getCurrentAbwSession();
+            if (!session) return false;
+            const normalizedKey = normalizeAbwPath(key);
+            const before = session.abwReviewCandidates.length;
+            session.abwReviewCandidates = session.abwReviewCandidates.filter((item) => item?.key !== normalizedKey);
+            if (session.abwReviewCandidates.length !== before) {
+                saveSessions();
+                session.messages.forEach((message, index) => {
+                    if (message?.abwResult) renderAbwCandidateActions(index, message.abwResult);
+                });
+                renderAbwTriageDashboard();
+                return true;
+            }
+            return false;
+        }
+
+        function removeAbwAnswerCandidateFromMessage(messageIndex) {
+            const session = getCurrentAbwSession();
+            const payload = session?.messages?.[messageIndex]?.abwResult || {};
+            const candidate = getAbwAnswerCandidateState(payload);
+            if (!candidate.eligible) return false;
+            const removed = removeAbwReviewCandidate(getAbwCandidateKey(candidate));
+            renderAbwCandidateActions(messageIndex, payload);
+            return removed;
         }
 
         function dedupeAbwTriageItems(items = []) {
@@ -4821,6 +5063,7 @@
                     <div class="abw-triage-item-title">${escapeHtml(item.title || 'Item')}</div>
                     ${item.meta ? `<div class="abw-triage-item-meta">${escapeHtml(item.meta)}</div>` : ''}
                     ${item.detail ? `<div class="abw-triage-item-detail">${escapeHtml(item.detail)}</div>` : ''}
+                    ${item.actionLabel && item.actionOnClick ? `<div class="abw-candidate-actions"><button class="abw-secondary-btn" type="button" onclick="${item.actionOnClick}">${escapeHtml(item.actionLabel)}</button></div>` : ''}
                 </div>
             `).join('');
         }
@@ -4829,6 +5072,8 @@
             const ingest = abwLastIngestPayload && typeof abwLastIngestPayload === 'object' ? abwLastIngestPayload : {};
             const review = abwLastReviewPayload && typeof abwLastReviewPayload === 'object' ? abwLastReviewPayload : {};
             const recentAnswers = getAbwRecentAnswerEntries();
+            const session = getCurrentAbwSession();
+            const markedCandidates = Array.isArray(session?.abwReviewCandidates) ? session.abwReviewCandidates : [];
 
             const readyItems = dedupeAbwTriageItems([
                 ...(Array.isArray(ingest.generatedDrafts) ? ingest.generatedDrafts : []).map((draftPath) => ({
@@ -4851,19 +5096,20 @@
             ]);
 
             const candidateItems = dedupeAbwTriageItems([
-                ...recentAnswers
-                    .filter(({ payload, sources }) => isAbwWeakPayload(payload) && !isAbwNoMatchPayload(payload) && !isAbwAmbiguousPayload(payload) && sources.some(source => sourceLooksWeak(source)))
-                    .map(({ question, sources }) => {
-                        const firstSource = sources.find(source => sourceLooksWeak(source)) || sources[0] || {};
-                        const sourcePath = normalizeAbwPath(firstSource.path || 'draft source');
-                        return {
-                            key: `candidate-recent:${sourcePath}:${question}`,
-                            title: sourcePath,
-                            meta: `Suggested by recent answer: ${question}`,
-                            detail: 'Useful but weak evidence. Preview later before deciding whether it should become trusted in a later stage.',
-                            tone: 'weak'
-                        };
-                    }),
+                ...markedCandidates.map((candidate) => {
+                    const warningText = Array.isArray(candidate?.warnings) && candidate.warnings.length
+                        ? ` Warnings: ${candidate.warnings.join('; ')}`
+                        : '';
+                    return {
+                        key: candidate.key,
+                        title: normalizeAbwPath(candidate.sourcePath || candidate.sourceTitle || 'draft source'),
+                        meta: `Marked from answer: ${candidate.question || 'Recent question'}`,
+                        detail: `Review candidate only - not trusted yet. ${candidate.evidenceTier || 'unknown'} | trust ${Number.isFinite(candidate.trustScore) ? candidate.trustScore : 'n/a'} | ${candidate.whySuggested || 'Marked from a weak but sourceful answer.'}${warningText}`,
+                        tone: 'weak',
+                        actionLabel: 'Remove',
+                        actionOnClick: `removeAbwReviewCandidate('${escapeHtml(candidate.key)}')`
+                    };
+                }),
                 ...(Array.isArray(review.actions) ? review.actions : [])
                     .filter((action) => {
                         const draftPath = normalizeAbwPath(action?.path || action?.target || action?.draft_path || '');
