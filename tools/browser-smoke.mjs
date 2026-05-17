@@ -773,6 +773,15 @@ async function runRealBrowserSmoke(url) {
       let abwReviewActionsReadableOk = false;
       let abwIngestObjectRowsReadableOk = false;
       let abwWeakSignalWarningsVisibleOk = false;
+      let abwTriagePanelVisibleOk = false;
+      let abwTriageLabelsOk = false;
+      let abwTriageCopyOk = false;
+      let abwTriageEmptyStatesOk = false;
+      let abwTriageUnreadableOk = false;
+      let abwTriageTrustedHonestyOk = false;
+      let abwTriageRecentAnswersOk = false;
+      let abwTriageCandidateSafetyOk = false;
+      let abwTriageNoBulkCopyOk = false;
       let untrustedWorkspaceWarningVisibleOk = false;
       let trustWorkspaceButtonVisibleOk = false;
       let ingestTrustBlockedCopyOk = false;
@@ -998,6 +1007,64 @@ async function runRealBrowserSmoke(url) {
             /Trusted-source approval is not available in this UI yet/i.test(fullUiText) &&
             /No auto-promotion was performed/i.test(fullUiText) &&
             /not the non-tech daily-use path/i.test(fullUiText);
+          const triagePanelText = document.querySelector('#abw-triage-panel')?.textContent || '';
+          abwTriagePanelVisibleOk = visible('#abw-triage-panel');
+          abwTriageLabelsOk =
+            /Ready to ask, not trusted yet/i.test(triagePanelText) &&
+            /Good candidates to review/i.test(triagePanelText) &&
+            /Needs attention/i.test(triagePanelText) &&
+            /Could not read/i.test(triagePanelText) &&
+            /Already trusted/i.test(triagePanelText) &&
+            /Recently used in answers/i.test(triagePanelText);
+          abwTriageCopyOk =
+            /You can ask questions before reviewing anything\./i.test(triagePanelText) &&
+            /Draft sources are useful but not trusted yet\./i.test(triagePanelText) &&
+            /Approval is optional and will be added later for selected items only\./i.test(triagePanelText) &&
+            /Approving one source will not approve the whole folder\./i.test(triagePanelText) &&
+            /Unsupported or broken files cannot be approved\./i.test(triagePanelText);
+          abwTriageNoBulkCopyOk =
+            !/approve all|batch approval|corpus approval/i.test(triagePanelText);
+          if ((!currentSessionId || !sessions[currentSessionId]) && typeof createNewSession === 'function') {
+            createNewSession();
+            await sleep(120);
+          }
+          if (!currentSessionId || !sessions[currentSessionId]) {
+            currentSessionId = currentSessionId || `smoke_session_${Date.now()}`;
+            sessions[currentSessionId] = sessions[currentSessionId] || { title: 'Smoke Session', messages: [], model: 'auto' };
+          }
+          if (typeof window.renderAbwTriageDashboard === 'function') {
+            sessions[currentSessionId].messages = [];
+            if (typeof abwLastIngestPayload !== 'undefined') {
+              abwLastIngestPayload = {
+                status: 'ABW_CLI_OK',
+                generatedDrafts: [],
+                unsupportedFiles: [],
+                parseErrors: [],
+                reviewRequired: false,
+                warnings: []
+              };
+            }
+            if (typeof abwLastReviewPayload !== 'undefined') {
+              abwLastReviewPayload = {
+                status: 'ABW_CLI_OK',
+                pending: 0,
+                reviewed: 0,
+                actions: [],
+                warnings: []
+              };
+            }
+            window.renderAbwTriageDashboard();
+            await sleep(80);
+            const emptyTriageText = [
+              document.querySelector('#abw-triage-candidates')?.textContent || '',
+              document.querySelector('#abw-triage-trusted')?.textContent || '',
+              document.querySelector('#abw-triage-recent')?.textContent || ''
+            ].join(' ');
+            abwTriageEmptyStatesOk =
+              /No candidate list yet; ask questions first\./i.test(emptyTriageText) &&
+              /No trusted sources yet\./i.test(emptyTriageText) &&
+              /No recent answers in this session yet\./i.test(emptyTriageText);
+          }
           if (typeof window.renderAbwReviewResult === 'function') {
             window.renderAbwReviewResult({
               status: 'ABW_CLI_OK',
@@ -1073,6 +1140,131 @@ async function runRealBrowserSmoke(url) {
               /draft\/raw\/fallback evidence/i.test(weakText) &&
               /Backend weak-evidence warning/i.test(weakText);
             tempCard.remove();
+          }
+          if (typeof window.renderAbwTriageDashboard === 'function' && sessions[currentSessionId]) {
+            sessions[currentSessionId].messages = [
+              {
+                role: 'user',
+                content: '/abw-ask How do I restart the AGV?'
+              },
+              {
+                role: 'assistant',
+                content: 'Synthetic weak answer',
+                abwResult: {
+                  questionLabel: 'How do I restart the AGV?',
+                  retrievalStatus: 'raw_or_draft_only',
+                  evidenceTier: 'E1_fallback',
+                  trustScore: 45,
+                  answer: 'Use the draft restart checklist.',
+                  sources: [{ path: 'drafts/restart-guide.md', title: 'Restart guide', confidence: 40, snippet: 'draft evidence' }],
+                  warnings: ['Weak evidence']
+                }
+              },
+              {
+                role: 'user',
+                content: '/abw-ask What protocol does the approved guide use?'
+              },
+              {
+                role: 'assistant',
+                content: 'Synthetic trusted answer',
+                abwResult: {
+                  questionLabel: 'What protocol does the approved guide use?',
+                  retrievalStatus: 'exact_match',
+                  evidenceTier: 'E2_wiki',
+                  trustScore: 72,
+                  answer: 'MQTT',
+                  sources: [{ path: 'wiki/agv.md', title: 'AGV wiki', confidence: 90, snippet: 'MQTT' }],
+                  warnings: []
+                }
+              },
+              {
+                role: 'user',
+                content: '/abw-ask Supplier contract terms?'
+              },
+              {
+                role: 'assistant',
+                content: 'Synthetic no-match answer',
+                abwResult: {
+                  questionLabel: 'Supplier contract terms?',
+                  retrievalStatus: 'no_match',
+                  evidenceTier: 'E0_unknown',
+                  trustScore: 0,
+                  answer: 'No grounded answer found.',
+                  sources: [],
+                  warnings: ['No trusted source found.']
+                }
+              },
+              {
+                role: 'user',
+                content: '/abw-ask Which reset path?'
+              },
+              {
+                role: 'assistant',
+                content: 'Synthetic ambiguous answer',
+                abwResult: {
+                  questionLabel: 'Which reset path?',
+                  status: 'ABW_CLI_AMBIGUOUS',
+                  retrievalStatus: 'ambiguous',
+                  evidenceTier: 'E0_unknown',
+                  trustScore: 0,
+                  answer: 'Need clarification.',
+                  sources: [{ path: 'drafts/ambiguous.md', title: 'Ambiguous draft', confidence: 30, snippet: 'ambiguous' }],
+                  warnings: ['Clarify the question.']
+                }
+              }
+            ];
+            if (typeof abwLastIngestPayload !== 'undefined') {
+              abwLastIngestPayload = {
+                status: 'ABW_CLI_OK',
+                ingested: 3,
+                skipped: 2,
+                unsupportedFiles: [{ path: 'raw/unsupported.xyz', reason: 'skipped_unsupported_extension', action: 'skipped' }],
+                parseErrors: [{ path: 'raw/malformed.docx', reason: 'skipped_parse_error', message: 'invalid zip container', action: 'skipped' }],
+                generatedDrafts: ['drafts/ops-guide.md'],
+                reviewRequired: true,
+                promotionPerformed: false,
+                warnings: ['1 unsupported file(s) skipped.', '1 parse error file(s) skipped.']
+              };
+            }
+            if (typeof abwLastReviewPayload !== 'undefined') {
+              abwLastReviewPayload = {
+                status: 'ABW_CLI_OK',
+                pending: 3,
+                reviewed: 2,
+                actions: [
+                  {
+                    type: 'approve',
+                    label: 'Review draft before approval',
+                    path: 'drafts/ops-guide.md',
+                    status: 'manual_required',
+                    reason: 'trusted promotion unavailable in UI'
+                  }
+                ],
+                warnings: ['Drafts remain draft/raw evidence until approved through a governed path.']
+              };
+            }
+            window.renderAbwTriageDashboard();
+            await sleep(80);
+            const candidateText = document.querySelector('#abw-triage-candidates')?.textContent || '';
+            const unreadableText = document.querySelector('#abw-triage-unreadable')?.textContent || '';
+            const trustedText = document.querySelector('#abw-triage-trusted')?.textContent || '';
+            const recentText = document.querySelector('#abw-triage-recent')?.textContent || '';
+            abwTriageUnreadableOk =
+              /raw\/unsupported\.xyz/i.test(unreadableText) &&
+              /raw\/malformed\.docx/i.test(unreadableText) &&
+              !/\[object Object\]/i.test(unreadableText);
+            abwTriageTrustedHonestyOk =
+              /wiki\/agv\.md/i.test(trustedText) &&
+              !/Review draft before approval/i.test(trustedText) &&
+              !/drafts\/ops-guide\.md/i.test(trustedText);
+            abwTriageRecentAnswersOk =
+              /How do I restart the AGV\?/i.test(recentText) &&
+              /What protocol does the approved guide use\?/i.test(recentText) &&
+              /Supplier contract terms\?/i.test(recentText);
+            abwTriageCandidateSafetyOk =
+              /drafts\/restart-guide\.md/i.test(candidateText) &&
+              !/Supplier contract terms\?/i.test(candidateText) &&
+              !/Which reset path\?/i.test(candidateText);
           }
           untrustedWorkspaceWarningVisibleOk =
             /chua duoc tin cay|chua tin cay/i.test(fullUiText);
@@ -1212,6 +1404,15 @@ async function runRealBrowserSmoke(url) {
       add('ABW review actions render readably', abwReviewActionsReadableOk, 'review action objects render as readable rows and never as [object Object]', true);
       add('ABW ingest object rows render readably', abwIngestObjectRowsReadableOk, 'unsupported/parse error objects render as path: reason rows', true);
       add('ABW weak/fallback warning signals are visible', abwWeakSignalWarningsVisibleOk, 'weak/fallback/low-trust/draft-source signals render as warnings', true);
+      add('ABW triage dashboard is visible', abwTriagePanelVisibleOk, 'read-only triage panel renders in the ABW assistant', true);
+      add('ABW triage group labels are visible', abwTriageLabelsOk, 'all Stage B group labels render', true);
+      add('ABW triage copy explains ask-first and optional approval later', abwTriageCopyOk, 'ask-first and per-item optional approval copy is visible', true);
+      add('ABW triage empty states are honest', abwTriageEmptyStatesOk, 'candidate/trusted/recent groups show honest empty states', true);
+      add('ABW triage could-not-read group shows unsupported and parse-error items', abwTriageUnreadableOk, 'unreadable group renders path-based rows without [object Object]', true);
+      add('ABW triage trusted group does not confuse review items with wiki trust', abwTriageTrustedHonestyOk, 'trusted group shows wiki evidence only', true);
+      add('ABW triage recent answers group shows session answer history', abwTriageRecentAnswersOk, 'recent answer entries render with readable labels', true);
+      add('ABW triage candidate safety excludes missing-source and ambiguous items', abwTriageCandidateSafetyOk, 'candidate group stays read-only and source-bounded', true);
+      add('ABW triage copy avoids bulk or corpus approval language', abwTriageNoBulkCopyOk, 'no approve-all/batch/corpus wording is present', true);
       add('No-match copy is understandable', nonTechNoMatchCopyOk, 'no-match wording explains trusted-source gap clearly', true);
       add('Review/promote limitation is visible', nonTechPromoteLimitVisibleOk, 'promotion limitation warning stays explicit in UI', true);
       add('Untrusted workspace warning visible in ABW assistant', untrustedWorkspaceWarningVisibleOk, 'ABW panel shows untrusted warning', true);
@@ -1484,6 +1685,16 @@ async function runRealBrowserSmoke(url) {
     for (const r of contextTokenChecks) {
       addCheck(r.name, r.ok ? 'pass' : 'fail', r.detail, true);
     }
+
+    const promoteFailClosed = await requestJson(`${url}/proxy/abw/promote`, {
+      method: 'POST',
+      body: { workspace: APP_DIR, draftPath: 'drafts/smoke.md' }
+    });
+    const promoteFailClosedOk =
+      promoteFailClosed.statusCode >= 400 &&
+      promoteFailClosed.json?.manualReviewRequired === true &&
+      promoteFailClosed.json?.promotionPerformed === false;
+    addCheck('ABW promote endpoint remains fail-closed', promoteFailClosedOk ? 'pass' : 'fail', `status=${promoteFailClosed.statusCode}`, true);
 
     await runApiRegressionChecks(url, addCheck, requestJson);
 

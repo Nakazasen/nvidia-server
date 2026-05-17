@@ -2037,6 +2037,101 @@
             grid-template-columns: repeat(2, minmax(260px, 1fr));
             gap: 10px;
         }
+        .abw-triage-panel {
+            margin-top: 12px;
+            border: 1px solid #2b3647;
+            border-radius: 8px;
+            background: #0f141b;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .abw-triage-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+        .abw-triage-title {
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        .abw-triage-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            font-size: 0.78rem;
+            color: #d0d6df;
+        }
+        .abw-triage-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(220px, 1fr));
+            gap: 10px;
+        }
+        .abw-triage-group {
+            border: 1px solid #243040;
+            border-radius: 8px;
+            background: #101720;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 0;
+            min-height: 170px;
+        }
+        .abw-triage-group h5 {
+            margin: 0;
+            color: #fff;
+            font-size: 0.82rem;
+        }
+        .abw-triage-count {
+            font-size: 0.7rem;
+            color: #aeb8c6;
+        }
+        .abw-triage-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .abw-triage-item {
+            border-radius: 8px;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .abw-triage-item.strong {
+            border-color: rgba(var(--primary-rgb), 0.4);
+        }
+        .abw-triage-item.weak {
+            border-color: rgba(245, 177, 66, 0.28);
+        }
+        .abw-triage-item.blocked {
+            border-color: rgba(255, 107, 107, 0.28);
+        }
+        .abw-triage-item-title {
+            font-size: 0.78rem;
+            color: #f3f3f3;
+            font-weight: 600;
+            word-break: break-word;
+        }
+        .abw-triage-item-meta,
+        .abw-triage-item-detail {
+            font-size: 0.72rem;
+            color: #b8c0cd;
+            line-height: 1.4;
+            word-break: break-word;
+        }
+        .abw-triage-empty {
+            font-size: 0.76rem;
+            color: #95a0af;
+            line-height: 1.45;
+        }
         .abw-main-step {
             border: 1px solid #2b3647;
             border-radius: 8px;
@@ -2068,6 +2163,9 @@
         }
         @media (max-width: 1100px) {
             .abw-main-grid {
+                grid-template-columns: 1fr;
+            }
+            .abw-triage-grid {
                 grid-template-columns: 1fr;
             }
             .abw-main-panel {
@@ -2716,6 +2814,69 @@
                         <div id="abw-chat-note" class="abw-chat-warn">Khong tu dong ghi/sync/write-back. Neu du lieu nhay cam, hay dung va sanitize truoc.</div>
                     </section>
                 </div>
+                <section id="abw-triage-panel" class="abw-triage-panel">
+                    <div class="abw-triage-header">
+                        <div>
+                            <div class="abw-triage-title">Read-only Review / Triage</div>
+                            <div class="abw-note">This panel groups what happened after ingest, review, and ask. It does not approve anything.</div>
+                        </div>
+                        <div class="abw-pill-row">
+                            <span class="abw-pill">read-only only</span>
+                            <span class="abw-pill weak">not trusted yet</span>
+                        </div>
+                    </div>
+                    <div class="abw-triage-copy">
+                        <div>You can ask questions before reviewing anything.</div>
+                        <div>Draft sources are useful but not trusted yet.</div>
+                        <div>Approval is optional and will be added later for selected items only.</div>
+                        <div>Approving one source will not approve the whole folder.</div>
+                        <div>Unsupported or broken files cannot be approved.</div>
+                    </div>
+                    <div class="abw-triage-grid">
+                        <section class="abw-triage-group" data-triage-group="ready">
+                            <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+                                <h5>Ready to ask, not trusted yet</h5>
+                                <span id="abw-triage-ready-count" class="abw-triage-count">0</span>
+                            </div>
+                            <div id="abw-triage-ready" class="abw-triage-list"></div>
+                        </section>
+                        <section class="abw-triage-group" data-triage-group="candidates">
+                            <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+                                <h5>Good candidates to review</h5>
+                                <span id="abw-triage-candidates-count" class="abw-triage-count">0</span>
+                            </div>
+                            <div id="abw-triage-candidates" class="abw-triage-list"></div>
+                        </section>
+                        <section class="abw-triage-group" data-triage-group="attention">
+                            <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+                                <h5>Needs attention</h5>
+                                <span id="abw-triage-attention-count" class="abw-triage-count">0</span>
+                            </div>
+                            <div id="abw-triage-attention" class="abw-triage-list"></div>
+                        </section>
+                        <section class="abw-triage-group" data-triage-group="unreadable">
+                            <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+                                <h5>Could not read</h5>
+                                <span id="abw-triage-unreadable-count" class="abw-triage-count">0</span>
+                            </div>
+                            <div id="abw-triage-unreadable" class="abw-triage-list"></div>
+                        </section>
+                        <section class="abw-triage-group" data-triage-group="trusted">
+                            <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+                                <h5>Already trusted</h5>
+                                <span id="abw-triage-trusted-count" class="abw-triage-count">0</span>
+                            </div>
+                            <div id="abw-triage-trusted" class="abw-triage-list"></div>
+                        </section>
+                        <section class="abw-triage-group" data-triage-group="recent">
+                            <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+                                <h5>Recently used in answers</h5>
+                                <span id="abw-triage-recent-count" class="abw-triage-count">0</span>
+                            </div>
+                            <div id="abw-triage-recent" class="abw-triage-list"></div>
+                        </section>
+                    </div>
+                </section>
             </div>
             <div id="chat-box" class="chat-container"></div>
 
@@ -4105,6 +4266,7 @@
                     }
                 });
             }
+            renderAbwTriageDashboard();
             renderSessionList();
         }
 
@@ -4556,6 +4718,264 @@
 
         let abwLastGeneratedDrafts = [];
         let abwWorkspaceTrusted = null;
+        let abwLastIngestPayload = null;
+        let abwLastReviewPayload = null;
+
+        function normalizeAbwPath(value = '') {
+            return String(value || '').trim().replace(/\\/g, '/');
+        }
+
+        function sourceLooksTrusted(source = {}) {
+            const combined = normalizeAbwPath([
+                source?.path,
+                source?.title,
+                source?.type,
+                source?.status,
+                source?.source,
+                source?.evidence,
+                source?.tier
+            ].filter(Boolean).join(' '));
+            return /(^|\/)wiki\//i.test(combined) && !/(^|\/)(drafts?|raw)\//i.test(combined);
+        }
+
+        function sourceLooksWeak(source = {}) {
+            const combined = normalizeAbwPath([
+                source?.path,
+                source?.title,
+                source?.type,
+                source?.status,
+                source?.source,
+                source?.evidence,
+                source?.tier
+            ].filter(Boolean).join(' '));
+            return /(^|\/)(drafts?|raw)\//i.test(combined) || /draft|raw|fallback|unreviewed/i.test(combined);
+        }
+
+        function isAbwNoMatchPayload(payload = {}) {
+            const retrieval = String(payload.retrievalStatus || payload.status || '').trim().toLowerCase();
+            const tier = String(payload.evidenceTier || payload.knowledgeEvidenceTier || '').trim();
+            return retrieval === 'no_match' || tier === 'E0_unknown';
+        }
+
+        function isAbwWeakPayload(payload = {}) {
+            const retrieval = String(payload.retrievalStatus || payload.status || '').trim().toLowerCase();
+            const tier = String(payload.evidenceTier || payload.knowledgeEvidenceTier || '').trim();
+            const trustScore = Number.isFinite(payload.trustScore) ? payload.trustScore : null;
+            return retrieval === 'raw_or_draft_only' || /^E1_/.test(tier) || (trustScore !== null && trustScore < 60);
+        }
+
+        function isAbwAmbiguousPayload(payload = {}) {
+            const combined = [
+                payload.status,
+                payload.retrievalStatus,
+                payload.currentState,
+                payload.knowledgeEvidenceTier,
+                payload.sourceSummary
+            ].filter(Boolean).join(' ').toLowerCase();
+            return /ambiguous/.test(combined);
+        }
+
+        function formatAbwQuestionLabel(text = '') {
+            const normalized = String(text || '').replace(/^\/abw-ask\b/i, '').trim();
+            if (!normalized) return 'Recent question';
+            return normalized.length > 96 ? `${normalized.slice(0, 93)}...` : normalized;
+        }
+
+        function getAbwRecentAnswerEntries(limit = 6) {
+            const sessionMessages = Array.isArray(sessions[currentSessionId]?.messages) ? sessions[currentSessionId].messages : [];
+            const entries = [];
+            for (let index = 0; index < sessionMessages.length; index++) {
+                const message = sessionMessages[index];
+                if (!message?.abwResult) continue;
+                const previous = index > 0 ? sessionMessages[index - 1] : null;
+                const payload = message.abwResult || {};
+                entries.push({
+                    payload,
+                    question: formatAbwQuestionLabel(payload.questionLabel || (previous?.role === 'user' ? previous.content : '')),
+                    sources: Array.isArray(payload.sources) ? payload.sources : []
+                });
+            }
+            return entries.slice(-limit).reverse();
+        }
+
+        function dedupeAbwTriageItems(items = []) {
+            const map = new Map();
+            for (const item of items) {
+                if (!item || !item.key) continue;
+                if (!map.has(item.key)) map.set(item.key, item);
+            }
+            return Array.from(map.values());
+        }
+
+        function renderAbwTriageItems(containerId, countId, items, emptyText) {
+            const container = document.getElementById(containerId);
+            const countEl = document.getElementById(countId);
+            if (countEl) countEl.innerText = String(items.length);
+            if (!container) return;
+            if (!items.length) {
+                container.innerHTML = `<div class="abw-triage-empty">${escapeHtml(emptyText)}</div>`;
+                return;
+            }
+            container.innerHTML = items.map((item) => `
+                <div class="abw-triage-item ${escapeHtml(item.tone || 'weak')}">
+                    <div class="abw-triage-item-title">${escapeHtml(item.title || 'Item')}</div>
+                    ${item.meta ? `<div class="abw-triage-item-meta">${escapeHtml(item.meta)}</div>` : ''}
+                    ${item.detail ? `<div class="abw-triage-item-detail">${escapeHtml(item.detail)}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function renderAbwTriageDashboard() {
+            const ingest = abwLastIngestPayload && typeof abwLastIngestPayload === 'object' ? abwLastIngestPayload : {};
+            const review = abwLastReviewPayload && typeof abwLastReviewPayload === 'object' ? abwLastReviewPayload : {};
+            const recentAnswers = getAbwRecentAnswerEntries();
+
+            const readyItems = dedupeAbwTriageItems([
+                ...(Array.isArray(ingest.generatedDrafts) ? ingest.generatedDrafts : []).map((draftPath) => ({
+                    key: `ready:${normalizeAbwPath(draftPath)}`,
+                    title: normalizeAbwPath(draftPath) || 'Readable draft',
+                    meta: 'Readable draft available for questions.',
+                    detail: 'Draft/raw content is useful for questions, but it is not trusted yet.',
+                    tone: 'weak'
+                })),
+                ...(Array.isArray(review.actions) ? review.actions : [])
+                    .map((action) => normalizeAbwPath(action?.path || action?.target || action?.draft_path || ''))
+                    .filter(Boolean)
+                    .map((draftPath) => ({
+                        key: `ready-action:${draftPath}`,
+                        title: draftPath,
+                        meta: 'Review item still available for questions.',
+                        detail: 'This item may inform answers before any approval exists.',
+                        tone: 'weak'
+                    }))
+            ]);
+
+            const candidateItems = dedupeAbwTriageItems([
+                ...recentAnswers
+                    .filter(({ payload, sources }) => isAbwWeakPayload(payload) && !isAbwNoMatchPayload(payload) && !isAbwAmbiguousPayload(payload) && sources.some(source => sourceLooksWeak(source)))
+                    .map(({ question, sources }) => {
+                        const firstSource = sources.find(source => sourceLooksWeak(source)) || sources[0] || {};
+                        const sourcePath = normalizeAbwPath(firstSource.path || 'draft source');
+                        return {
+                            key: `candidate-recent:${sourcePath}:${question}`,
+                            title: sourcePath,
+                            meta: `Suggested by recent answer: ${question}`,
+                            detail: 'Useful but weak evidence. Preview later before deciding whether it should become trusted in a later stage.',
+                            tone: 'weak'
+                        };
+                    }),
+                ...(Array.isArray(review.actions) ? review.actions : [])
+                    .filter((action) => {
+                        const draftPath = normalizeAbwPath(action?.path || action?.target || action?.draft_path || '');
+                        return draftPath && !/(^|\/)wiki\//i.test(draftPath);
+                    })
+                    .map((action) => {
+                        const draftPath = normalizeAbwPath(action?.path || action?.target || action?.draft_path || '');
+                        return {
+                            key: `candidate-review:${draftPath}`,
+                            title: draftPath,
+                            meta: String(action?.label || action?.status || 'Review suggestion'),
+                            detail: 'Read-only suggestion only. No approval action is available here yet.',
+                            tone: 'weak'
+                        };
+                    })
+            ]);
+
+            const attentionItems = dedupeAbwTriageItems([
+                ...(ingest.reviewRequired === true ? [{
+                    key: 'attention:review-required',
+                    title: 'Drafts still need review',
+                    meta: 'Review required',
+                    detail: 'Readable draft content exists, but it has not become a trusted source.',
+                    tone: 'weak'
+                }] : []),
+                ...(Array.isArray(ingest.warnings) ? ingest.warnings : []).map((warning, index) => ({
+                    key: `attention-ingest:${index}:${warning}`,
+                    title: 'Ingest warning',
+                    meta: 'Needs attention',
+                    detail: String(warning || '').trim(),
+                    tone: 'blocked'
+                })),
+                ...(Array.isArray(review.warnings) ? review.warnings : []).map((warning, index) => ({
+                    key: `attention-review:${index}:${warning}`,
+                    title: 'Review warning',
+                    meta: 'Needs attention',
+                    detail: String(warning || '').trim(),
+                    tone: 'blocked'
+                })),
+                ...recentAnswers
+                    .filter(({ payload }) => isAbwNoMatchPayload(payload) || isAbwAmbiguousPayload(payload) || isAbwWeakPayload(payload))
+                    .map(({ question, payload }) => ({
+                        key: `attention-answer:${question}:${payload.status || payload.retrievalStatus || 'unknown'}`,
+                        title: question,
+                        meta: `Answer status: ${payload.retrievalStatus || payload.status || 'unknown'}`,
+                        detail: isAbwNoMatchPayload(payload)
+                            ? 'No trusted source was found for this answer yet.'
+                            : (isAbwAmbiguousPayload(payload)
+                                ? 'This answer was ambiguous. Clarify the question before trusting any source.'
+                                : 'This answer used weak draft/raw evidence and should be checked carefully.'),
+                        tone: isAbwNoMatchPayload(payload) ? 'blocked' : 'weak'
+                    }))
+            ]);
+
+            const unreadableItems = dedupeAbwTriageItems([
+                ...(Array.isArray(ingest.unsupportedFiles) ? ingest.unsupportedFiles : []).map((item, index) => ({
+                    key: `unreadable-unsupported:${index}:${normalizeAbwPath(item?.path || item)}`,
+                    title: normalizeAbwPath(item?.path || item || 'unsupported file'),
+                    meta: 'Unsupported file',
+                    detail: `${item?.reason || item?.message || item?.status || 'Unsupported or skipped file type'}. Unsupported or broken files cannot be approved.`,
+                    tone: 'blocked'
+                })),
+                ...(Array.isArray(ingest.parseErrors) ? ingest.parseErrors : []).map((item, index) => ({
+                    key: `unreadable-parse:${index}:${normalizeAbwPath(item?.path || item)}`,
+                    title: normalizeAbwPath(item?.path || item || 'parse error file'),
+                    meta: 'Parse error',
+                    detail: `${item?.message || item?.reason || item?.status || 'The file could not be parsed correctly'}. Unsupported or broken files cannot be approved.`,
+                    tone: 'blocked'
+                }))
+            ]);
+
+            const trustedItems = dedupeAbwTriageItems(
+                recentAnswers.flatMap(({ question, payload, sources }) => {
+                    if (isAbwWeakPayload(payload) || isAbwNoMatchPayload(payload)) return [];
+                    return sources
+                        .filter((source) => sourceLooksTrusted(source))
+                        .map((source) => ({
+                            key: `trusted:${normalizeAbwPath(source.path || source.title || question)}`,
+                            title: normalizeAbwPath(source.path || source.title || 'trusted source'),
+                            meta: `Seen in recent answer: ${question}`,
+                            detail: 'Detected from wiki/trusted answer evidence. Review summary items are not treated as trusted by default.',
+                            tone: 'strong'
+                        }));
+                })
+            );
+
+            const recentItems = dedupeAbwTriageItems(
+                recentAnswers.map(({ question, payload, sources }) => {
+                    const firstSource = sources[0] || {};
+                    const sourcePath = normalizeAbwPath(firstSource.path || '');
+                    const statusLabel = isAbwNoMatchPayload(payload)
+                        ? 'missing-source'
+                        : (isAbwAmbiguousPayload(payload)
+                            ? 'ambiguous'
+                            : (isAbwWeakPayload(payload) ? 'weak' : 'trusted'));
+                    return {
+                        key: `recent:${question}:${statusLabel}:${sourcePath}`,
+                        title: question,
+                        meta: `Status: ${statusLabel}`,
+                        detail: sourcePath ? `Source: ${sourcePath}` : 'No supporting source was returned.',
+                        tone: statusLabel === 'trusted' ? 'strong' : (statusLabel === 'missing-source' ? 'blocked' : 'weak')
+                    };
+                })
+            );
+
+            renderAbwTriageItems('abw-triage-ready', 'abw-triage-ready-count', readyItems, 'No readable draft list yet. Ingest documents first.');
+            renderAbwTriageItems('abw-triage-candidates', 'abw-triage-candidates-count', candidateItems, 'No candidate list yet; ask questions first.');
+            renderAbwTriageItems('abw-triage-attention', 'abw-triage-attention-count', attentionItems, 'No review warnings yet.');
+            renderAbwTriageItems('abw-triage-unreadable', 'abw-triage-unreadable-count', unreadableItems, 'No unsupported or broken files were reported.');
+            renderAbwTriageItems('abw-triage-trusted', 'abw-triage-trusted-count', trustedItems, 'No trusted sources yet.');
+            renderAbwTriageItems('abw-triage-recent', 'abw-triage-recent-count', recentItems, 'No recent answers in this session yet.');
+        }
 
         async function handleAbwAskCommand(rawText) {
             const text = String(rawText || '').trim();
@@ -4579,6 +4999,7 @@
                 });
                 updateAbwStatusPanel(payload, workspace);
                 loading.remove();
+                payload.questionLabel = question;
                 const summary = formatAbwAssistantSummary(payload);
                 if (!currentSessionId || !sessions[currentSessionId]) {
                     createNewSession();
@@ -4594,6 +5015,7 @@
                     sessions[currentSessionId].messages.push(assistantMessage);
                 }
                 saveSessions();
+                renderAbwTriageDashboard();
                 setRecentOperationSummary({
                     label: `Recent action: ABW read-only answer returned ${payload.retrievalStatus || payload.status || 'unknown'} with trust ${Number.isFinite(payload.trustScore) ? payload.trustScore : 'n/a'}. No file mutation happened.`,
                     tone: getAbwStatusTone(payload) === 'blocked' ? 'blocked' : (getAbwStatusTone(payload) === 'weak' ? 'pending' : 'completed')
@@ -4682,6 +5104,7 @@
         }
 
         function renderAbwIngestResult(payload = {}) {
+            abwLastIngestPayload = payload && typeof payload === 'object' ? { ...payload } : null;
             const summaryEl = document.getElementById('abw-ingest-summary');
             const badgeEl = document.getElementById('abw-ingest-badges');
             const draftsEl = document.getElementById('abw-ingest-drafts');
@@ -4741,6 +5164,7 @@
                 reviewSummaryEl.innerText = `Co ${abwLastGeneratedDrafts.length} draft can review/promote thu cong.`;
             }
             updateAbwTrustInlineUi();
+            renderAbwTriageDashboard();
         }
 
         async function refreshAbwIngestPanel() {
@@ -4847,6 +5271,7 @@
         }
 
         function renderAbwReviewResult(payload = {}) {
+            abwLastReviewPayload = payload && typeof payload === 'object' ? { ...payload } : null;
             const statusEl = document.getElementById('abw-review-status');
             const summaryEl = document.getElementById('abw-review-summary');
             const actionsEl = document.getElementById('abw-review-actions');
@@ -4875,6 +5300,7 @@
                     'Trusted wiki promotion is still unavailable in this UI.'
                 ].join('<br>');
             }
+            renderAbwTriageDashboard();
         }
 
         async function runAbwReviewDrafts() {
