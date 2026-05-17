@@ -4315,17 +4315,49 @@
             const trustScore = Number.isFinite(payload.trustScore) ? payload.trustScore : null;
             const warnings = Array.isArray(payload.warnings) ? payload.warnings.filter(Boolean) : [];
             const sources = Array.isArray(payload.sources) ? payload.sources : [];
+            const sourceSummary = String(payload.sourceSummary || payload.source_summary || '').trim();
+            const derivedWarnings = [];
+            const lowTrust = trustScore !== null && trustScore < 60;
+            const fallbackEvidence = /^E[01]_/.test(evidenceTier) || /fallback|raw_or_draft_only/i.test(retrievalStatus);
+            const noMatch = retrievalStatus === 'no_match' || evidenceTier === 'E0_unknown';
+            const sourceWeak = sources.some(source => {
+                const combined = [
+                    source?.path,
+                    source?.title,
+                    source?.type,
+                    source?.status,
+                    source?.source,
+                    source?.evidence,
+                    source?.tier
+                ].filter(Boolean).join(' ');
+                return /draft|raw|fallback|unreviewed/i.test(combined);
+            });
+            const ambiguitySignal = /ambiguous|weak|fallback|draft|raw|unknown|gap/i.test([
+                retrievalStatus,
+                evidenceTier,
+                payload.currentState,
+                payload.knowledgeEvidenceTier,
+                sourceSummary
+            ].filter(Boolean).join(' '));
+            if (noMatch) derivedWarnings.push('No-match/unknown evidence: this answer is not grounded in a supporting source.');
+            if (fallbackEvidence) derivedWarnings.push('Weak or fallback evidence signal is visible; treat this answer as limited.');
+            if (lowTrust) derivedWarnings.push(`Low trust score (${trustScore}); review source evidence before using this answer.`);
+            if (sourceWeak) derivedWarnings.push('One or more sources appear to be draft/raw/fallback evidence rather than reviewed wiki evidence.');
+            if (ambiguitySignal && !noMatch && !fallbackEvidence && !lowTrust && !sourceWeak) {
+                derivedWarnings.push('Ambiguity or weak-evidence marker is visible in retrieval metadata; verify supporting sources.');
+            }
+            const allWarnings = [...warnings, ...derivedWarnings.filter(item => !warnings.some(w => String(w) === item))];
             const readOnlyIndicators = [
                 `read-only bridge: ${payload.readOnly === true ? 'true' : 'false'}`,
                 `runtimeWriteSuppressed: ${payload.runtimeWriteSuppressed === true ? 'true' : 'false'}`,
                 `gapLogSuppressed: ${payload.gapLogSuppressed === true ? 'true' : 'false'}`,
                 `wouldLogGap: ${payload.wouldLogGap === true ? 'true' : 'false'}`
             ];
-            const noMatchNote = retrievalStatus === 'no_match' || evidenceTier === 'E0_unknown'
+            const noMatchNote = noMatch
                 ? '<div class="abw-note">No-match means no file changes happened. Review + Apply is separate and this response did not mutate disk.</div>'
                 : '<div class="abw-note">This is a read-only ABW answer. Review + Apply is separate and no file mutation happened here.</div>';
-            const warningItems = warnings.length
-                ? warnings.map(item => `<div class="abw-warning-item">${escapeHtml(String(item))}</div>`).join('')
+            const warningItems = allWarnings.length
+                ? allWarnings.map(item => `<div class="abw-warning-item">${escapeHtml(String(item))}</div>`).join('')
                 : '<div class="abw-note">No warnings returned.</div>';
             const sourceItems = sources.length
                 ? sources.map(source => `
@@ -4548,14 +4580,19 @@
                 updateAbwStatusPanel(payload, workspace);
                 loading.remove();
                 const summary = formatAbwAssistantSummary(payload);
-                const s = sessions[currentSessionId];
+                if (!currentSessionId || !sessions[currentSessionId]) {
+                    createNewSession();
+                }
+                const s = sessions[currentSessionId] || { messages: [] };
                 const assistantMessage = {
                     role: 'assistant',
                     content: summary,
                     abwResult: payload
                 };
                 addAbwResultMessage(payload, s.messages.length);
-                s.messages.push(assistantMessage);
+                if (sessions[currentSessionId]) {
+                    sessions[currentSessionId].messages.push(assistantMessage);
+                }
                 saveSessions();
                 setRecentOperationSummary({
                     label: `Recent action: ABW read-only answer returned ${payload.retrievalStatus || payload.status || 'unknown'} with trust ${Number.isFinite(payload.trustScore) ? payload.trustScore : 'n/a'}. No file mutation happened.`,
@@ -4670,9 +4707,23 @@
                     <span class="abw-pill ${promotionPerformed ? 'blocked' : 'strong'}">promotion_performed: ${promotionPerformed}</span>
                 `;
             }
-            if (draftsEl) draftsEl.innerHTML = `generated_drafts: ${(payload.generatedDrafts || []).length ? `<code>${escapeHtml((payload.generatedDrafts || []).join(', '))}</code>` : 'none'}`;
-            if (unsupportedEl) unsupportedEl.innerHTML = `unsupported_files: ${(payload.unsupportedFiles || []).length ? `<code>${escapeHtml((payload.unsupportedFiles || []).join(', '))}</code>` : 'none'}`;
-            if (errorsEl) errorsEl.innerHTML = `parse_errors: ${(payload.parseErrors || []).length ? `<code>${escapeHtml((payload.parseErrors || []).join(' | '))}</code>` : 'none'}`;
+            const renderAbwIngestItem = (item) => {
+                if (item && typeof item === 'object') {
+                    const path = item.path || item.file || item.name || 'unknown';
+                    const reason = item.reason || item.message || item.error || item.status || item.action || 'no reason provided';
+                    const action = item.action && item.action !== reason ? ` (${item.action})` : '';
+                    return `${path}: ${reason}${action}`;
+                }
+                return String(item || '').trim() || 'unknown';
+            };
+            const renderAbwIngestList = (items, separator = ', ') => {
+                const list = Array.isArray(items) ? items : [];
+                if (!list.length) return 'none';
+                return `<code>${escapeHtml(list.map(renderAbwIngestItem).join(separator))}</code>`;
+            };
+            if (draftsEl) draftsEl.innerHTML = `generated_drafts: ${renderAbwIngestList(payload.generatedDrafts)}`;
+            if (unsupportedEl) unsupportedEl.innerHTML = `unsupported_files: ${renderAbwIngestList(payload.unsupportedFiles)}`;
+            if (errorsEl) errorsEl.innerHTML = `parse_errors: ${renderAbwIngestList(payload.parseErrors, ' | ')}`;
             const warningList = Array.isArray(payload.warnings) ? [...payload.warnings] : [];
             if (invalidJson) {
                 const preview = [payload.stdoutPreview, payload.stderrPreview].filter(Boolean).join(' | ');

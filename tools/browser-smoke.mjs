@@ -769,6 +769,8 @@ async function runRealBrowserSmoke(url) {
       let nonTechIngestCopyOk = false;
       let nonTechNoMatchCopyOk = false;
       let nonTechPromoteLimitVisibleOk = false;
+      let abwIngestObjectRowsReadableOk = false;
+      let abwWeakSignalWarningsVisibleOk = false;
       let untrustedWorkspaceWarningVisibleOk = false;
       let trustWorkspaceButtonVisibleOk = false;
       let ingestTrustBlockedCopyOk = false;
@@ -992,6 +994,52 @@ async function runRealBrowserSmoke(url) {
             /Chua tim thay thong tin dang tin cay trong tai lieu da nap/i.test(fullUiText);
           nonTechPromoteLimitVisibleOk =
             /Chua ho tro danh dau nguon tin cay tu dong an toan trong UI/i.test(fullUiText);
+          if (typeof window.renderAbwIngestResult === 'function') {
+            window.renderAbwIngestResult({
+              status: 'ABW_CLI_OK',
+              ingested: 0,
+              skipped: 2,
+              unsupportedFiles: [{ path: 'raw/unsupported.xyz', reason: 'skipped_unsupported_extension', action: 'skipped' }],
+              parseErrors: [{ path: 'raw/malformed.docx', reason: 'skipped_parse_error', message: 'invalid zip container', action: 'skipped' }],
+              generatedDrafts: [],
+              reviewRequired: false,
+              promotionPerformed: false,
+              warnings: ['1 unsupported file(s) skipped.', '1 parse error file(s) skipped.']
+            });
+            await sleep(80);
+            const ingestObjectText = [
+              document.querySelector('#abw-ingest-unsupported')?.textContent || '',
+              document.querySelector('#abw-ingest-errors')?.textContent || ''
+            ].join(' ');
+            abwIngestObjectRowsReadableOk =
+              /raw\/unsupported\.xyz: skipped_unsupported_extension/i.test(ingestObjectText) &&
+              /raw\/malformed\.docx: skipped_parse_error/i.test(ingestObjectText) &&
+              !/\[object Object\]/i.test(ingestObjectText);
+          }
+          if (typeof window.renderAbwResultCard === 'function') {
+            const weakHtml = window.renderAbwResultCard({
+              readOnly: true,
+              runtimeWriteSuppressed: true,
+              gapLogSuppressed: true,
+              wouldLogGap: true,
+              retrievalStatus: 'raw_or_draft_only',
+              evidenceTier: 'E1_fallback',
+              trustScore: 45,
+              answer: 'Synthetic weak-evidence smoke answer.',
+              warnings: ['Backend weak-evidence warning.'],
+              sources: [{ path: 'drafts/smoke.md', title: 'Draft smoke', confidence: 40, snippet: 'draft evidence' }]
+            });
+            const tempCard = document.createElement('div');
+            tempCard.innerHTML = weakHtml;
+            document.body.appendChild(tempCard);
+            const weakText = tempCard.textContent || '';
+            abwWeakSignalWarningsVisibleOk =
+              /Weak or fallback evidence signal is visible/i.test(weakText) &&
+              /Low trust score \(45\)/i.test(weakText) &&
+              /draft\/raw\/fallback evidence/i.test(weakText) &&
+              /Backend weak-evidence warning/i.test(weakText);
+            tempCard.remove();
+          }
           untrustedWorkspaceWarningVisibleOk =
             /chua duoc tin cay|chua tin cay/i.test(fullUiText);
           trustWorkspaceButtonVisibleOk =
@@ -1126,6 +1174,8 @@ async function runRealBrowserSmoke(url) {
       add('UI text avoids readiness/production/full-bridge overclaim', noOverclaimUiTextOk, 'forbidden overclaim labels absent from UI shell text', true);
       add('Non-tech document assistant panel exists', nonTechAssistantPanelOk, 'non-tech 3-step ABW assistant copy is visible', true);
       add('Ingest copy is understandable for non-tech users', nonTechIngestCopyOk, 'ingest panel copy explains raw and draft-first behavior', true);
+      add('ABW ingest object rows render readably', abwIngestObjectRowsReadableOk, 'unsupported/parse error objects render as path: reason rows', true);
+      add('ABW weak/fallback warning signals are visible', abwWeakSignalWarningsVisibleOk, 'weak/fallback/low-trust/draft-source signals render as warnings', true);
       add('No-match copy is understandable', nonTechNoMatchCopyOk, 'no-match wording explains trusted-source gap clearly', true);
       add('Review/promote limitation is visible', nonTechPromoteLimitVisibleOk, 'promotion limitation warning stays explicit in UI', true);
       add('Untrusted workspace warning visible in ABW assistant', untrustedWorkspaceWarningVisibleOk, 'ABW panel shows untrusted warning', true);
