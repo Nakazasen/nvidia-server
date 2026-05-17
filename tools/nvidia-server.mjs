@@ -697,8 +697,26 @@ const workspaceCore = createWorkspaceCore({
     maxToolResultChars: MAX_TOOL_RESULT_CHARS,
     maxFileReadChars: MAX_FILE_READ_CHARS
 });
-const abwCliReader = createAbwCliReader();
-const abwCliIngestRunner = createAbwCliReader({ envOverrides: {} });
+function resolveAbwRepoSourcePath() {
+    const envPath = String(process.env.ABW_REPO_PATH || '').trim();
+    if (envPath && fs.existsSync(path.join(envPath, 'src', 'abw', 'cli.py'))) {
+        return envPath;
+    }
+    const siblingPath = path.resolve(__dirname, '..', '..', 'skill-Anti-brain-wiki_note');
+    if (fs.existsSync(path.join(siblingPath, 'src', 'abw', 'cli.py'))) {
+        return siblingPath;
+    }
+    return '';
+}
+
+const abwRepoSourcePath = resolveAbwRepoSourcePath();
+const abwCliReader = createAbwCliReader({
+    abwRepoPath: abwRepoSourcePath || undefined
+});
+const abwCliIngestRunner = createAbwCliReader({
+    envOverrides: {},
+    abwRepoPath: abwRepoSourcePath || undefined
+});
 
 function sameResolvedPath(left, right) {
     const a = path.resolve(String(left || ''));
@@ -2702,6 +2720,8 @@ function buildAbwBridgePayload(result) {
         provider: data.provider ?? null,
         error: result?.error || '',
         stderr: result?.stderr || '',
+        stderrPreview: result?.stderrPreview || '',
+        stdoutPreview: result?.stdoutPreview || '',
         exitCode: result?.exitCode ?? null
     };
 }
@@ -2729,6 +2749,8 @@ function buildAbwIngestPayload(result) {
         warnings: Array.isArray(data.warnings) ? data.warnings : [],
         error: result?.error || '',
         stderr: result?.stderr || '',
+        stderrPreview: result?.stderrPreview || '',
+        stdoutPreview: result?.stdoutPreview || '',
         exitCode: result?.exitCode ?? null
     };
 }
@@ -2754,8 +2776,46 @@ function buildAbwReviewPayload(result) {
         runnerStatus: data.runner_status ?? null,
         error: result?.error || '',
         stderr: result?.stderr || '',
+        stderrPreview: result?.stderrPreview || '',
+        stdoutPreview: result?.stdoutPreview || '',
         exitCode: result?.exitCode ?? null
     };
+}
+
+function sanitizeLogPreview(text = '', limit = 500) {
+    const compact = String(text || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!compact) return '';
+    return compact.slice(0, limit);
+}
+
+function sanitizeLogTail(text = '', limit = 1000) {
+    const compact = String(text || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!compact) return '';
+    if (compact.length <= limit) return compact;
+    return compact.slice(compact.length - limit);
+}
+
+function logAbwIngestRuntime(result, workspace) {
+    try {
+        const command = Array.isArray(result?.command) ? result.command.join(' ') : '';
+        const stdout = String(result?.stdout || '');
+        const stderr = String(result?.stderr || '');
+        const payload = {
+            workspace: String(workspace || ''),
+            status: result?.status || 'unknown',
+            exitCode: result?.exitCode ?? null,
+            command,
+            stdoutLength: stdout.length,
+            stderrLength: stderr.length,
+            stdoutFirst500: sanitizeLogPreview(stdout, 500),
+            stdoutLast1000: sanitizeLogTail(stdout, 1000),
+            stderrFirst500: sanitizeLogPreview(stderr, 500),
+            stderrLast500: sanitizeLogTail(stderr, 500)
+        };
+        console.log(`[ABW_INGEST_DEBUG] ${JSON.stringify(payload)}`);
+    } catch (e) {
+        console.warn(`[ABW_INGEST_DEBUG] failed to log payload: ${String(e?.message || e)}`);
+    }
 }
 
 function getExplicitPathBlockReason(text = '') {
@@ -4030,13 +4090,14 @@ const server = http.createServer(async (req, res) => {
                 return sendJSON(res, getAbwBridgeHttpStatus(ABW_CLI_STATUS.TRUST_REQUIRED), {
                     ok: false,
                     status: ABW_CLI_STATUS.TRUST_REQUIRED,
-                    error: 'Workspace chưa trusted. Hãy trust workspace hiện tại trước khi ingest raw.',
+                    error: 'Workspace chua trusted. Hay trust workspace hien tai truoc khi ingest raw.',
                     abw: null
                 });
             }
             const result = await abwCliIngestRunner.ingestRaw({
                 workspace: normalizedWorkspace.path
             });
+            logAbwIngestRuntime(result, normalizedWorkspace.path);
             return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwIngestPayload(result));
         }
 

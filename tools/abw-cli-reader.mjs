@@ -60,6 +60,8 @@ function makeErrorResult(status, details = {}) {
     error: details.error || '',
     stderr: details.stderr || '',
     stdout: details.stdout || '',
+    stdoutPreview: details.stdoutPreview || '',
+    stderrPreview: details.stderrPreview || '',
     exitCode: details.exitCode ?? null,
     durationMs: details.durationMs ?? 0,
     command: Array.isArray(details.command) ? details.command : [],
@@ -81,14 +83,69 @@ function validateEnvelope(payload, commandName) {
 function parseEnvelopeCandidate(text, commandName) {
   const trimmed = String(text || '').trim();
   if (!trimmed) return { payload: null, error: 'empty' };
-  try {
-    const payload = JSON.parse(trimmed);
-    const validationError = validateEnvelope(payload, commandName);
-    if (validationError) return { payload: null, error: validationError };
-    return { payload, error: '' };
-  } catch (error) {
-    return { payload: null, error: error.message };
+  const attempts = [trimmed, ...extractJsonObjectCandidates(trimmed)];
+  let lastError = '';
+  for (const candidate of attempts) {
+    try {
+      const payload = JSON.parse(candidate);
+      const validationError = validateEnvelope(payload, commandName);
+      if (!validationError) return { payload, error: '' };
+      lastError = validationError;
+    } catch (error) {
+      lastError = error.message;
+    }
   }
+  return { payload: null, error: lastError || 'Unable to locate valid ABW JSON envelope in output.' };
+}
+
+function extractJsonObjectCandidates(text) {
+  const value = String(text || '');
+  const candidates = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+    if (ch === '}') {
+      if (depth <= 0) continue;
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        candidates.push(value.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return candidates.reverse();
+}
+
+function previewOutput(text, limit = 220) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return normalized.slice(0, limit);
 }
 
 function classifyEnvelope(payload) {
@@ -293,6 +350,8 @@ export function createAbwCliReader(options = {}) {
         error: 'ABW CLI output exceeded capture limit.',
         stderr: result.stderr || '',
         stdout: result.stdout || '',
+        stderrPreview: previewOutput(result.stderr || ''),
+        stdoutPreview: previewOutput(result.stdout || ''),
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         command: result.command,
@@ -313,6 +372,8 @@ export function createAbwCliReader(options = {}) {
         error: `ABW CLI exited with code ${result.exitCode}`,
         stderr: result.stderr || '',
         stdout: result.stdout || '',
+        stderrPreview: previewOutput(result.stderr || ''),
+        stdoutPreview: previewOutput(result.stdout || ''),
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         command: result.command,
@@ -327,6 +388,8 @@ export function createAbwCliReader(options = {}) {
         error: `ABW CLI returned invalid JSON: ${parseError}`,
         stderr: result.stderr || '',
         stdout: result.stdout || '',
+        stderrPreview: previewOutput(result.stderr || ''),
+        stdoutPreview: previewOutput(result.stdout || ''),
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         command: result.command,
