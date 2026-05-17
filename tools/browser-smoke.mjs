@@ -790,10 +790,14 @@ async function runRealBrowserSmoke(url) {
       let abwPreviewButtonVisibleOk = false;
       let abwPreviewPanelVisibleOk = false;
       let abwPreviewDryRunRequestOk = false;
-      let abwPreviewBlockedHonestyOk = false;
       let abwPreviewCandidateStillUntrustedOk = false;
       let abwPreviewNoPromoteCallOk = false;
-      let abwPreviewNoApplyUiOk = false;
+      let abwApplyUnavailableBeforePreviewOk = false;
+      let abwApplyEnabledAfterConfirmOk = false;
+      let abwApplyRequestOk = false;
+      let abwApplySuccessTrustedOk = false;
+      let abwApplyBlockedHonestyOk = false;
+      let abwApplyBlockedKeepsUntrustedOk = false;
       let abwTriageNoBulkCopyOk = false;
       let untrustedWorkspaceWarningVisibleOk = false;
       let trustWorkspaceButtonVisibleOk = false;
@@ -1233,6 +1237,8 @@ async function runRealBrowserSmoke(url) {
               }
             ];
             sessions[currentSessionId].abwReviewCandidates = [];
+            sessions[currentSessionId].abwApprovedSources = [];
+            sessions[currentSessionId].abwApprovePreview = null;
             if (typeof abwLastIngestPayload !== 'undefined') {
               abwLastIngestPayload = {
                 status: 'ABW_CLI_OK',
@@ -1325,13 +1331,19 @@ async function runRealBrowserSmoke(url) {
                   body = init?.body ? JSON.parse(String(init.body)) : {};
                 } catch {}
                 previewFetchCalls.push({ url, body });
-                const responsePayload = previewFetchCalls.length === 1
-                  ? {
+                const previewPath = body?.draft_path || '';
+                const isApply = body?.dry_run === false;
+                let responsePayload = null;
+                if (!isApply && /restart-guide\.md/i.test(previewPath)) {
+                  responsePayload = {
                     status: 'ABW_CLI_OK',
                     approved: false,
                     promotionPerformed: false,
                     manualReviewRequired: true,
                     draftPath: 'drafts/restart-guide.md',
+                    draftId: 'restart-guide',
+                    draftHash: 'sha256:restart-preview',
+                    currentQueueStatus: 'review_needed',
                     targetWikiPath: 'wiki/restart-guide.md',
                     previewSummary: {
                       title: 'Restart guide',
@@ -1340,26 +1352,65 @@ async function runRealBrowserSmoke(url) {
                     warnings: ['Approval affects only this selected draft.'],
                     blockingErrors: [],
                     requiredConfirmation: {
-                      confirmation_token: 'approve:restart-guide:sha256:preview',
-                      confirmation_text: 'Approve this draft as trusted wiki'
-                    },
-                    noMutationConfirmed: true
-                  }
-                  : {
-                    status: 'ABW_CLI_BLOCKED',
-                    approved: false,
-                    promotionPerformed: false,
-                    manualReviewRequired: true,
-                    draftPath: 'drafts/restart-guide.md',
-                    message: 'Explicit confirmation is required before approval.',
-                    warnings: [],
-                    blockingErrors: [{ code: 'CONFIRMATION_REQUIRED', message: 'Explicit confirmation is required before approval.' }],
-                    requiredConfirmation: {
-                      confirmation_token: 'approve:restart-guide:sha256:preview',
+                      confirmation_token: 'approve:restart-guide:sha256:restart-preview',
                       confirmation_text: 'Approve this draft as trusted wiki'
                     },
                     noMutationConfirmed: true
                   };
+                } else if (isApply && /restart-guide\.md/i.test(previewPath)) {
+                  responsePayload = {
+                    status: 'ABW_CLI_OK',
+                    approved: true,
+                    promotionPerformed: true,
+                    manualReviewRequired: false,
+                    draftPath: 'drafts/restart-guide.md',
+                    approvedWikiPath: 'wiki/restart-guide.md',
+                    targetWikiPath: 'wiki/restart-guide.md',
+                    queueTransition: { from: 'review_needed', to: 'approved' },
+                    reviewLogPath: 'logs/restart-review.jsonl',
+                    auditId: 'audit-restart-approve'
+                  };
+                } else if (!isApply && /ops-guide\.md/i.test(previewPath)) {
+                  responsePayload = {
+                    status: 'ABW_CLI_OK',
+                    approved: false,
+                    promotionPerformed: false,
+                    manualReviewRequired: true,
+                    draftPath: 'drafts/ops-guide.md',
+                    draftId: 'ops-guide',
+                    draftHash: 'sha256:ops-preview',
+                    currentQueueStatus: 'review_needed',
+                    targetWikiPath: 'wiki/ops-guide.md',
+                    previewSummary: {
+                      title: 'Ops guide',
+                      summary: 'Review the operator guide before approval.'
+                    },
+                    warnings: ['Approval affects only this selected draft.'],
+                    blockingErrors: [],
+                    requiredConfirmation: {
+                      confirmation_token: 'approve:ops-guide:sha256:ops-preview',
+                      confirmation_text: 'Approve this draft as trusted wiki'
+                    },
+                    noMutationConfirmed: true
+                  };
+                } else {
+                  responsePayload = {
+                    status: 'ABW_CLI_BLOCKED',
+                    approved: false,
+                    promotionPerformed: false,
+                    manualReviewRequired: true,
+                    draftPath: previewPath || 'drafts/ops-guide.md',
+                    message: 'Approval was blocked. Nothing was changed.',
+                    errorCode: 'STALE_PREVIEW',
+                    warnings: [],
+                    blockingErrors: [{ code: 'STALE_PREVIEW', message: 'Preview is stale. Preview again before approval.' }],
+                    requiredConfirmation: {
+                      confirmation_token: 'approve:ops-guide:sha256:ops-preview',
+                      confirmation_text: 'Approve this draft as trusted wiki'
+                    },
+                    noMutationConfirmed: true
+                  };
+                }
                 return Promise.resolve(new Response(JSON.stringify(responsePayload), {
                   status: 200,
                   headers: { 'Content-Type': 'application/json' }
@@ -1370,18 +1421,50 @@ async function runRealBrowserSmoke(url) {
               }
               return originalFetch(input, init);
             };
+            abwApplyUnavailableBeforePreviewOk = !document.querySelector('#abw-approve-apply-btn');
             const previewButton = [...document.querySelectorAll('button')].find((btn) => /Preview review/i.test(btn.textContent || ''));
             if (previewButton && typeof previewButton.click === 'function') {
               previewButton.click();
               await sleep(120);
-              const secondPreviewButton = [...document.querySelectorAll('button')].find((btn) => /Preview review/i.test(btn.textContent || ''));
-              if (secondPreviewButton && typeof secondPreviewButton.click === 'function') {
-                secondPreviewButton.click();
-                await sleep(120);
-              }
+            }
+            const previewPanelText = document.querySelector('#abw-triage-preview')?.textContent || '';
+            const applyBtnBeforeConfirm = document.querySelector('#abw-approve-apply-btn');
+            const confirmCheckbox = document.querySelector('#abw-approve-confirm');
+            const applyDisabledBeforeConfirm = !!applyBtnBeforeConfirm && applyBtnBeforeConfirm.disabled === true;
+            if (confirmCheckbox && typeof confirmCheckbox.click === 'function') {
+              confirmCheckbox.click();
+              await sleep(120);
+            }
+            const applyBtnAfterConfirm = document.querySelector('#abw-approve-apply-btn');
+            const applyEnabledAfterConfirm = !!applyBtnAfterConfirm && applyBtnAfterConfirm.disabled === false;
+            if (applyBtnAfterConfirm && typeof applyBtnAfterConfirm.click === 'function') {
+              applyBtnAfterConfirm.click();
+              await sleep(160);
+            }
+            const trustedAfterApplyText = document.querySelector('#abw-triage-trusted')?.textContent || '';
+            const previewAfterApplyText = document.querySelector('#abw-triage-preview')?.textContent || '';
+            const opsPreviewButton = [...document.querySelectorAll('#abw-triage-candidates .abw-secondary-btn')].find((btn) => {
+              const itemText = btn.closest('.abw-triage-item')?.textContent || '';
+              return /Preview review/i.test(btn.textContent || '') && /drafts\/ops-guide\.md/i.test(itemText);
+            });
+            if (opsPreviewButton && typeof opsPreviewButton.click === 'function') {
+              opsPreviewButton.click();
+              await sleep(120);
+            }
+            const opsConfirmCheckbox = document.querySelector('#abw-approve-confirm');
+            if (opsConfirmCheckbox && typeof opsConfirmCheckbox.click === 'function') {
+              opsConfirmCheckbox.click();
+              await sleep(120);
+            }
+            const opsApplyButton = document.querySelector('#abw-approve-apply-btn');
+            if (opsApplyButton && typeof opsApplyButton.click === 'function') {
+              opsApplyButton.click();
+              await sleep(160);
             }
             window.fetch = originalFetch;
-            const previewPanelText = document.querySelector('#abw-triage-preview')?.textContent || '';
+            const blockedApplyText = document.querySelector('#abw-triage-preview')?.textContent || '';
+            const candidateTextAfterBlocked = document.querySelector('#abw-triage-candidates')?.textContent || '';
+            const trustedTextAfterBlocked = document.querySelector('#abw-triage-trusted')?.textContent || '';
             abwPreviewButtonVisibleOk = !!previewButton;
             abwPreviewPanelVisibleOk =
               /Preview trusted-source review/i.test(previewPanelText) &&
@@ -1389,19 +1472,41 @@ async function runRealBrowserSmoke(url) {
               /No approval happens here/i.test(previewPanelText) &&
               !/\[object Object\]/i.test(previewPanelText);
             abwPreviewDryRunRequestOk =
-              previewFetchCalls.some((call) => /\/proxy\/abw\/approve-draft/i.test(call.url) && call.body?.dry_run === true) &&
-              previewFetchCalls.every((call) => !/\/proxy\/abw\/approve-draft/i.test(call.url) || call.body?.dry_run !== false);
-            abwPreviewBlockedHonestyOk =
-              /Preview was blocked\. Nothing was changed\./i.test(previewPanelText) &&
-              /Explicit confirmation is required before approval\./i.test(previewPanelText);
+              previewFetchCalls.some((call) => /\/proxy\/abw\/approve-draft/i.test(call.url) && call.body?.dry_run === true);
             abwPreviewCandidateStillUntrustedOk =
               /Not trusted yet/i.test(previewPanelText) &&
               !/Approved as trusted/i.test(previewPanelText);
             abwPreviewNoPromoteCallOk =
               previewFetchCalls.every((call) => !/\/proxy\/abw\/promote/i.test(call.url));
-            abwPreviewNoApplyUiOk =
-              !/Approve as trusted source/i.test(previewPanelText) &&
-              !/approve all|batch approval|corpus approval/i.test(previewPanelText);
+            abwApplyEnabledAfterConfirmOk =
+              applyDisabledBeforeConfirm &&
+              applyEnabledAfterConfirm &&
+              /I understand this approves only the selected source\./i.test(previewPanelText);
+            abwApplyRequestOk =
+              previewFetchCalls.some((call) =>
+                /\/proxy\/abw\/approve-draft/i.test(call.url) &&
+                call.body?.dry_run === false &&
+                call.body?.draft_path === 'drafts/restart-guide.md' &&
+                call.body?.expected_draft_hash === 'sha256:restart-preview' &&
+                call.body?.expected_queue_status === 'review_needed' &&
+                call.body?.confirm?.user_confirmed === true &&
+                call.body?.confirm?.confirmation_token === 'approve:restart-guide:sha256:restart-preview' &&
+                call.body?.confirm?.confirmation_text === 'Approve this draft as trusted wiki'
+              );
+            abwApplySuccessTrustedOk =
+              /Trusted source created\./i.test(previewAfterApplyText) &&
+              /wiki\/restart-guide\.md/i.test(previewAfterApplyText) &&
+              /audit-restart-approve/i.test(previewAfterApplyText) &&
+              /logs\/restart-review\.jsonl/i.test(previewAfterApplyText) &&
+              /wiki\/restart-guide\.md/i.test(trustedAfterApplyText);
+            abwApplyBlockedHonestyOk =
+              previewFetchCalls.some((call) => /\/proxy\/abw\/approve-draft/i.test(call.url) && call.body?.dry_run === false && call.body?.draft_path === 'drafts/ops-guide.md') &&
+              (/Approval was blocked\. Nothing was changed\./i.test(blockedApplyText) ||
+                /Preview is stale\. Preview again before approval\./i.test(blockedApplyText) ||
+                /STALE_PREVIEW/i.test(blockedApplyText));
+            abwApplyBlockedKeepsUntrustedOk =
+              /drafts\/ops-guide\.md/i.test(candidateTextAfterBlocked) &&
+              !/wiki\/ops-guide\.md/i.test(trustedTextAfterBlocked);
 
             const missingHtml = window.renderAbwResultCard({
               retrievalStatus: 'no_match',
@@ -1596,11 +1701,15 @@ async function runRealBrowserSmoke(url) {
       add('ABW candidate mark flow never calls approve or promote endpoints', abwCandidateNoApproveCallOk, 'mark action stays local/session-only', true);
       add('ABW candidate preview entry is visible', abwPreviewButtonVisibleOk, 'eligible candidate exposes Preview review', true);
       add('ABW preview panel renders as preview-only UI', abwPreviewPanelVisibleOk, 'preview panel explains that no approval happens here', true);
-      add('ABW preview request always uses dry_run=true', abwPreviewDryRunRequestOk, 'preview request hits approve-draft without any dry_run=false payload', true);
-      add('ABW blocked preview is shown honestly', abwPreviewBlockedHonestyOk, 'blocked preview says nothing was changed and keeps the human-readable reason', true);
+      add('ABW preview request always uses dry_run=true', abwPreviewDryRunRequestOk, 'preview request uses dry_run=true before any explicit apply path', true);
       add('ABW preview keeps candidate not trusted', abwPreviewCandidateStillUntrustedOk, 'preview panel keeps Not trusted yet status', true);
       add('ABW preview does not call promote', abwPreviewNoPromoteCallOk, 'preview flow does not hit the promote endpoint', true);
-      add('ABW preview exposes no apply UI', abwPreviewNoApplyUiOk, 'no approve/apply/bulk wording is shown in preview', true);
+      add('ABW apply is unavailable before preview', abwApplyUnavailableBeforePreviewOk, 'no single-item approve control exists before a successful preview', true);
+      add('ABW apply enables only after explicit confirmation', abwApplyEnabledAfterConfirmOk, 'approve button stays disabled until explicit confirmation is checked', true);
+      add('ABW apply request uses dry_run=false only after confirmation', abwApplyRequestOk, 'apply request includes expected hash, queue status, and confirmation token/text', true);
+      add('ABW apply success marks one source trusted', abwApplySuccessTrustedOk, 'exactly one approved source is surfaced as trusted with audit details', true);
+      add('ABW blocked apply is shown honestly', abwApplyBlockedHonestyOk, 'blocked apply says nothing was changed and surfaces stale/block reason', true);
+      add('ABW blocked apply keeps candidate not trusted', abwApplyBlockedKeepsUntrustedOk, 'blocked source remains candidate-only and is not surfaced as trusted', true);
       add('ABW missing-source answer does not offer candidate action', abwMissingSourceNoCandidateOk, 'missing-source result shows no review-candidate action', true);
       add('ABW unsupported/parse result does not offer candidate action', abwUnsupportedNoCandidateOk, 'unsupported/parse result stays non-candidate', true);
       add('ABW ambiguous result asks for clarification instead of candidate action', abwAmbiguousNoCandidateOk, 'ambiguous result avoids review suggestion', true);
