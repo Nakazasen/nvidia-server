@@ -769,6 +769,8 @@ async function runRealBrowserSmoke(url) {
       let nonTechIngestCopyOk = false;
       let nonTechNoMatchCopyOk = false;
       let nonTechPromoteLimitVisibleOk = false;
+      let abwReviewSummaryHonestyOk = false;
+      let abwReviewActionsReadableOk = false;
       let abwIngestObjectRowsReadableOk = false;
       let abwWeakSignalWarningsVisibleOk = false;
       let untrustedWorkspaceWarningVisibleOk = false;
@@ -993,7 +995,39 @@ async function runRealBrowserSmoke(url) {
           nonTechNoMatchCopyOk =
             /Chua tim thay thong tin dang tin cay trong tai lieu da nap/i.test(fullUiText);
           nonTechPromoteLimitVisibleOk =
-            /Chua ho tro danh dau nguon tin cay tu dong an toan trong UI/i.test(fullUiText);
+            /Trusted-source approval is not available in this UI yet/i.test(fullUiText) &&
+            /No auto-promotion was performed/i.test(fullUiText) &&
+            /not the non-tech daily-use path/i.test(fullUiText);
+          if (typeof window.renderAbwReviewResult === 'function') {
+            window.renderAbwReviewResult({
+              status: 'ABW_CLI_OK',
+              pending: 3,
+              reviewed: 2,
+              actions: [
+                {
+                  type: 'approve',
+                  label: 'Review draft before approval',
+                  path: 'drafts/example_draft.md',
+                  status: 'manual_required',
+                  reason: 'trusted promotion unavailable in UI'
+                }
+              ],
+              warnings: ['Drafts remain draft/raw evidence until approved through a governed path.']
+            });
+            await sleep(80);
+            const reviewSummaryText = document.querySelector('#abw-review-summary')?.textContent || '';
+            const reviewActionsText = document.querySelector('#abw-review-actions')?.textContent || '';
+            abwReviewSummaryHonestyOk =
+              /Review items shown:\s*2/i.test(reviewSummaryText) &&
+              /Drafts still needing review:\s*3/i.test(reviewSummaryText) &&
+              /not trusted wiki sources yet/i.test(reviewSummaryText);
+            abwReviewActionsReadableOk =
+              /Review draft before approval/i.test(reviewActionsText) &&
+              /path:\s*drafts\/example_draft\.md/i.test(reviewActionsText) &&
+              /status:\s*manual_required/i.test(reviewActionsText) &&
+              /Trusted wiki promotion is still unavailable in this UI/i.test(reviewActionsText) &&
+              !/\[object Object\]/i.test(reviewActionsText);
+          }
           if (typeof window.renderAbwIngestResult === 'function') {
             window.renderAbwIngestResult({
               status: 'ABW_CLI_OK',
@@ -1174,6 +1208,8 @@ async function runRealBrowserSmoke(url) {
       add('UI text avoids readiness/production/full-bridge overclaim', noOverclaimUiTextOk, 'forbidden overclaim labels absent from UI shell text', true);
       add('Non-tech document assistant panel exists', nonTechAssistantPanelOk, 'non-tech 3-step ABW assistant copy is visible', true);
       add('Ingest copy is understandable for non-tech users', nonTechIngestCopyOk, 'ingest panel copy explains raw and draft-first behavior', true);
+      add('Review summary distinguishes review list from trusted wiki', abwReviewSummaryHonestyOk, 'review summary labels shown-vs-pending and says drafts are not trusted wiki yet', true);
+      add('ABW review actions render readably', abwReviewActionsReadableOk, 'review action objects render as readable rows and never as [object Object]', true);
       add('ABW ingest object rows render readably', abwIngestObjectRowsReadableOk, 'unsupported/parse error objects render as path: reason rows', true);
       add('ABW weak/fallback warning signals are visible', abwWeakSignalWarningsVisibleOk, 'weak/fallback/low-trust/draft-source signals render as warnings', true);
       add('No-match copy is understandable', nonTechNoMatchCopyOk, 'no-match wording explains trusted-source gap clearly', true);

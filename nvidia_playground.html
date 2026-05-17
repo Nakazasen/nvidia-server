@@ -2694,14 +2694,14 @@
                         <h4>Buoc 3: Kiem tra tai lieu</h4>
                         <div id="abw-review-note" class="abw-chat-warn">Ban nhap can kiem tra truoc khi dung lam nguon chinh thuc.</div>
                         <div class="abw-chat-row">Trang thai kiem tra: <span id="abw-review-status" class="abw-chat-value">Chua review</span></div>
-                        <div id="abw-review-summary" class="abw-chat-value">Chua co du lieu review.</div>
+                        <div id="abw-review-summary" class="abw-chat-value">Chua co du lieu review. Ban nhap van chua la nguon tin cay.</div>
                         <div id="abw-review-actions" class="abw-chat-row"></div>
-                        <label for="abw-promote-path" style="display:block; margin-top:6px; font-size:0.72rem; opacity:0.8;">Duong dan ban nhap can danh dau</label>
+                        <label for="abw-promote-path" style="display:block; margin-top:6px; font-size:0.72rem; opacity:0.8;">Duong dan ban nhap can danh dau theo quy trinh co kiem soat</label>
                         <input id="abw-promote-path" class="abw-chat-input" type="text" placeholder="drafts/example_draft.md" />
                         <button class="abw-primary-btn" id="abw-review-btn" onclick="runAbwReviewDrafts()">Kiem tra tai lieu</button>
                         <button class="btn-small" id="abw-promote-btn" onclick="runAbwPromoteSelectedDraft()">Danh dau ban nhap da chon</button>
                         <div id="abw-promote-result" class="abw-chat-row"></div>
-                        <div id="abw-promote-warning" class="abw-chat-warn">Chua ho tro danh dau nguon tin cay tu dong an toan trong UI.</div>
+                        <div id="abw-promote-warning" class="abw-chat-warn">Trusted-source approval is not available in this UI yet. Ban nhap van la draft/raw cho den khi duoc phe duyet theo quy trinh co kiem soat. No auto-promotion was performed. Technical operators can use manual approval outside this UI, but that is not the non-tech daily-use path.</div>
                     </section>
 
                     <section class="abw-main-step">
@@ -4820,6 +4820,32 @@
             }
         }
 
+        function formatAbwReviewAction(action) {
+            if (action == null) return '';
+            if (typeof action === 'string') return action.trim();
+            if (typeof action !== 'object') return String(action).trim();
+
+            const parts = [];
+            const pushIfPresent = (label, value) => {
+                const text = String(value ?? '').trim();
+                if (text) parts.push(label ? `${label}: ${text}` : text);
+            };
+
+            pushIfPresent('', action.label || action.title || action.name || action.type);
+            pushIfPresent('path', action.path || action.target || action.draft_path);
+            pushIfPresent('status', action.status);
+            pushIfPresent('reason', action.reason || action.message);
+            pushIfPresent('command', action.command);
+
+            if (parts.length) return parts.join(' | ');
+
+            try {
+                return JSON.stringify(action);
+            } catch {
+                return '[unrenderable action]';
+            }
+        }
+
         function renderAbwReviewResult(payload = {}) {
             const statusEl = document.getElementById('abw-review-status');
             const summaryEl = document.getElementById('abw-review-summary');
@@ -4828,12 +4854,26 @@
             if (summaryEl) {
                 const pending = Number.isFinite(payload.pending) ? payload.pending : 0;
                 const reviewed = Number.isFinite(payload.reviewed) ? payload.reviewed : 0;
-                summaryEl.innerText = `pending=${pending}, reviewed=${reviewed}`;
+                summaryEl.innerText = `Review items shown: ${reviewed}. Drafts still needing review: ${pending}. These review items are not trusted wiki sources yet.`;
             }
             if (actionsEl) {
                 const actions = Array.isArray(payload.actions) ? payload.actions : [];
                 const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
-                actionsEl.innerHTML = `actions: ${actions.length ? `<code>${escapeHtml(actions.join(' | '))}</code>` : 'none'}<br>warnings: ${warnings.length ? `<code>${escapeHtml(warnings.join(' | '))}</code>` : 'none'}`;
+                const actionLines = actions
+                    .map(formatAbwReviewAction)
+                    .filter(Boolean)
+                    .map((text) => `<div><code>${escapeHtml(text)}</code></div>`)
+                    .join('');
+                const warningLines = warnings
+                    .map((warning) => String(warning || '').trim())
+                    .filter(Boolean)
+                    .map((text) => `<div><code>${escapeHtml(text)}</code></div>`)
+                    .join('');
+                actionsEl.innerHTML = [
+                    `Review guidance: ${actionLines || 'none'}`,
+                    `Warnings: ${warningLines || 'none'}`,
+                    'Trusted wiki promotion is still unavailable in this UI.'
+                ].join('<br>');
             }
         }
 
