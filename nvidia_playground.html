@@ -16,6 +16,9 @@
             --sidebar: #111;
             --glass-bg: rgba(255, 255, 255, 0.03);
             --glass-border: rgba(255, 255, 255, 0.08);
+            --left-sidebar-width: 320px;
+            --right-panel-width: 300px;
+            --right-panel-collapsed-width: 42px;
         }
 
         * {
@@ -74,13 +77,46 @@
         }
 
         .sidebar {
-            width: 300px;
+            width: var(--left-sidebar-width);
+            min-width: 260px;
+            max-width: 520px;
             background: var(--sidebar);
             border-right: 1px solid var(--glass-border);
             display: flex;
             flex-direction: column;
             padding: 20px;
             transition: 0.3s;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .left-resizer {
+            width: 8px;
+            cursor: col-resize;
+            background: transparent;
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .left-resizer::before {
+            content: '';
+            position: absolute;
+            left: 3px;
+            top: 0;
+            bottom: 0;
+            width: 1px;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .left-resizer:hover::before,
+        .left-resizer.dragging::before {
+            background: rgba(var(--primary-rgb), 0.9);
+            width: 2px;
+            left: 2px;
+        }
+
+        body.sidebar-collapsed .left-resizer {
+            display: none;
         }
 
         .sidebar.collapsed {
@@ -882,7 +918,7 @@
         }
 
         .right-panel {
-            width: 300px;
+            width: var(--right-panel-width);
             background: #111;
             border-left: 1px solid var(--glass-border);
             padding: 20px;
@@ -890,6 +926,30 @@
             flex-shrink: 0;
             overflow-y: auto;
             height: 100vh;
+        }
+
+        .right-panel.collapsed {
+            width: var(--right-panel-collapsed-width);
+            padding: 12px 8px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+
+        .right-panel.collapsed #plan-steps {
+            display: none;
+        }
+
+        .right-panel.collapsed h3 {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            white-space: nowrap;
+            font-size: 0.78rem;
+            margin: 0 auto;
+            opacity: 0.85;
+        }
+
+        .right-panel.collapsed #plan-collapse-btn {
+            display: none;
         }
 
         .step {
@@ -1401,6 +1461,10 @@
 
         /* Responsive */
         @media (max-width: 800px) {
+            .left-resizer {
+                display: none !important;
+            }
+
             .right-panel {
                 position: fixed;
                 right: -300px;
@@ -1924,6 +1988,92 @@
             padding: 8px;
             font-size: 0.78rem;
         }
+        .abw-main-panel {
+            border-bottom: 1px solid var(--glass-border);
+            background: linear-gradient(180deg, rgba(118, 185, 0, 0.08), rgba(12, 14, 18, 0.96));
+            padding: 14px 16px;
+            overflow-y: auto;
+            max-height: 50vh;
+        }
+
+        body.abw-focus-mode .abw-main-panel {
+            max-height: none;
+            height: 100%;
+            flex: 1;
+            border-bottom: none;
+            padding-bottom: 22px;
+        }
+
+        body.abw-focus-mode #chat-box,
+        body.abw-focus-mode #debug-console,
+        body.abw-focus-mode #selection-badge,
+        body.abw-focus-mode #pinned-context,
+        body.abw-focus-mode .input-area {
+            display: none !important;
+        }
+
+        body.abw-focus-mode #bottom-panel {
+            display: none !important;
+        }
+        .abw-main-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: flex-start;
+            margin-bottom: 10px;
+        }
+        .abw-main-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #d9f7a6;
+        }
+        .abw-main-subtitle {
+            font-size: 0.78rem;
+            color: #c6d0e0;
+            margin-top: 4px;
+        }
+        .abw-main-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(260px, 1fr));
+            gap: 10px;
+        }
+        .abw-main-step {
+            border: 1px solid #2b3647;
+            border-radius: 8px;
+            background: #0f141b;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 0;
+        }
+        .abw-main-step h4 {
+            margin: 0;
+            color: var(--primary);
+            font-size: 0.84rem;
+        }
+        .abw-primary-btn {
+            background: var(--primary);
+            color: #000;
+            border: 1px solid var(--primary);
+            border-radius: 8px;
+            min-height: 36px;
+            padding: 8px 12px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .abw-primary-btn:hover {
+            filter: brightness(1.05);
+        }
+        @media (max-width: 1100px) {
+            .abw-main-grid {
+                grid-template-columns: 1fr;
+            }
+            .abw-main-panel {
+                max-height: 58vh;
+            }
+        }
 
         .btn-small {
             background: none;
@@ -2041,8 +2191,8 @@
         .bottom-panel {
             position: fixed;
             bottom: 0;
-            left: 350px;
-            right: 300px;
+            left: calc(50px + var(--left-sidebar-width));
+            right: var(--right-panel-width);
             height: 250px;
             background: #0b0e14;
             border-top: 1px solid #333;
@@ -2057,11 +2207,20 @@
         }
         
         body.right-collapsed .bottom-panel {
-            right: 0;
+            right: var(--right-panel-collapsed-width);
         }
 
         .bottom-panel.active {
             display: flex;
+        }
+
+        .abw-focus-chip {
+            font-size: 0.72rem;
+            color: #d9f7a6;
+            border: 1px solid rgba(var(--primary-rgb), 0.5);
+            background: rgba(var(--primary-rgb), 0.12);
+            border-radius: 999px;
+            padding: 4px 8px;
         }
 
         .panel-tabs {
@@ -2287,76 +2446,12 @@
         <div class="workspace-info">
             <div class="sidebar-section-title">Workspace</div>
             <div id="current-workspace-path" class="workspace-path">Loading...</div>
-            <div style="display: flex; gap: 5px;">
-                <button class="btn-small" onclick="changeWorkspace()">Change...</button>
-            </div>
             <div class="abw-chat-panel">
                 <div class="sidebar-section-title" style="margin-bottom: 0;">Tro ly tai lieu</div>
-                <div class="abw-chat-warn">Buoc 1: Chon thu muc tai lieu.</div>
-                <div class="abw-chat-warn">Buoc 2: Nap tai lieu.</div>
-                <div class="abw-chat-warn">Buoc 3: Kiem tra va hoi chatbot.</div>
-                <div class="abw-chat-warn">Bo file can hoi vao thu muc raw cua project.</div>
-                <div class="abw-chat-warn">Ingest chi tao ban nhap, chua tu dong thanh nguon dang tin.</div>
-                <div class="abw-chat-warn">Da doc / Da bo qua / File chua ho tro / File loi doc / Ban nhap da tao.</div>
-                <div class="abw-chat-warn">Chua tim thay thong tin dang tin cay trong tai lieu da nap.</div>
-                <div class="abw-chat-warn">Chua ho tro danh dau nguon tin cay tu dong an toan trong UI.</div>
-                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Status</div>
-                <div class="abw-chat-row">Active workspace: <span id="abw-active-workspace" class="abw-chat-value">Loading...</span></div>
-                <div class="abw-chat-row">Workspace trust: <span id="abw-workspace-trust" class="abw-chat-value">unknown</span></div>
-                <div class="abw-chat-row">ABW runtime source: <span id="abw-runtime-source" class="abw-chat-value">unknown</span></div>
-                <div class="abw-chat-row">ABW repo path: <span id="abw-repo-path" class="abw-chat-value">unknown</span></div>
-                <div class="abw-chat-row">Read-only mode: <span id="abw-readonly-flag" class="abw-chat-value">true</span></div>
-                <div class="abw-chat-row">Version/Doctor: <span id="abw-health-status" class="abw-chat-value">Not checked</span></div>
-                <div id="abw-workspace-hint" class="abw-chat-warn">Dùng đúng workspace tài liệu trước khi hỏi ABW.</div>
-                <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                    <button class="btn-small" onclick="refreshAbwBridgeHealth()">Refresh ABW status</button>
-                    <button class="btn-small" onclick="changeWorkspace()">Switch workspace</button>
-                </div>
-                <div id="abw-chat-note" class="abw-chat-warn">Khong tu dong ghi/sync/write-back. Neu du lieu nhay cam, hay dung va sanitize truoc.</div>
-            </div>
-            <div class="abw-chat-panel" style="margin-top:10px;">
-                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Ingest / Nạp tài liệu ABW</div>
-                <div class="abw-chat-row">Workspace active: <span id="abw-ingest-workspace" class="abw-chat-value">Loading...</span></div>
-                <div class="abw-chat-row">ABW status: <span id="abw-ingest-status" class="abw-chat-value">unknown</span></div>
-                <div class="abw-chat-row">Raw folder: <span id="abw-ingest-raw-hint" class="abw-chat-value">unknown</span></div>
-                <div id="abw-ingest-note" class="abw-chat-warn">Đặt file cần nạp vào thư mục raw của workspace.</div>
-                <div id="abw-ingest-note-2" class="abw-chat-warn">Ingest chỉ tạo bản nháp, chưa tự động coi là nguồn tin cậy. Cần review trước khi dùng như wiki đáng tin.</div>
-                <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                    <button class="btn-small" onclick="refreshAbwIngestPanel()">Refresh ABW status</button>
-                    <button class="btn-small" id="abw-ingest-btn" onclick="runAbwIngestRaw()">Ingest raw</button>
-                </div>
-                <div id="abw-ingest-running" class="abw-chat-warn" style="display:none;">Đang ingest raw...</div>
-                <div id="abw-ingest-summary" class="abw-chat-value" style="margin-top:6px;">Chưa chạy ingest.</div>
-                <div id="abw-ingest-badges" class="abw-pill-row" style="margin-top:6px;"></div>
-                <div id="abw-ingest-drafts" class="abw-chat-row"></div>
-                <div id="abw-ingest-unsupported" class="abw-chat-row"></div>
-                <div id="abw-ingest-errors" class="abw-chat-row"></div>
-                <div id="abw-ingest-warnings" class="abw-chat-row"></div>
-                <button class="btn-small" style="margin-top:6px;" onclick="focusAbwChatQuestion()">Hỏi trong ABW Chat</button>
-            </div>
-            <div class="abw-chat-panel" style="margin-top:10px;">
-                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Review / Drafts</div>
-                <div id="abw-review-note" class="abw-chat-warn">Draft can review/promote truoc khi dung lam nguon chinh thuc.</div>
-                <div class="abw-chat-row">Review status: <span id="abw-review-status" class="abw-chat-value">Chua review</span></div>
-                <div id="abw-review-summary" class="abw-chat-value" style="margin-top:6px;">Chua co du lieu review.</div>
-                <div id="abw-review-actions" class="abw-chat-row"></div>
-                <label for="abw-promote-path" style="display:block; margin-top:6px; font-size:0.72rem; opacity:0.8;">Draft path de promote thu cong (1 draft)</label>
-                <input id="abw-promote-path" class="abw-chat-input" type="text" placeholder="drafts/example_draft.md" />
-                <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                    <button class="btn-small" id="abw-review-btn" onclick="runAbwReviewDrafts()">Review drafts</button>
-                    <button class="btn-small" id="abw-promote-btn" onclick="runAbwPromoteSelectedDraft()">Promote selected draft</button>
-                </div>
-                <div id="abw-promote-result" class="abw-chat-row"></div>
-                <div id="abw-promote-warning" class="abw-chat-warn">Review/promote co the bi fail-closed neu contract JSON an toan chua san sang trong sprint nay.</div>
-            </div>
-            <div class="abw-chat-panel" style="margin-top:10px;">
-                <div class="sidebar-section-title" style="margin-bottom: 0;">ABW Chat</div>
-                <input id="abw-chat-question" class="abw-chat-input" type="text" placeholder="Hoi tai lieu ABW..." />
-                <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                    <button class="btn-small" onclick="askAbwFromPanel()">Hoi ABW</button>
-                    <button class="btn-small" onclick="focusAbwChatQuestion()">Hoi lai sau khi review/promote</button>
-                </div>
-                <div class="abw-chat-warn">Can review/promote truoc khi hoi nhu nguon chinh thuc.</div>
+                <div class="abw-chat-warn">Xem thao tac chinh o giua man hinh: Chon thu muc -> Nap tai lieu -> Kiem tra -> Hoi tai lieu.</div>
+                <div class="abw-chat-row">Thu muc project: <span id="abw-sidebar-workspace-summary" class="abw-chat-value">Loading...</span></div>
+                <div class="abw-chat-row">Trang thai nap: <span id="abw-sidebar-ingest-summary" class="abw-chat-value">Chua nap</span></div>
+                <button class="btn-small" onclick="focusAbwMainPanel()">Mo Tro ly tai lieu</button>
             </div>
         </div>
 
@@ -2388,7 +2483,7 @@
 
         </div>
 
-        <div style="margin-top:auto; padding-top:20px; border-top:1px solid #222;">
+        <div style="padding-top:20px; border-top:1px solid #222;">
             <div class="sidebar-section-title">Sessions</div>
             <button onclick="createNewSession()"
                 style="width:100%; padding:10px; background:rgba(var(--primary-rgb), 0.1); color:var(--primary); border:1px solid var(--primary); border-radius:8px; cursor:pointer; font-weight:bold; margin-bottom:15px; font-size: 0.8rem;">+
@@ -2527,6 +2622,7 @@
             This workspace is not a git repository.
         </div>
     </div>
+    <div id="left-resizer" class="left-resizer" aria-label="Resize sidebar"></div>
 
     <div class="main-content">
         <div id="extension-detail" class="extension-detail">
@@ -2545,6 +2641,81 @@
                     <button class="btn-small mode-ide-only" onclick="toggleBottomPanel()">Terminal & Search</button>
                 </div>
                 <button class="toggle-btn mode-ide-only" onclick="togglePlan()">Plan</button>
+            </div>
+            <div id="abw-main-panel" class="abw-main-panel">
+                <div class="abw-main-header">
+                    <div>
+                        <div class="abw-main-title">Tro ly tai lieu ABW</div>
+                        <div class="abw-main-subtitle">4 buoc: Chon thu muc project -> Nap tai lieu -> Kiem tra tai lieu -> Hoi tai lieu</div>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                        <span id="abw-focus-badge" class="abw-focus-chip" style="display:none;">Focus mode</span>
+                        <button id="abw-focus-toggle-btn" class="btn-small" onclick="toggleAbwFocusMode()">Bat focus</button>
+                        <button class="btn-small" onclick="refreshAbwBridgeHealth(); refreshAbwIngestPanel(); refreshAbwReviewPanel();">Lam moi trang thai</button>
+                    </div>
+                </div>
+
+                <div class="abw-main-grid">
+                    <section class="abw-main-step">
+                        <h4>Buoc 1: Chon thu muc project</h4>
+                        <div class="abw-chat-row">Thu muc hien tai: <span id="abw-active-workspace" class="abw-chat-value">Loading...</span></div>
+                        <div class="abw-chat-row">Da tin cay: <span id="abw-workspace-trust" class="abw-chat-value">unknown</span></div>
+                        <div class="abw-chat-row">Nguon chay: <span id="abw-runtime-source" class="abw-chat-value">unknown</span></div>
+                        <div class="abw-chat-row">ABW repo: <span id="abw-repo-path" class="abw-chat-value">unknown</span></div>
+                        <div class="abw-chat-row">Read-only ask: <span id="abw-readonly-flag" class="abw-chat-value">true</span></div>
+                        <div class="abw-chat-row">Version/Doctor: <span id="abw-health-status" class="abw-chat-value">Not checked</span></div>
+                        <div id="abw-trust-warning-step1" class="abw-chat-error" style="display:none;">Thu muc project nay chua duoc tin cay. Can tin cay truoc khi nap tai lieu.</div>
+                        <button id="abw-trust-btn-step1" class="abw-primary-btn" style="display:none;" onclick="trustCurrentWorkspaceInline()">Tin cay thu muc nay</button>
+                        <div id="abw-trust-success-step1" class="abw-chat-warn" style="display:none;">Da tin cay thu muc. Ban co the nap tai lieu.</div>
+                        <div id="abw-workspace-hint" class="abw-chat-warn">Dung dung thu muc tai lieu truoc khi hoi ABW.</div>
+                        <button id="abw-main-choose-btn" class="abw-primary-btn" onclick="changeWorkspace()">Chon thu muc</button>
+                    </section>
+
+                    <section class="abw-main-step">
+                        <h4>Buoc 2: Nap tai lieu</h4>
+                        <div class="abw-chat-row">Thu muc project: <span id="abw-ingest-workspace" class="abw-chat-value">Loading...</span></div>
+                        <div class="abw-chat-row">Trang thai ABW: <span id="abw-ingest-status" class="abw-chat-value">unknown</span></div>
+                        <div class="abw-chat-row">Thu muc raw: <span id="abw-ingest-raw-hint" class="abw-chat-value">unknown</span></div>
+                        <div id="abw-trust-warning-step2" class="abw-chat-error" style="display:none;">Thu muc project nay chua duoc tin cay. Can tin cay truoc khi nap tai lieu.</div>
+                        <button id="abw-trust-btn-step2" class="abw-primary-btn" style="display:none;" onclick="trustCurrentWorkspaceInline()">Tin cay thu muc nay</button>
+                        <div id="abw-ingest-note" class="abw-chat-warn">Dat file can nap vao thu muc raw cua project.</div>
+                        <div id="abw-ingest-note-2" class="abw-chat-warn">Nap tai lieu chi tao ban nhap, chua tu dong thanh nguon dang tin.</div>
+                        <button class="abw-primary-btn" id="abw-ingest-btn" onclick="runAbwIngestRaw()">Nap tai lieu</button>
+                        <div id="abw-ingest-running" class="abw-chat-warn" style="display:none;">Dang nap tai lieu...</div>
+                        <div id="abw-ingest-summary" class="abw-chat-value">Chua nap.</div>
+                        <div id="abw-ingest-badges" class="abw-pill-row"></div>
+                        <div id="abw-ingest-drafts" class="abw-chat-row"></div>
+                        <div id="abw-ingest-unsupported" class="abw-chat-row"></div>
+                        <div id="abw-ingest-errors" class="abw-chat-row"></div>
+                        <div id="abw-ingest-warnings" class="abw-chat-row"></div>
+                    </section>
+
+                    <section class="abw-main-step">
+                        <h4>Buoc 3: Kiem tra tai lieu</h4>
+                        <div id="abw-review-note" class="abw-chat-warn">Ban nhap can kiem tra truoc khi dung lam nguon chinh thuc.</div>
+                        <div class="abw-chat-row">Trang thai kiem tra: <span id="abw-review-status" class="abw-chat-value">Chua review</span></div>
+                        <div id="abw-review-summary" class="abw-chat-value">Chua co du lieu review.</div>
+                        <div id="abw-review-actions" class="abw-chat-row"></div>
+                        <label for="abw-promote-path" style="display:block; margin-top:6px; font-size:0.72rem; opacity:0.8;">Duong dan ban nhap can danh dau</label>
+                        <input id="abw-promote-path" class="abw-chat-input" type="text" placeholder="drafts/example_draft.md" />
+                        <button class="abw-primary-btn" id="abw-review-btn" onclick="runAbwReviewDrafts()">Kiem tra tai lieu</button>
+                        <button class="btn-small" id="abw-promote-btn" onclick="runAbwPromoteSelectedDraft()">Danh dau ban nhap da chon</button>
+                        <div id="abw-promote-result" class="abw-chat-row"></div>
+                        <div id="abw-promote-warning" class="abw-chat-warn">Chua ho tro danh dau nguon tin cay tu dong an toan trong UI.</div>
+                    </section>
+
+                    <section class="abw-main-step">
+                        <h4>Buoc 4: Hoi chatbot</h4>
+                        <input id="abw-chat-question" class="abw-chat-input" type="text" placeholder="Hoi tai lieu..." />
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <button id="abw-main-ask-btn" class="abw-primary-btn" onclick="askAbwFromPanel()">Hoi tai lieu</button>
+                            <button class="btn-small" onclick="focusAbwChatQuestion()">Hoi lai sau khi kiem tra</button>
+                        </div>
+                        <div class="abw-chat-warn">Neu khong co nguon dang tin, ket qua se bao ro.</div>
+                        <div class="abw-chat-warn">Chua tim thay thong tin dang tin cay trong tai lieu da nap.</div>
+                        <div id="abw-chat-note" class="abw-chat-warn">Khong tu dong ghi/sync/write-back. Neu du lieu nhay cam, hay dung va sanitize truoc.</div>
+                    </section>
+                </div>
             </div>
             <div id="chat-box" class="chat-container"></div>
 
@@ -2675,11 +2846,10 @@
     <div id="right-panel" class="right-panel">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
             <h3 style="margin: 0;">Plan (Plan)</h3>
-            <button class="toggle-btn mobile-only" onclick="togglePlan()"
-                style="display: none; padding: 2px 8px;">/button>
+            <button id="plan-collapse-btn" class="toggle-btn" onclick="togglePlanCollapse()">Thu gon</button>
         </div>
         <div id="plan-steps">
-            <div style="opacity:0.3; text-align:center;">No plan yet</div>
+            <div style="opacity:0.7; text-align:center;">Chua co ke hoach. Panel nay chi dung khi agent dang lap ke hoach tac vu.</div>
         </div>
     </div>
 
@@ -2688,11 +2858,13 @@
             <h3 id="modal-title">Execution Approval</h3>
             <p id="modal-desc" style="margin: 15px 0; font-size: 0.9rem; color: #ccc;"></p>
             <div id="modal-input-container" style="display:none; margin-bottom: 15px; position: relative;">
-                <input type="text" id="modal-input"
+                <input type="text" id="modal-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
                     style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:8px 35px 8px 8px; border-radius:4px;">
                 <span id="modal-folder-picker"
                     style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); cursor: pointer; opacity: 0.7; font-size: 1.2rem;"
                     title="Choose file/folder">[EXP]</span>
+                <div id="modal-input-hint" style="margin-top:8px; font-size:0.85rem; color:#aab3c5; display:none;"></div>
+                <div id="modal-input-error" style="margin-top:6px; font-size:0.85rem; color:#ff8080; display:none;"></div>
             </div>
             <div id="settings-container" style="display:none; text-align:left; margin-bottom:20px; max-height:55vh; overflow-y:auto; border:1px solid #2b3647; border-radius:8px; padding:12px;">
                 <div style="font-size:0.75rem; opacity:0.7; margin-bottom:10px;">Sprint 10: Settings / Provider Manager / API Key UI</div>
@@ -2851,6 +3023,9 @@
         const mediaPreview = document.getElementById('media-preview');
         const pinnedContext = document.getElementById('pinned-context');
         const sendStopBtn = document.getElementById('send-stop-btn');
+        const leftResizer = document.getElementById('left-resizer');
+        const rightPanel = document.getElementById('right-panel');
+        const planCollapseBtn = document.getElementById('plan-collapse-btn');
 
         let attachedContexts = []; // Danh sch context ng ghim
         let allFiles = []; // Danh sch file cho @ mention
@@ -3052,7 +3227,7 @@
             if (operation === 'move') {
                 const sourcePath = edit.sourceRelPath || edit.relPath || 'unknown source';
                 const targetPath = edit.targetRelPath || edit.relPath || 'unknown target';
-                return `${sourcePath} → ${targetPath}`;
+                return `${sourcePath} ↁE${targetPath}`;
             }
             return edit.relPath || 'unknown target';
         }
@@ -3913,7 +4088,8 @@
             }
             if (s.model) selectModel(s.model);
             chatBox.innerHTML = '';
-            planSteps.innerHTML = '<div style="opacity:0.3; text-align:center;">No plan yet</div>';
+            planSteps.innerHTML = '<div style="opacity:0.7; text-align:center;">Chua co ke hoach. Panel nay chi dung khi agent dang lap ke hoach tac vu.</div>';
+            applyDefaultPlanState();
 
             if (s.messages.length === 0) {
                 const greeting = "Hello! How can I help you today?";
@@ -4033,7 +4209,7 @@
             const status = String(payload.status || '').trim();
             if (status === 'ABW_CLI_WRONG_WORKSPACE') return 'Workspace hiện tại chưa phải workspace tài liệu cần hỏi.';
             if (status === 'ABW_CLI_NO_MATCH') return 'Không tìm thấy thông tin đáng tin cậy.';
-            if (status === 'ABW_CLI_AMBIGUOUS') return 'Câu hỏi mơ hồ; cần hỏi rõ hơn để tránh trả lời sai.';
+            if (status === 'ABW_CLI_AMBIGUOUS') return 'Câu hỏi mơ hồ cần hỏi rõ hơn để tránh trả lời sai.';
             if (status === 'ABW_CLI_BLOCKED') return 'Yêu cầu đang bị chặn bởi điều kiện an toàn hoặc quyền.';
             if (status === 'ABW_CLI_TRUST_REQUIRED') return 'Workspace chưa được trust.';
             if (status === 'ABW_CLI_OK') return 'Kết quả ABW đã sẵn sàng.';
@@ -4046,7 +4222,7 @@
             const status = String(payload.status || '').trim();
             if (status === 'ABW_CLI_WRONG_WORKSPACE') {
                 hintEl.className = 'abw-chat-error';
-                hintEl.innerText = 'Workspace hiện tại chưa phải workspace tài liệu cần hỏi. Hãy bấm "Switch workspace".';
+                hintEl.innerText = 'Ban dang chon sai thu muc. Hay dung nut Chon thu muc o phia tren.';
                 return;
             }
             const wsText = workspace ? `Workspace hiện tại: ${workspace}` : 'Workspace chưa có.';
@@ -4066,8 +4242,69 @@
             if (repoPathEl) repoPathEl.innerText = payload.abwRepoPath || 'unknown';
             if (readOnlyEl) readOnlyEl.innerText = payload.readOnly === true ? 'true' : 'unknown';
             if (healthEl) healthEl.innerText = summarizeAbwHumanStatus(payload);
-            if (trustEl) trustEl.innerText = abwWorkspaceTrusted === true ? 'trusted' : (abwWorkspaceTrusted === false ? 'untrusted' : 'unknown');
+            if (trustEl) trustEl.innerText = abwWorkspaceTrusted === true ? 'da tin cay' : (abwWorkspaceTrusted === false ? 'chua tin cay' : 'khong ro');
+            const sidebarWs = document.getElementById('abw-sidebar-workspace-summary');
+            if (sidebarWs) sidebarWs.innerText = workspace || 'Chua chon';
             renderAbwWorkspaceHint(payload, workspace);
+            updateAbwTrustInlineUi();
+        }
+
+        function updateAbwTrustInlineUi() {
+            const needsTrust = abwWorkspaceTrusted !== true;
+            const hasWorkspace = !!updateAbwIngestWorkspaceInfo();
+            const showTrustFlow = needsTrust && hasWorkspace;
+            const warning1 = document.getElementById('abw-trust-warning-step1');
+            const warning2 = document.getElementById('abw-trust-warning-step2');
+            const btn1 = document.getElementById('abw-trust-btn-step1');
+            const btn2 = document.getElementById('abw-trust-btn-step2');
+            const success = document.getElementById('abw-trust-success-step1');
+            if (warning1) warning1.style.display = showTrustFlow ? 'block' : 'none';
+            if (warning2) warning2.style.display = showTrustFlow ? 'block' : 'none';
+            if (btn1) btn1.style.display = showTrustFlow ? 'block' : 'none';
+            if (btn2) btn2.style.display = showTrustFlow ? 'block' : 'none';
+            if (success && !showTrustFlow) success.style.display = 'none';
+
+            const ingestBtn = document.getElementById('abw-ingest-btn');
+            if (ingestBtn) {
+                ingestBtn.disabled = showTrustFlow;
+                ingestBtn.title = showTrustFlow ? 'Can tin cay thu muc nay truoc khi nap tai lieu.' : '';
+            }
+            const ingestStatus = document.getElementById('abw-ingest-status');
+            if (ingestStatus && showTrustFlow) ingestStatus.innerText = 'ABW_CLI_TRUST_REQUIRED';
+            const ingestSummary = document.getElementById('abw-ingest-summary');
+            if (ingestSummary && showTrustFlow) ingestSummary.innerText = 'Bi chan vi chua tin cay.';
+            const sidebarIngest = document.getElementById('abw-sidebar-ingest-summary');
+            if (sidebarIngest && showTrustFlow) sidebarIngest.innerText = 'Bi chan vi chua tin cay';
+        }
+
+        async function trustCurrentWorkspaceInline() {
+            const workspace = updateAbwIngestWorkspaceInfo();
+            if (!workspace) return;
+            const btns = [
+                document.getElementById('abw-trust-btn-step1'),
+                document.getElementById('abw-trust-btn-step2')
+            ].filter(Boolean);
+            btns.forEach(btn => btn.disabled = true);
+            const success = document.getElementById('abw-trust-success-step1');
+            try {
+                await fetchJsonOrThrow('/api/trust', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ trusted: true })
+                });
+                abwWorkspaceTrusted = true;
+                if (success) success.style.display = 'block';
+                await refreshAbwBridgeHealth();
+                await refreshAbwIngestPanel();
+            } catch (e) {
+                const statusEl = document.getElementById('abw-ingest-status');
+                const summaryEl = document.getElementById('abw-ingest-summary');
+                if (statusEl) statusEl.innerText = 'ABW_CLI_TRUST_REQUIRED';
+                if (summaryEl) summaryEl.innerText = `Khong the tin cay thu muc: ${String(e.message || 'unknown error')}`;
+            } finally {
+                btns.forEach(btn => btn.disabled = false);
+                updateAbwTrustInlineUi();
+            }
         }
 
         function renderAbwResultCard(payload = {}) {
@@ -4329,7 +4566,7 @@
                 loading.remove();
                 const reason = String(e.message || '');
                 const humanHint = /Requested ABW workspace/.test(reason)
-                    ? 'Workspace hiện tại chưa phải workspace tài liệu cần hỏi. Hãy switch workspace rồi hỏi lại.'
+                    ? 'Ban dang chon sai thu muc. Hay dung nut Chon thu muc o phia tren roi hoi lai.'
                     : `ABW read-only ask failed.\n${reason}`;
                 const errorText = humanHint;
                 const s = sessions[currentSessionId];
@@ -4398,7 +4635,7 @@
 
         function updateAbwIngestWorkspaceInfo() {
             const workspace = (document.getElementById('current-workspace-path')?.innerText || '').trim();
-            const workspaceText = workspace && workspace !== 'Loading...' ? workspace : 'Không tìm thấy workspace hợp lệ.';
+            const workspaceText = workspace && workspace !== 'Loading...' ? workspace : 'Không tìm thấy workspace hợp lệ';
             const rawHint = workspace && workspace !== 'Loading...' ? `${workspace}\\raw` : 'unknown';
             const wsEl = document.getElementById('abw-ingest-workspace');
             const rawEl = document.getElementById('abw-ingest-raw-hint');
@@ -4416,9 +4653,15 @@
             const warningsEl = document.getElementById('abw-ingest-warnings');
             const statusEl = document.getElementById('abw-ingest-status');
             if (statusEl) statusEl.innerText = payload.status || 'unknown';
-            if (summaryEl) {
-                summaryEl.innerText = `ingested=${payload.ingested ?? 0}, skipped=${payload.skipped ?? 0}`;
-            }
+            const trustBlocked = payload.status === 'ABW_CLI_TRUST_REQUIRED' || payload.blockedTrust === true;
+            const invalidJson = payload.status === 'ABW_CLI_INVALID_JSON';
+            if (summaryEl) summaryEl.innerText = trustBlocked
+                ? 'Bi chan vi chua tin cay.'
+                : (invalidJson
+                    ? 'Khong doc duoc ket qua tu ABW. Co the ABW dang in log ky thuat lan voi JSON.'
+                    : `ingested=${payload.ingested ?? 0}, skipped=${payload.skipped ?? 0}`);
+            const sidebarIngest = document.getElementById('abw-sidebar-ingest-summary');
+            if (sidebarIngest) sidebarIngest.innerText = summaryEl ? summaryEl.innerText : 'Chua nap';
             const reviewRequired = payload.reviewRequired === true;
             const promotionPerformed = payload.promotionPerformed === true;
             if (badgeEl) {
@@ -4430,7 +4673,13 @@
             if (draftsEl) draftsEl.innerHTML = `generated_drafts: ${(payload.generatedDrafts || []).length ? `<code>${escapeHtml((payload.generatedDrafts || []).join(', '))}</code>` : 'none'}`;
             if (unsupportedEl) unsupportedEl.innerHTML = `unsupported_files: ${(payload.unsupportedFiles || []).length ? `<code>${escapeHtml((payload.unsupportedFiles || []).join(', '))}</code>` : 'none'}`;
             if (errorsEl) errorsEl.innerHTML = `parse_errors: ${(payload.parseErrors || []).length ? `<code>${escapeHtml((payload.parseErrors || []).join(' | '))}</code>` : 'none'}`;
-            if (warningsEl) warningsEl.innerHTML = `warnings: ${(payload.warnings || []).length ? `<code>${escapeHtml((payload.warnings || []).join(' | '))}</code>` : 'none'}`;
+            const warningList = Array.isArray(payload.warnings) ? [...payload.warnings] : [];
+            if (invalidJson) {
+                const preview = [payload.stdoutPreview, payload.stderrPreview].filter(Boolean).join(' | ');
+                warningList.unshift('Khong doc duoc ket qua JSON tu ABW. Mo Chi tiet ky thuat de xem output.');
+                if (preview) warningList.push(`Chi tiet ky thuat: ${preview}`);
+            }
+            if (warningsEl) warningsEl.innerHTML = `warnings: ${warningList.length ? `<code>${escapeHtml(warningList.join(' | '))}</code>` : 'none'}`;
             abwLastGeneratedDrafts = Array.isArray(payload.generatedDrafts) ? payload.generatedDrafts : [];
             const promoteInput = document.getElementById('abw-promote-path');
             if (promoteInput && !String(promoteInput.value || '').trim() && abwLastGeneratedDrafts.length > 0) {
@@ -4440,6 +4689,7 @@
             if (reviewSummaryEl && abwLastGeneratedDrafts.length > 0) {
                 reviewSummaryEl.innerText = `Co ${abwLastGeneratedDrafts.length} draft can review/promote thu cong.`;
             }
+            updateAbwTrustInlineUi();
         }
 
         async function refreshAbwIngestPanel() {
@@ -4468,7 +4718,16 @@
             const workspace = updateAbwIngestWorkspaceInfo();
             if (!workspace) {
                 const summaryEl = document.getElementById('abw-ingest-summary');
-                if (summaryEl) summaryEl.innerText = 'Không tìm thấy workspace hợp lệ.';
+                if (summaryEl) summaryEl.innerText = 'Khong tim thay workspace hop le.';
+                return;
+            }
+            if (abwWorkspaceTrusted === false) {
+                renderAbwIngestResult({
+                    status: 'ABW_CLI_TRUST_REQUIRED',
+                    blockedTrust: true,
+                    warnings: ['Thu muc project nay chua duoc tin cay. Can tin cay truoc khi nap tai lieu.']
+                });
+                updateAbwTrustInlineUi();
                 return;
             }
             const btn = document.getElementById('abw-ingest-btn');
@@ -4485,11 +4744,28 @@
                 await refreshAbwReviewPanel();
             } catch (e) {
                 const summaryEl = document.getElementById('abw-ingest-summary');
-                if (summaryEl) summaryEl.innerText = `Ingest thất bại, xem lỗi bên dưới. ${String(e.message || '')}`;
-                renderAbwIngestResult({ status: 'ABW_CLI_NONZERO_EXIT', warnings: [String(e.message || 'unknown error')] });
+                const errorText = String(e.message || '');
+                const trustBlocked = /chua trusted|trusted workspace|tin cay|duoc trust/i.test(errorText);
+                const invalidJson = /invalid json|unexpected token|not valid json/i.test(errorText);
+                if (trustBlocked) {
+                    renderAbwIngestResult({
+                        status: 'ABW_CLI_TRUST_REQUIRED',
+                        blockedTrust: true,
+                        warnings: ['Thu muc project nay chua duoc tin cay. Can tin cay truoc khi nap tai lieu.']
+                    });
+                } else if (invalidJson) {
+                    renderAbwIngestResult({
+                        status: 'ABW_CLI_INVALID_JSON',
+                        warnings: [errorText || 'ABW tra ve output khong hop le JSON.']
+                    });
+                } else {
+                    if (summaryEl) summaryEl.innerText = `Ingest that bai, xem loi ben duoi. ${errorText}`;
+                    renderAbwIngestResult({ status: 'ABW_CLI_NONZERO_EXIT', warnings: [errorText || 'unknown error'] });
+                }
             } finally {
                 if (btn) btn.disabled = false;
                 if (running) running.style.display = 'none';
+                updateAbwTrustInlineUi();
             }
         }
 
@@ -4571,6 +4847,34 @@
         function focusAbwChatQuestion() {
             const input = document.getElementById('abw-chat-question');
             if (input) input.focus();
+        }
+
+        function setAbwFocusMode(enabled) {
+            const isEnabled = !!enabled;
+            document.body.classList.toggle('abw-focus-mode', isEnabled);
+            const badge = document.getElementById('abw-focus-badge');
+            const toggleBtn = document.getElementById('abw-focus-toggle-btn');
+            if (badge) badge.style.display = isEnabled ? 'inline-flex' : 'none';
+            if (toggleBtn) toggleBtn.innerText = isEnabled ? 'Tat focus' : 'Bat focus';
+            if (isEnabled) {
+                const bottomPanel = document.getElementById('bottom-panel');
+                if (bottomPanel) bottomPanel.classList.remove('active');
+                setPlanCollapsed(true, { persist: true });
+            } else {
+                applyDefaultPlanState();
+            }
+            localStorage.setItem('nvidia-abw-focus-mode', isEnabled ? '1' : '0');
+        }
+
+        function toggleAbwFocusMode() {
+            setAbwFocusMode(!document.body.classList.contains('abw-focus-mode'));
+        }
+
+        function focusAbwMainPanel() {
+            const panel = document.getElementById('abw-main-panel');
+            if (!panel) return;
+            setAbwFocusMode(true);
+            panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         async function sendMessage() {
@@ -4799,6 +5103,7 @@
                             let result = "";
                             if (name === 'update_plan') {
                                 planSteps.innerHTML = args.steps.map(st => `<div class="step active">${st}</div>`).join('');
+                                applyDefaultPlanState();
                                 updateTaskTimeline({ type: 'plan', label: 'Plan Updated', steps: args.steps });
                                 result = "Plan updated.";
                             } else {
@@ -4884,14 +5189,43 @@
         function customPrompt(title, defaultValue = "", options = {}) {
             return new Promise(r => {
                 const modal = document.getElementById('modal-overlay');
+                const allowBtn = document.getElementById('btn-allow');
+                const denyBtn = document.getElementById('btn-deny');
+                const hintEl = document.getElementById('modal-input-hint');
+                const errorEl = document.getElementById('modal-input-error');
+                const previousAllow = allowBtn.innerText;
+                const previousDeny = denyBtn.innerText;
                 document.getElementById('modal-title').innerText = title;
                 document.getElementById('modal-desc').innerText = "";
                 document.getElementById('modal-input-container').style.display = 'block';
                 const input = document.getElementById('modal-input');
-                input.value = defaultValue;
+                input.value = '';
+                input.value = defaultValue || '';
+                input.setAttribute('autocomplete', 'off');
+                input.setAttribute('autocorrect', 'off');
+                input.setAttribute('autocapitalize', 'off');
+                input.setAttribute('spellcheck', 'false');
+                allowBtn.innerText = options.allowLabel || 'Confirm';
+                denyBtn.innerText = options.denyLabel || 'Cancel';
+                if (hintEl) {
+                    hintEl.innerText = options.hint || '';
+                    hintEl.style.display = options.hint ? 'block' : 'none';
+                }
+                if (errorEl) {
+                    errorEl.innerText = '';
+                    errorEl.style.display = 'none';
+                }
+                if (options.workspacePath === true) {
+                    input.placeholder = 'D:\\Sandbox\\ten-project';
+                } else {
+                    input.placeholder = '';
+                }
 
                 const picker = document.getElementById('modal-folder-picker');
+                const pickerEnabled = options.enablePicker !== false;
+                picker.style.display = pickerEnabled ? 'inline' : 'none';
                 picker.onclick = async () => {
+                    if (!pickerEnabled) return;
                     console.log("Picker clicked, calling API...");
                     picker.style.opacity = "0.3";
                     try {
@@ -4913,9 +5247,68 @@
 
                 modal.classList.add('active');
                 input.focus();
-                document.getElementById('btn-allow').onclick = () => { modal.classList.remove('active'); r(input.value); };
-                document.getElementById('btn-deny').onclick = () => { modal.classList.remove('active'); r(null); };
+                document.getElementById('btn-allow').onclick = async () => {
+                    const candidate = String(input.value || '').trim();
+                    if (typeof options.validateAsync === 'function') {
+                        const check = await options.validateAsync(candidate);
+                        if (!check?.ok) {
+                            if (errorEl) {
+                                errorEl.innerText = check?.message || 'Du lieu khong hop le.';
+                                errorEl.style.display = 'block';
+                            }
+                            input.focus();
+                            return;
+                        }
+                        allowBtn.innerText = previousAllow;
+                        denyBtn.innerText = previousDeny;
+                        modal.classList.remove('active');
+                        r(check.value !== undefined ? check.value : candidate);
+                        return;
+                    }
+                    allowBtn.innerText = previousAllow;
+                    denyBtn.innerText = previousDeny;
+                    modal.classList.remove('active');
+                    r(input.value);
+                };
+                document.getElementById('btn-deny').onclick = () => {
+                    allowBtn.innerText = previousAllow;
+                    denyBtn.innerText = previousDeny;
+                    modal.classList.remove('active');
+                    r(null);
+                };
             });
+        }
+
+        async function promptWorkspacePathAndSwitch(currentPath = '') {
+            const switched = await customPrompt('Nh\u1eadp \u0111\u01b0\u1eddng d\u1eabn th\u01b0 m\u1ee5c project', currentPath, {
+                workspacePath: true,
+                allowLabel: 'X\u00e1c nh\u1eadn',
+                denyLabel: 'H\u1ee7y',
+                enablePicker: false,
+                hint: 'D\u00e1n \u0111\u01b0\u1eddng d\u1eabn th\u01b0 m\u1ee5c project, v\u00ed d\u1ee5 D:\\Sandbox\\Web_matthesinhhoanguyco\\mat-the-website',
+                validateAsync: async (path) => {
+                    if (!path) return { ok: false, message: 'Vui l\u00f2ng nh\u1eadp \u0111\u01b0\u1eddng d\u1eabn th\u01b0 m\u1ee5c project.' };
+                    try {
+                        const res = await fetch('/api/workspace', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path })
+                        });
+                        const data = await res.json();
+                        if (data.status === 'success') return { ok: true, value: data };
+                        const normalized = String(data.error || '').toLowerCase();
+                        return {
+                            ok: false,
+                            message: normalized.includes('path does not exist')
+                                ? 'Kh\u00f4ng t\u00ecm th\u1ea5y th\u01b0 m\u1ee5c n\u00e0y. H\u00e3y ki\u1ec3m tra l\u1ea1i \u0111\u01b0\u1eddng d\u1eabn.'
+                                : 'Kh\u00f4ng \u0111\u1ed5i \u0111\u01b0\u1ee3c th\u01b0 m\u1ee5c project. Vui l\u00f2ng th\u1eed l\u1ea1i.'
+                        };
+                    } catch (e) {
+                        return { ok: false, message: 'Kh\u00f4ng th\u1ec3 k\u1ebft n\u1ed1i server \u0111\u1ec3 \u0111\u1ed5i th\u01b0 m\u1ee5c project.' };
+                    }
+                }
+            });
+            return switched || null;
         }
 
         const slashMenu = document.getElementById('slash-menu');
@@ -6431,6 +6824,84 @@
             document.getElementById('right-panel').classList.toggle('open');
         }
 
+        function getPlanIsCollapsed() {
+            return rightPanel?.classList.contains('collapsed');
+        }
+
+        function setPlanCollapsed(collapsed, { persist = true } = {}) {
+            if (!rightPanel) return;
+            rightPanel.classList.toggle('collapsed', !!collapsed);
+            document.body.classList.toggle('right-collapsed', !!collapsed);
+            if (planCollapseBtn) {
+                planCollapseBtn.innerText = collapsed ? 'Mo Plan' : 'Thu gon';
+            }
+            if (persist) {
+                localStorage.setItem('nvidia-plan-collapsed', collapsed ? '1' : '0');
+            }
+        }
+
+        function togglePlanCollapse() {
+            setPlanCollapsed(!getPlanIsCollapsed(), { persist: true });
+        }
+
+        function isPlanEmpty() {
+            const text = (planSteps?.innerText || '').toLowerCase();
+            return text.includes('no plan yet') || text.includes('chua co ke hoach');
+        }
+
+        function applyDefaultPlanState() {
+            const saved = localStorage.getItem('nvidia-plan-collapsed');
+            if (saved === '1' || saved === '0') {
+                setPlanCollapsed(saved === '1', { persist: false });
+                return;
+            }
+            const autoCollapsed = isPlanEmpty() || window.innerWidth <= 1366;
+            setPlanCollapsed(autoCollapsed, { persist: false });
+        }
+
+        function applySidebarWidth(width) {
+            const numericWidth = Math.max(260, Math.min(520, Math.round(width)));
+            document.documentElement.style.setProperty('--left-sidebar-width', `${numericWidth}px`);
+            localStorage.setItem('nvidia-left-sidebar-width', String(numericWidth));
+        }
+
+        function initSidebarResizer() {
+            if (!leftResizer) return;
+            const saved = Number(localStorage.getItem('nvidia-left-sidebar-width'));
+            if (Number.isFinite(saved) && saved >= 260 && saved <= 520) {
+                applySidebarWidth(saved);
+            }
+            let dragging = false;
+            const onPointerMove = (event) => {
+                if (!dragging) return;
+                applySidebarWidth(event.clientX - 50);
+            };
+            const stopDragging = () => {
+                if (!dragging) return;
+                dragging = false;
+                leftResizer.classList.remove('dragging');
+                document.body.style.userSelect = '';
+            };
+            leftResizer.addEventListener('pointerdown', (event) => {
+                dragging = true;
+                leftResizer.classList.add('dragging');
+                document.body.style.userSelect = 'none';
+                leftResizer.setPointerCapture?.(event.pointerId);
+            });
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', stopDragging);
+            window.addEventListener('pointercancel', stopDragging);
+        }
+
+        function initPlanCollapsedClickToOpen() {
+            if (!rightPanel) return;
+            rightPanel.addEventListener('click', (event) => {
+                if (!rightPanel.classList.contains('collapsed')) return;
+                if (event.target && event.target.id === 'plan-collapse-btn') return;
+                setPlanCollapsed(false, { persist: true });
+            });
+        }
+
         async function loadFileExplorer() {
             try {
                 const res = await fetch('/api/files');
@@ -7136,37 +7607,22 @@
                 if (!proceed) return;
             }
             const current = document.getElementById('current-workspace-path').innerText;
-            const newPath = await customPrompt("Enter new workspace path:", current);
-            if (!newPath) return;
-
-            try {
-                const res = await fetch('/api/workspace', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: newPath })
-                });
-                const data = await res.json();
-                if (data.status === "success") {
-                    logDebug("Switched workspace: " + data.path);
-                    editorTabs = [];
-                    activeEditorTabPath = null;
-                    currentEditingPath = "";
-                    renderEditorTabs();
-                    closeCodeViewer();
-                    await loadWorkspaceInfo();
-                    await loadFileExplorer();
-                    renderRecentFiles();
-                    await loadIndexStatus();
-                    await loadWorkflows();
-                    await refreshAbwBridgeHealth();
-                    await refreshAbwIngestPanel();
-                    await refreshAbwReviewPanel();
-                } else {
-                    alert("Workspace switch failed: " + data.error);
-                }
-            } catch (e) {
-                alert("Unable to connect to server: " + e.message);
-            }
+            const data = await promptWorkspacePathAndSwitch(current);
+            if (!data || data.status !== 'success') return;
+            logDebug("Switched workspace: " + data.path);
+            editorTabs = [];
+            activeEditorTabPath = null;
+            currentEditingPath = "";
+            renderEditorTabs();
+            closeCodeViewer();
+            await loadWorkspaceInfo();
+            await loadFileExplorer();
+            renderRecentFiles();
+            await loadIndexStatus();
+            await loadWorkflows();
+            await refreshAbwBridgeHealth();
+            await refreshAbwIngestPanel();
+            await refreshAbwReviewPanel();
         }
 
         function getFileIcon(name) {
@@ -7518,6 +7974,11 @@
                 await initializeUIMode();
                 await loadWorkflows();
                 await loadFileExplorer();
+                initSidebarResizer();
+                initPlanCollapsedClickToOpen();
+                applyDefaultPlanState();
+                const savedFocusMode = localStorage.getItem('nvidia-abw-focus-mode');
+                if (savedFocusMode === '1') setAbwFocusMode(true);
                 await loadIndexStatus();
                 await refreshModelStatus();
                 await refreshTasks();
