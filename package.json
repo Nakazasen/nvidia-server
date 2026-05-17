@@ -24,6 +24,8 @@
     "apply:proof": "node tests/apply-pending-edit-to-disk.test.mjs",
     "budget:check": "node tools/performance-budget.mjs",
     "runtime:hygiene": "node tools/runtime-hygiene.mjs --dry-run",
+    "governance:status": "powershell -ExecutionPolicy Bypass -File ../ABW_NVIDIA_FUSION_CONTROL/tools/governance/runtime-status.ps1",
+    "execution:trace": "powershell -ExecutionPolicy Bypass -File ../ABW_NVIDIA_FUSION_CONTROL/tools/governance/execution-trace.ps1 -Repo NVIDIA -WorkspacePath . -Action npm-script-trace -SafetyClass safe",
     "bridge:preflight": "node tools/bridge-preflight.mjs",
     "bridge:preflight:test": "node tests/bridge-preflight.test.mjs",
     "bridge:preflight:e2e": "node tests/bridge-preflight-e2e.test.mjs",
