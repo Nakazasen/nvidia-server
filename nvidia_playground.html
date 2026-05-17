@@ -2906,7 +2906,7 @@
                         <button class="abw-primary-btn" id="abw-review-btn" onclick="runAbwReviewDrafts()">Kiem tra tai lieu</button>
                         <button class="btn-small" id="abw-promote-btn" onclick="runAbwPromoteSelectedDraft()">Danh dau ban nhap da chon</button>
                         <div id="abw-promote-result" class="abw-chat-row"></div>
-                        <div id="abw-promote-warning" class="abw-chat-warn">Trusted-source approval is not available in this UI yet. Ban nhap van la draft/raw cho den khi duoc phe duyet theo quy trinh co kiem soat. No auto-promotion was performed. Technical operators can use manual approval outside this UI, but that is not the non-tech daily-use path.</div>
+                        <div id="abw-promote-warning" class="abw-chat-warn">Trusted-source approval is available only for one selected source after a successful preview and explicit confirmation. Ban nhap van la draft/raw cho den khi duoc phe duyet theo quy trinh co kiem soat. Candidate marking is not approval. No auto-promotion was performed, and approving one source does not approve the whole workspace.</div>
                     </section>
 
                     <section class="abw-main-step">
@@ -2935,9 +2935,10 @@
                     <div class="abw-triage-copy">
                         <div>You can ask questions before reviewing anything.</div>
                         <div>Draft sources are useful but not trusted yet.</div>
-                        <div>Approval is optional and will be added later for selected items only.</div>
-                        <div>Approving one source will not approve the whole folder.</div>
-                        <div>Unsupported or broken files cannot be approved.</div>
+                        <div>Approval is available only for one selected source after a successful preview and explicit confirmation.</div>
+                        <div>Candidate marking is review-only, not trusted approval.</div>
+                        <div>Approving one source will not approve the whole folder, workspace, or corpus.</div>
+                        <div>Missing-source, unsupported, broken, or ambiguous results cannot be approved.</div>
                     </div>
                     <div class="abw-triage-grid">
                         <section class="abw-triage-group" data-triage-group="ready">
@@ -6198,7 +6199,7 @@
                 actionsEl.innerHTML = [
                     `Review guidance: ${actionLines || 'none'}`,
                     `Warnings: ${warningLines || 'none'}`,
-                    'Trusted wiki promotion is still unavailable in this UI.'
+                    'Trusted-source approval is available only for one selected source after a successful preview and explicit confirmation.'
                 ].join('<br>');
             }
             renderAbwTriageDashboard();

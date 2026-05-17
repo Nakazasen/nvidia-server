@@ -1021,9 +1021,10 @@ async function runRealBrowserSmoke(url) {
           nonTechNoMatchCopyOk =
             /Chua tim thay thong tin dang tin cay trong tai lieu da nap/i.test(fullUiText);
           nonTechPromoteLimitVisibleOk =
-            /Trusted-source approval is not available in this UI yet/i.test(fullUiText) &&
+            /Trusted-source approval is available only for one selected source after a successful preview and explicit confirmation/i.test(fullUiText) &&
+            /Candidate marking is not approval/i.test(fullUiText) &&
             /No auto-promotion was performed/i.test(fullUiText) &&
-            /not the non-tech daily-use path/i.test(fullUiText);
+            /does not approve the whole workspace/i.test(fullUiText);
           const triagePanelText = document.querySelector('#abw-triage-panel')?.textContent || '';
           abwTriagePanelVisibleOk = visible('#abw-triage-panel');
           abwTriageLabelsOk =
@@ -1036,9 +1037,10 @@ async function runRealBrowserSmoke(url) {
           abwTriageCopyOk =
             /You can ask questions before reviewing anything\./i.test(triagePanelText) &&
             /Draft sources are useful but not trusted yet\./i.test(triagePanelText) &&
-            /Approval is optional and will be added later for selected items only\./i.test(triagePanelText) &&
-            /Approving one source will not approve the whole folder\./i.test(triagePanelText) &&
-            /Unsupported or broken files cannot be approved\./i.test(triagePanelText);
+            /Approval is available only for one selected source after a successful preview and explicit confirmation\./i.test(triagePanelText) &&
+            /Candidate marking is review-only, not trusted approval\./i.test(triagePanelText) &&
+            /Approving one source will not approve the whole folder, workspace, or corpus\./i.test(triagePanelText) &&
+            /Missing-source, unsupported, broken, or ambiguous results cannot be approved\./i.test(triagePanelText);
           abwTriageNoBulkCopyOk =
             !/approve all|batch approval|corpus approval/i.test(triagePanelText);
           if ((!currentSessionId || !sessions[currentSessionId]) && typeof createNewSession === 'function') {
@@ -1109,7 +1111,7 @@ async function runRealBrowserSmoke(url) {
               /Review draft before approval/i.test(reviewActionsText) &&
               /path:\s*drafts\/example_draft\.md/i.test(reviewActionsText) &&
               /status:\s*manual_required/i.test(reviewActionsText) &&
-              /Trusted wiki promotion is still unavailable in this UI/i.test(reviewActionsText) &&
+              /Trusted-source approval is available only for one selected source after a successful preview and explicit confirmation/i.test(reviewActionsText) &&
               !/\[object Object\]/i.test(reviewActionsText);
           }
           if (typeof window.renderAbwIngestResult === 'function') {
