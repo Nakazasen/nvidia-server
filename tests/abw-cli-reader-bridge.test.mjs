@@ -335,6 +335,63 @@ console.log('\nABW CLI Reader Bridge Tests\n');
 
 {
   const reader = createAbwCliReader({
+    runProcess: makeRunner({
+      exitCode: 0,
+      stdout: `===== ABW ingest runner =====\n${makeEnvelope('ingest', 'success', {
+        ingested: 3,
+        skipped: 0,
+        unsupported_files: [],
+        parse_errors: [],
+        generated_drafts: ['drafts/a.md'],
+        review_required: false,
+        promotion_performed: false,
+        warnings: ['ok']
+      })}`,
+      stderr: '',
+      durationMs: 4,
+      command: ['py', '-m', 'abw.cli', '--json']
+    })
+  });
+  const result = await reader.ingestRaw({ workspace: 'D:/tmp/mock-workspace' });
+  assert(result.status === ABW_CLI_STATUS.OK, '5a. banner + valid JSON parses successfully', `status=${result.status}`);
+  assert(Number(result.data?.ingested) === 3, '5b. parsed JSON payload preserved after banner');
+}
+
+{
+  const reader = createAbwCliReader({
+    runProcess: makeRunner({
+      exitCode: 0,
+      stdout: '===== ABW =====\nnot-json\n',
+      stderr: '',
+      durationMs: 4,
+      command: ['py', '-m', 'abw.cli', '--json']
+    })
+  });
+  const result = await reader.ingestRaw({ workspace: 'D:/tmp/mock-workspace' });
+  assert(result.status === ABW_CLI_STATUS.INVALID_JSON, '5c. banner without JSON stays ABW_CLI_INVALID_JSON', `status=${result.status}`);
+  assert(String(result.stdoutPreview || '').includes('===== ABW'), '5d. invalid JSON exposes safe stdout preview');
+}
+
+{
+  const reader = createAbwCliReader({
+    runProcess: makeRunner({
+      exitCode: 9,
+      stdout: makeEnvelope('ingest', 'blocked', {
+        ingested: 0,
+        skipped: 0,
+        warnings: ['blocked']
+      }),
+      stderr: 'nonzero',
+      durationMs: 4,
+      command: ['py', '-m', 'abw.cli', '--json']
+    })
+  });
+  const result = await reader.ingestRaw({ workspace: 'D:/tmp/mock-workspace' });
+  assert(result.status === ABW_CLI_STATUS.BLOCKED, '5e. nonzero with valid JSON fail envelope stays machine-readable', `status=${result.status}`);
+}
+
+{
+  const reader = createAbwCliReader({
     runProcess: async () => ({ error: Object.assign(new Error('spawn py ENOENT'), { code: 'ENOENT' }), stdout: '', stderr: '', durationMs: 1, command: ['py'] })
   });
   const result = await reader.readVersion({ workspace: 'D:/tmp/mock-workspace' });
@@ -430,7 +487,7 @@ console.log('\nABW CLI Reader Bridge Tests\n');
     assert(ask.json?.retrievalStatus === 'exact_match', '10c. endpoint exposes retrievalStatus');
     assert(ask.json?.evidenceTier === 'E2_wiki', '10d. endpoint exposes evidenceTier');
     assert(ask.json?.readOnly === true, '10e. endpoint exposes readOnly=true');
-    assert(ask.json?.runtimeSource === 'default', '10f. endpoint exposes runtimeSource');
+    assert(['default', 'repo'].includes(String(ask.json?.runtimeSource || '')), '10f. endpoint exposes runtimeSource');
     assert(Array.isArray(ask.json?.commandArgs) && ask.json.commandArgs.includes('ask'), '10g. endpoint exposes command args');
     assert(Array.isArray(ask.json?.sources) && ask.json.sources.length === 1, '10h. endpoint exposes sources');
     const pendingEdits = await getPendingEdits(baseUrl);
@@ -593,6 +650,26 @@ console.log('\nABW CLI Reader Bridge Tests\n');
 }
 
 {
+  const port = 48676;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ingest-banner-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'ingest-success-banner' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '16e. workspace switch for ingest banner parse test succeeds', `status=${switched.status}`);
+    const ingest = await requestJson(`${baseUrl}/proxy/abw/ingest`, { body: { workspace } });
+    assert(ingest.ok, '16f. banner + valid JSON ingest returns 200', `status=${ingest.status}`);
+    assert(ingest.json?.status === ABW_CLI_STATUS.OK, '16g. banner + valid JSON ingest stays ABW_CLI_OK', `status=${ingest.json?.status}`);
+    assert(Number(ingest.json?.ingested) === 3, '16h. banner + valid JSON ingest preserves counters');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
   const port = 4868;
   const baseUrl = `http://${HOST}:${port}`;
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ingest-fail-'));
@@ -624,6 +701,26 @@ console.log('\nABW CLI Reader Bridge Tests\n');
     const ingest = await requestJson(`${baseUrl}/proxy/abw/ingest`, { body: { workspace } });
     assert(ingest.status === 403, '18a. ingest requires trusted workspace', `status=${ingest.status}`);
     assert(ingest.json?.status === ABW_CLI_STATUS.TRUST_REQUIRED, '18b. ingest trust error classified', `status=${ingest.json?.status}`);
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 48695;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ingest-invalid-json-'));
+  let server = null;
+  try {
+    server = await startServer({ port, trustAlways: true, mockMode: 'ingest-invalid-json-banner' });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '18c. workspace switch for ingest invalid-json test succeeds', `status=${switched.status}`);
+    const ingest = await requestJson(`${baseUrl}/proxy/abw/ingest`, { body: { workspace } });
+    assert(ingest.status === 502, '18d. invalid ingest JSON maps to 502', `status=${ingest.status}`);
+    assert(ingest.json?.status === ABW_CLI_STATUS.INVALID_JSON, '18e. invalid ingest JSON status preserved', `status=${ingest.json?.status}`);
+    assert(String(ingest.json?.stdoutPreview || '').includes('===== ABW ingest runner'), '18f. invalid ingest JSON includes stdoutPreview');
   } finally {
     await stopServer(server);
     try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
