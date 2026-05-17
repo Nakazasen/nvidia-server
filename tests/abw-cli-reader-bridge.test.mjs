@@ -60,7 +60,7 @@ function makeEnvelope(commandName, status, data, workspace = 'D:/tmp/mock-worksp
   });
 }
 
-function startServer({ port, trustAlways = true, mockMode = 'ask-success' }) {
+function startServer({ port, trustAlways = true, mockMode = 'ask-success', abwBaseArgs = [MOCK_ABW_SCRIPT], extraEnv = {} }) {
   return new Promise((resolve, reject) => {
     const child = spawn('node', [SERVER_SCRIPT], {
       cwd: APP_DIR,
@@ -70,10 +70,11 @@ function startServer({ port, trustAlways = true, mockMode = 'ask-success' }) {
         HOST,
         NVIDIA_SERVER_HOST: HOST,
         ABW_CLI_LAUNCHER: 'node',
-        ABW_CLI_BASE_ARGS: JSON.stringify([MOCK_ABW_SCRIPT]),
+        ABW_CLI_BASE_ARGS: JSON.stringify(abwBaseArgs),
         ABW_MOCK_MODE: mockMode,
         ABW_REPO_PATH: process.env.ABW_REPO_PATH || '',
-        ...(trustAlways ? { NVIDIA_WORKSPACE_TRUST: 'always' } : {})
+        ...(trustAlways ? { NVIDIA_WORKSPACE_TRUST: 'always' } : {}),
+        ...extraEnv
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
@@ -161,6 +162,80 @@ async function requestJson(url, { method = 'POST', body = undefined, headers = {
 async function getPendingEdits(baseUrl) {
   const response = await requestJson(`${baseUrl}/api/pending_edits`, { method: 'GET' });
   return response.json?.edits || [];
+}
+
+function buildInlineAbwCliScript({
+  approveResponse = null,
+  approveExitCode = 0,
+  approveInvalidJson = false,
+  askResponse = null,
+  askExitCode = 0,
+  touchMarkerOnApprove = false
+} = {}) {
+  const approveStatusLiteral = JSON.stringify(approveResponse?.status || 'preview_ready');
+  const approveDataLiteral = JSON.stringify(approveResponse?.data || {});
+  const askStatusLiteral = JSON.stringify(askResponse?.status || 'success');
+  const askDataLiteral = JSON.stringify(askResponse?.data || {
+    answer: 'Mock answer',
+    retrieval_status: 'exact_match',
+    trust_score: 70,
+    sources: [{ path: 'wiki/agv.md' }],
+    warnings: [],
+    gap_logged: false,
+    gap_id: null,
+    current_state: 'knowledge_answered',
+    knowledge_evidence_tier: 'E2_wiki',
+    knowledge_source_score: 2,
+    source_summary: 'local_wiki',
+    logs: [],
+    provider: 'local',
+    runtime_write_suppressed: true
+  });
+  const approveBranch = approveInvalidJson
+    ? `process.stdout.write('not-json'); process.exit(${Number(approveExitCode)});`
+    : `process.stdout.write(JSON.stringify(envelope(${approveStatusLiteral}, ${approveDataLiteral}))); process.exit(${Number(approveExitCode)});`;
+  return `
+const fs = require('fs');
+const args = process.argv.slice(1);
+function findFlagValue(flag) {
+  const idx = args.indexOf(flag);
+  return idx === -1 ? '' : (args[idx + 1] || '');
+}
+const workspace = findFlagValue('--workspace');
+const commandIndex = args.findIndex((item, index) => item === '--workspace' && index + 2 < args.length);
+const commandName = commandIndex >= 0 ? args[commandIndex + 2] : '';
+function envelope(status, data) {
+  return {
+    schema_version: '1',
+    command_name: commandName,
+    workspace,
+    generated_at: '2026-05-15T00:00:00Z',
+    status,
+    data
+  };
+}
+if (commandName === 'approve') {
+  ${touchMarkerOnApprove ? "if (process.env.ABW_CALL_MARKER) fs.appendFileSync(process.env.ABW_CALL_MARKER, 'approve\\\\n');" : ''}
+  ${approveBranch}
+}
+if (commandName === 'ask') {
+  process.stdout.write(JSON.stringify(envelope(${askStatusLiteral}, ${askDataLiteral})));
+  process.exit(${Number(askExitCode)});
+}
+process.stdout.write(JSON.stringify(envelope('success', {})));
+`;
+}
+
+function createInlineAbwMock(options = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-inline-cli-'));
+  const scriptPath = path.join(dir, 'mock-inline-abw-cli.cjs');
+  fs.writeFileSync(scriptPath, buildInlineAbwCliScript(options), 'utf8');
+  return {
+    abwBaseArgs: [scriptPath],
+    cleanup() {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  };
 }
 
 console.log('\nABW CLI Reader Bridge Tests\n');
@@ -460,6 +535,100 @@ console.log('\nABW CLI Reader Bridge Tests\n');
   });
   const result = await reader.ask({ workspace: '', question: 'Where is AGV?' });
   assert(result.status === ABW_CLI_STATUS.WORKSPACE_REQUIRED, '9. workspace path is required', `status=${result.status}`);
+}
+
+{
+  const recorder = createSpawnRecorder({
+    stdout: makeEnvelope('approve', 'preview_ready', {
+      schema_version: 'abw.approve_draft.preview.v1',
+      status: 'preview_ready',
+      approved: false,
+      promotionPerformed: false,
+      manualReviewRequired: true,
+      workspace: 'D:/tmp/mock-workspace',
+      draft_path: 'drafts/doc-1.md',
+      draft_id: 'doc-1',
+      draft_hash: 'sha256:abc',
+      target_wiki_path: 'wiki/doc-1.md',
+      current_queue_status: 'review_needed',
+      trusted_workspace_required: true,
+      warnings: ['Approval affects only this selected draft.'],
+      blocking_errors: [],
+      preview_summary: { title: 'Doc 1' },
+      required_confirmation: {
+        confirmation_token: 'approve:doc-1:sha256:abc',
+        confirmation_text: 'Approve this draft as trusted wiki'
+      },
+      audit_id: 'audit-preview'
+    }),
+    exitCode: 0
+  });
+  const reader = createAbwCliReader({
+    spawnImpl: recorder.spawnImpl,
+    launcher: 'node',
+    baseArgs: [MOCK_ABW_SCRIPT]
+  });
+  const result = await reader.approveDraft({
+    workspace: 'D:/tmp/mock-workspace',
+    draftPath: 'drafts/doc-1.md',
+    dryRun: true,
+    draftId: 'doc-1',
+    expectedDraftHash: 'sha256:abc',
+    expectedQueueStatus: 'review_needed'
+  });
+  const call = recorder.calls[0] || {};
+  assert(result.status === ABW_CLI_STATUS.OK, '9a. approve dry-run preview stays machine-readable', `status=${result.status}`);
+  assert(Array.isArray(call.args) && call.args.includes('approve'), '9b. approve invokes approve command');
+  assert(Array.isArray(call.args) && call.args.includes('drafts/doc-1.md'), '9c. approve passes single draft path');
+  assert(Array.isArray(call.args) && call.args.includes('--dry-run'), '9d. approve dry-run passes --dry-run');
+  assert(Array.isArray(call.args) && call.args.includes('--draft-id') && call.args.includes('doc-1'), '9e. approve passes draft id');
+  assert(Array.isArray(call.args) && call.args.includes('--expected-draft-hash') && call.args.includes('sha256:abc'), '9f. approve passes expected hash');
+  assert(result.data?.required_confirmation?.confirmation_token === 'approve:doc-1:sha256:abc', '9g. approve preview preserves required confirmation');
+}
+
+{
+  const recorder = createSpawnRecorder({
+    stdout: makeEnvelope('approve', 'approved', {
+      schema_version: 'abw.approve_draft.result.v1',
+      status: 'approved',
+      approved: true,
+      promotionPerformed: true,
+      manualReviewRequired: false,
+      workspace: 'D:/tmp/mock-workspace',
+      draft_path: 'drafts/doc-1.md',
+      approved_wiki_path: 'wiki/doc-1.md',
+      queue_transition: { from: 'review_needed', to: 'approved' },
+      review_log_path: 'logs/review.jsonl',
+      audit_id: 'audit-apply',
+      warnings: [],
+      errors: []
+    }),
+    exitCode: 0
+  });
+  const reader = createAbwCliReader({
+    spawnImpl: recorder.spawnImpl,
+    launcher: 'node',
+    baseArgs: [MOCK_ABW_SCRIPT]
+  });
+  const result = await reader.approveDraft({
+    workspace: 'D:/tmp/mock-workspace',
+    draftPath: 'drafts/doc-1.md',
+    dryRun: false,
+    draftId: 'doc-1',
+    expectedDraftHash: 'sha256:abc',
+    confirm: {
+      user_confirmed: true,
+      confirmation_token: 'approve:doc-1:sha256:abc',
+      confirmation_text: 'Approve this draft as trusted wiki'
+    }
+  });
+  const call = recorder.calls[0] || {};
+  assert(result.status === ABW_CLI_STATUS.OK, '9h. approve apply success stays machine-readable', `status=${result.status}`);
+  assert(result.data?.approved === true && result.data?.promotionPerformed === true, '9i. approve apply preserves approved + promotion state');
+  assert(Array.isArray(call.args) && !call.args.includes('--dry-run'), '9j. approve apply omits --dry-run');
+  assert(Array.isArray(call.args) && call.args.includes('--confirm'), '9k. approve apply passes --confirm');
+  assert(Array.isArray(call.args) && call.args.includes('--confirm-token') && call.args.includes('approve:doc-1:sha256:abc'), '9l. approve apply passes confirmation token');
+  assert(Array.isArray(call.args) && call.args.includes('--confirm-text') && call.args.includes('Approve this draft as trusted wiki'), '9m. approve apply passes confirmation text');
 }
 
 {
@@ -844,6 +1013,398 @@ console.log('\nABW CLI Reader Bridge Tests\n');
     await stopServer(server);
     try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
     try { fs.rmSync(otherWorkspace, { recursive: true, force: true }); } catch {}
+  }
+}
+
+{
+  const port = 4876;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-preview-'));
+  const inlineMock = createInlineAbwMock({
+    approveResponse: {
+      status: 'preview_ready',
+      data: {
+        schema_version: 'abw.approve_draft.preview.v1',
+        status: 'preview_ready',
+        approved: false,
+        promotionPerformed: false,
+        manualReviewRequired: true,
+        workspace,
+        draft_path: 'drafts/doc-1.md',
+        draft_id: 'doc-1',
+        draft_hash: 'sha256:preview',
+        target_wiki_path: 'wiki/doc-1.md',
+        current_queue_status: 'review_needed',
+        trusted_workspace_required: true,
+        warnings: ['Approval affects only this selected draft.'],
+        blocking_errors: [],
+        preview_summary: { title: 'Doc 1' },
+        required_confirmation: {
+          confirmation_token: 'approve:doc-1:sha256:preview',
+          confirmation_text: 'Approve this draft as trusted wiki'
+        },
+        audit_id: 'audit-preview'
+      }
+    }
+  });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: true,
+      abwBaseArgs: inlineMock.abwBaseArgs
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '25. workspace switch for approve preview test succeeds', `status=${switched.status}`);
+    const approve = await requestJson(`${baseUrl}/proxy/abw/approve-draft`, {
+      body: {
+        workspace,
+        draft_path: 'drafts/doc-1.md',
+        dry_run: true,
+        draft_id: 'doc-1',
+        expected_draft_hash: 'sha256:preview'
+      }
+    });
+    assert(approve.ok, '25a. approve preview returns 200', `status=${approve.status}`);
+    assert(approve.json?.status === ABW_CLI_STATUS.OK, '25b. approve preview maps to ABW_CLI_OK', `status=${approve.json?.status}`);
+    assert(approve.json?.approved === false && approve.json?.promotionPerformed === false, '25c. approve preview preserves no-mutation state');
+    assert(approve.json?.requiredConfirmation?.confirmation_token === 'approve:doc-1:sha256:preview', '25d. approve preview exposes required confirmation');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    inlineMock.cleanup();
+  }
+}
+
+{
+  const port = 4877;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-apply-'));
+  const inlineMock = createInlineAbwMock({
+    approveResponse: {
+      status: 'approved',
+      data: {
+        schema_version: 'abw.approve_draft.result.v1',
+        status: 'approved',
+        approved: true,
+        promotionPerformed: true,
+        manualReviewRequired: false,
+        workspace,
+        draft_path: 'drafts/doc-1.md',
+        approved_wiki_path: 'wiki/doc-1.md',
+        queue_transition: { from: 'review_needed', to: 'approved' },
+        review_log_path: 'logs/review.jsonl',
+        audit_id: 'audit-apply',
+        warnings: [],
+        errors: []
+      }
+    }
+  });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: true,
+      abwBaseArgs: inlineMock.abwBaseArgs
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '26. workspace switch for approve apply test succeeds', `status=${switched.status}`);
+    const approve = await requestJson(`${baseUrl}/proxy/abw/approve-draft`, {
+      body: {
+        workspace,
+        draft_path: 'drafts/doc-1.md',
+        dry_run: false,
+        draft_id: 'doc-1',
+        expected_draft_hash: 'sha256:apply',
+        confirm: {
+          user_confirmed: true,
+          confirmation_token: 'approve:doc-1:sha256:apply',
+          confirmation_text: 'Approve this draft as trusted wiki'
+        }
+      }
+    });
+    assert(approve.ok, '26a. approve apply returns 200', `status=${approve.status}`);
+    assert(approve.json?.status === ABW_CLI_STATUS.OK, '26b. approve apply maps to ABW_CLI_OK', `status=${approve.json?.status}`);
+    assert(approve.json?.approved === true && approve.json?.promotionPerformed === true, '26c. approve apply preserves approved state');
+    assert(approve.json?.approvedWikiPath === 'wiki/doc-1.md', '26d. approve apply exposes approved wiki path');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    inlineMock.cleanup();
+  }
+}
+
+{
+  const port = 4878;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-untrusted-'));
+  const markerPath = path.join(os.tmpdir(), `nvidia-abw-approve-untrusted-marker-${Date.now()}.txt`);
+  const inlineMock = createInlineAbwMock({ touchMarkerOnApprove: true });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: false,
+      abwBaseArgs: inlineMock.abwBaseArgs,
+      extraEnv: { ABW_CALL_MARKER: markerPath }
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '27. workspace switch for approve untrusted test succeeds', `status=${switched.status}`);
+    const approve = await requestJson(`${baseUrl}/proxy/abw/approve-draft`, {
+      body: { workspace, draft_path: 'drafts/doc-1.md', dry_run: true }
+    });
+    assert(approve.status === 403, '27a. approve requires trusted workspace', `status=${approve.status}`);
+    assert(approve.json?.status === ABW_CLI_STATUS.TRUST_REQUIRED, '27b. approve trust failure is classified', `status=${approve.json?.status}`);
+    assert(!fs.existsSync(markerPath), '27c. approve trust failure blocks before ABW call');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(markerPath, { force: true }); } catch {}
+    inlineMock.cleanup();
+  }
+}
+
+{
+  const port = 4879;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-ws-'));
+  const otherWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-ws-other-'));
+  const markerPath = path.join(os.tmpdir(), `nvidia-abw-approve-ws-marker-${Date.now()}.txt`);
+  const inlineMock = createInlineAbwMock({ touchMarkerOnApprove: true });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: true,
+      abwBaseArgs: inlineMock.abwBaseArgs,
+      extraEnv: { ABW_CALL_MARKER: markerPath }
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '28. workspace switch for approve mismatch test succeeds', `status=${switched.status}`);
+    const approve = await requestJson(`${baseUrl}/proxy/abw/approve-draft`, {
+      body: { workspace: otherWorkspace, draft_path: 'drafts/doc-1.md', dry_run: true }
+    });
+    assert(approve.status === 400, '28a. approve rejects wrong workspace', `status=${approve.status}`);
+    assert(approve.json?.status === ABW_CLI_STATUS.WRONG_WORKSPACE, '28b. approve wrong workspace is classified', `status=${approve.json?.status}`);
+    assert(!fs.existsSync(markerPath), '28c. wrong workspace blocks before ABW call');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(otherWorkspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(markerPath, { force: true }); } catch {}
+    inlineMock.cleanup();
+  }
+}
+
+{
+  const port = 4880;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-array-'));
+  const markerPath = path.join(os.tmpdir(), `nvidia-abw-approve-array-marker-${Date.now()}.txt`);
+  const inlineMock = createInlineAbwMock({ touchMarkerOnApprove: true });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: true,
+      abwBaseArgs: inlineMock.abwBaseArgs,
+      extraEnv: { ABW_CALL_MARKER: markerPath }
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '29. workspace switch for approve array test succeeds', `status=${switched.status}`);
+    const approve = await requestJson(`${baseUrl}/proxy/abw/approve-draft`, {
+      body: { workspace, draft_path: ['drafts/doc-1.md', 'drafts/doc-2.md'], dry_run: true }
+    });
+    assert(approve.status === 400, '29a. approve rejects batch arrays', `status=${approve.status}`);
+    assert(approve.json?.approved === false && approve.json?.promotionPerformed === false, '29b. batch reject does not fake approval');
+    assert(!fs.existsSync(markerPath), '29c. batch reject blocks before ABW call');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(markerPath, { force: true }); } catch {}
+    inlineMock.cleanup();
+  }
+}
+
+{
+  const port = 4881;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-wildcard-'));
+  const markerPath = path.join(os.tmpdir(), `nvidia-abw-approve-wildcard-marker-${Date.now()}.txt`);
+  const inlineMock = createInlineAbwMock({ touchMarkerOnApprove: true });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: true,
+      abwBaseArgs: inlineMock.abwBaseArgs,
+      extraEnv: { ABW_CALL_MARKER: markerPath }
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '30. workspace switch for approve wildcard test succeeds', `status=${switched.status}`);
+    const approve = await requestJson(`${baseUrl}/proxy/abw/approve-draft`, {
+      body: { workspace, draft_path: 'drafts/*.md', dry_run: true }
+    });
+    assert(approve.status === 400, '30a. approve rejects wildcard draft paths', `status=${approve.status}`);
+    assert(approve.json?.approved === false && approve.json?.promotionPerformed === false, '30b. wildcard reject does not fake approval');
+    assert(!fs.existsSync(markerPath), '30c. wildcard reject blocks before ABW call');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(markerPath, { force: true }); } catch {}
+    inlineMock.cleanup();
+  }
+}
+
+{
+  const port = 4882;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-missing-confirm-'));
+  const markerPath = path.join(os.tmpdir(), `nvidia-abw-approve-missing-confirm-marker-${Date.now()}.txt`);
+  const inlineMock = createInlineAbwMock({ touchMarkerOnApprove: true });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: true,
+      abwBaseArgs: inlineMock.abwBaseArgs,
+      extraEnv: { ABW_CALL_MARKER: markerPath }
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '31. workspace switch for approve missing-confirm test succeeds', `status=${switched.status}`);
+    const approve = await requestJson(`${baseUrl}/proxy/abw/approve-draft`, {
+      body: { workspace, draft_path: 'drafts/doc-1.md', dry_run: false }
+    });
+    assert(approve.status === 400, '31a. approve apply rejects missing confirmation', `status=${approve.status}`);
+    assert(approve.json?.approved === false && approve.json?.promotionPerformed === false, '31b. missing confirmation does not fake approval');
+    assert(!fs.existsSync(markerPath), '31c. missing confirmation blocks before ABW call');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(markerPath, { force: true }); } catch {}
+    inlineMock.cleanup();
+  }
+}
+
+{
+  const port = 4883;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-blocked-'));
+  const inlineMock = createInlineAbwMock({
+    approveResponse: {
+      status: 'blocked',
+      data: {
+        schema_version: 'abw.approve_draft.result.v1',
+        status: 'blocked',
+        approved: false,
+        promotionPerformed: false,
+        manualReviewRequired: true,
+        workspace,
+        draft_path: 'drafts/doc-1.md',
+        error_code: 'CONFIRMATION_REQUIRED',
+        message: 'Explicit confirmation is required before approval.',
+        warnings: [],
+        errors: [{ code: 'CONFIRMATION_REQUIRED', message: 'Explicit confirmation is required before approval.' }],
+        no_mutation_confirmed: true,
+        audit_id: 'audit-blocked'
+      }
+    },
+    approveExitCode: 3
+  });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: true,
+      abwBaseArgs: inlineMock.abwBaseArgs
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '32. workspace switch for approve blocked test succeeds', `status=${switched.status}`);
+    const approve = await requestJson(`${baseUrl}/proxy/abw/approve-draft`, {
+      body: {
+        workspace,
+        draft_path: 'drafts/doc-1.md',
+        dry_run: false,
+        confirm: {
+          user_confirmed: true,
+          confirmation_token: 'approve:wrong',
+          confirmation_text: 'Approve this draft as trusted wiki'
+        }
+      }
+    });
+    assert(approve.ok, '32a. blocked approve still returns 200', `status=${approve.status}`);
+    assert(approve.json?.status === ABW_CLI_STATUS.BLOCKED, '32b. blocked approve maps to ABW_CLI_BLOCKED', `status=${approve.json?.status}`);
+    assert(approve.json?.approved === false && approve.json?.promotionPerformed === false, '32c. blocked approve preserves no fake success');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    inlineMock.cleanup();
+  }
+}
+
+{
+  const port = 4884;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-approve-invalid-json-'));
+  const inlineMock = createInlineAbwMock({ approveInvalidJson: true });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: true,
+      abwBaseArgs: inlineMock.abwBaseArgs
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '33. workspace switch for approve invalid-json test succeeds', `status=${switched.status}`);
+    const approve = await requestJson(`${baseUrl}/proxy/abw/approve-draft`, {
+      body: { workspace, draft_path: 'drafts/doc-1.md', dry_run: true }
+    });
+    assert(approve.status === 502, '33a. approve invalid JSON fails closed', `status=${approve.status}`);
+    assert(approve.json?.status === ABW_CLI_STATUS.INVALID_JSON, '33b. approve invalid JSON status preserved', `status=${approve.json?.status}`);
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    inlineMock.cleanup();
+  }
+}
+
+{
+  const port = 4885;
+  const baseUrl = `http://${HOST}:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nvidia-abw-ask-no-approve-'));
+  const markerPath = path.join(os.tmpdir(), `nvidia-abw-ask-no-approve-marker-${Date.now()}.txt`);
+  const inlineMock = createInlineAbwMock({ touchMarkerOnApprove: true });
+  let server = null;
+  try {
+    server = await startServer({
+      port,
+      trustAlways: true,
+      abwBaseArgs: inlineMock.abwBaseArgs,
+      extraEnv: { ABW_CALL_MARKER: markerPath }
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+    const switched = await requestJson(`${baseUrl}/api/workspace`, { body: { path: workspace } });
+    assert(switched.ok, '34. workspace switch for ask-without-approve test succeeds', `status=${switched.status}`);
+    const ask = await requestJson(`${baseUrl}/proxy/abw/ask`, {
+      body: { workspace, question: 'How does AGV communication work?' }
+    });
+    assert(ask.ok, '34a. ask remains available without approve', `status=${ask.status}`);
+    assert(ask.json?.status === ABW_CLI_STATUS.OK, '34b. ask without approve stays ABW_CLI_OK', `status=${ask.json?.status}`);
+    assert(!fs.existsSync(markerPath), '34c. ask path does not trigger approve command');
+  } finally {
+    await stopServer(server);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(markerPath, { force: true }); } catch {}
+    inlineMock.cleanup();
   }
 }
 

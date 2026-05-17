@@ -18,7 +18,7 @@ export const ABW_CLI_STATUS = Object.freeze({
   BLOCKED: 'ABW_CLI_BLOCKED'
 });
 
-const SUPPORTED_COMMANDS = new Set(['ask', 'doctor', 'version', 'ingest', 'review']);
+const SUPPORTED_COMMANDS = new Set(['ask', 'doctor', 'version', 'ingest', 'review', 'approve']);
 const DEFAULT_TIMEOUT_MS = Number(process.env.ABW_CLI_TIMEOUT_MS || 20000);
 const DEFAULT_MAX_OUTPUT_CHARS = Number(process.env.ABW_CLI_MAX_OUTPUT_CHARS || 400000);
 
@@ -285,7 +285,18 @@ function createSpawnRunner({
 export function createAbwCliReader(options = {}) {
   const runProcess = options.runProcess || createSpawnRunner(options);
 
-  async function invoke(commandName, { workspace = '', question = '', ingestTarget = 'raw' } = {}) {
+  async function invoke(commandName, {
+    workspace = '',
+    question = '',
+    ingestTarget = 'raw',
+    draftPath = '',
+    dryRun = true,
+    draftId = '',
+    expectedDraftHash = '',
+    expectedQueueStatus = 'review_needed',
+    confirm = null,
+    operatorNote = ''
+  } = {}) {
     const normalizedCommand = String(commandName || '').trim();
     const normalizedWorkspace = String(workspace || '').trim();
 
@@ -316,6 +327,46 @@ export function createAbwCliReader(options = {}) {
     if (normalizedCommand === 'ingest') {
       const normalizedTarget = String(ingestTarget || '').trim() || 'raw';
       commandArgs.push(normalizedTarget);
+    }
+    if (normalizedCommand === 'approve') {
+      const normalizedDraftPath = String(draftPath || '').trim();
+      if (!normalizedDraftPath) {
+        return makeErrorResult(ABW_CLI_STATUS.INVALID_JSON, {
+          commandName: normalizedCommand,
+          error: 'draftPath is required for approve'
+        });
+      }
+      commandArgs.push(normalizedDraftPath);
+      if (dryRun !== false) {
+        commandArgs.push('--dry-run');
+      }
+      const normalizedDraftId = String(draftId || '').trim();
+      if (normalizedDraftId) {
+        commandArgs.push('--draft-id', normalizedDraftId);
+      }
+      const normalizedExpectedDraftHash = String(expectedDraftHash || '').trim();
+      if (normalizedExpectedDraftHash) {
+        commandArgs.push('--expected-draft-hash', normalizedExpectedDraftHash);
+      }
+      const normalizedExpectedQueueStatus = String(expectedQueueStatus || '').trim() || 'review_needed';
+      commandArgs.push('--expected-queue-status', normalizedExpectedQueueStatus);
+      const normalizedOperatorNote = String(operatorNote || '').trim();
+      if (normalizedOperatorNote) {
+        commandArgs.push('--operator-note', normalizedOperatorNote);
+      }
+      if (confirm && typeof confirm === 'object') {
+        if (confirm.user_confirmed === true) {
+          commandArgs.push('--confirm');
+        }
+        const normalizedConfirmationToken = String(confirm.confirmation_token || '').trim();
+        if (normalizedConfirmationToken) {
+          commandArgs.push('--confirm-token', normalizedConfirmationToken);
+        }
+        const normalizedConfirmationText = String(confirm.confirmation_text || '').trim();
+        if (normalizedConfirmationText) {
+          commandArgs.push('--confirm-text', normalizedConfirmationText);
+        }
+      }
     }
 
     const result = await runProcess({ commandName: normalizedCommand, workspace: normalizedWorkspace, commandArgs });
@@ -406,6 +457,7 @@ export function createAbwCliReader(options = {}) {
     readDoctor: (options = {}) => invoke('doctor', options),
     ask: (options = {}) => invoke('ask', options),
     ingestRaw: (options = {}) => invoke('ingest', { ...options, ingestTarget: 'raw' }),
-    readReview: (options = {}) => invoke('review', options)
+    readReview: (options = {}) => invoke('review', options),
+    approveDraft: (options = {}) => invoke('approve', options)
   };
 }

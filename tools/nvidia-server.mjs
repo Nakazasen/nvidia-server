@@ -2782,6 +2782,79 @@ function buildAbwReviewPayload(result) {
     };
 }
 
+function buildAbwApprovePayload(result) {
+    const data = result?.data && typeof result.data === 'object' ? result.data : {};
+    const runtime = result?.runtime && typeof result.runtime === 'object' ? result.runtime : {};
+    return {
+        ok: result?.ok === true,
+        status: result?.status || ABW_CLI_STATUS.INVALID_JSON,
+        abw: result?.abw || null,
+        readOnly: false,
+        runtimeSource: runtime.runtimeSource || 'default',
+        abwRepoPath: runtime.abwRepoPath || null,
+        pythonExecutable: runtime.pythonExecutable || null,
+        commandArgs: Array.isArray(runtime.commandArgs) ? runtime.commandArgs : [],
+        commandCwd: runtime.cwd || null,
+        approved: data.approved === true,
+        promotionPerformed: data.promotionPerformed === true,
+        manualReviewRequired: data.manualReviewRequired !== false,
+        workspace: data.workspace || null,
+        draftPath: data.draft_path || null,
+        approvedWikiPath: data.approved_wiki_path || null,
+        queueTransition: data.queue_transition && typeof data.queue_transition === 'object' ? data.queue_transition : null,
+        reviewLogPath: data.review_log_path || null,
+        auditId: data.audit_id || null,
+        message: data.message || '',
+        errorCode: data.error_code || null,
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        errors: Array.isArray(data.errors) ? data.errors : [],
+        blockingErrors: Array.isArray(data.blocking_errors) ? data.blocking_errors : [],
+        previewSummary: data.preview_summary && typeof data.preview_summary === 'object' ? data.preview_summary : null,
+        requiredConfirmation: data.required_confirmation && typeof data.required_confirmation === 'object' ? data.required_confirmation : null,
+        targetWikiPath: data.target_wiki_path || null,
+        draftId: data.draft_id || null,
+        draftHash: data.draft_hash || null,
+        currentQueueStatus: data.current_queue_status || null,
+        trustedWorkspaceRequired: data.trusted_workspace_required === true,
+        noMutationConfirmed: data.no_mutation_confirmed === true,
+        error: result?.error || '',
+        stderr: result?.stderr || '',
+        stderrPreview: result?.stderrPreview || '',
+        stdoutPreview: result?.stdoutPreview || '',
+        exitCode: result?.exitCode ?? null
+    };
+}
+
+function extractSingleDraftPath(body = {}) {
+    const rawDraftPath = body.draft_path ?? body.draftPath ?? body.path;
+    if (Array.isArray(rawDraftPath)) {
+        return { ok: false, error: 'Batch draft_path arrays are not supported. Select exactly one draft.' };
+    }
+    const draftPath = String(rawDraftPath || '').trim();
+    if (!draftPath) {
+        return { ok: false, error: 'draft_path is required.' };
+    }
+    if (/[*?]/.test(draftPath)) {
+        return { ok: false, error: 'Wildcard draft_path values are not allowed.' };
+    }
+    return { ok: true, draftPath };
+}
+
+function normalizeApproveDryRun(value) {
+    return value !== false;
+}
+
+function normalizeApproveConfirmation(body = {}) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+    const confirm = body.confirm;
+    if (!confirm || typeof confirm !== 'object' || Array.isArray(confirm)) return null;
+    return {
+        user_confirmed: confirm.user_confirmed === true,
+        confirmation_token: String(confirm.confirmation_token || '').trim(),
+        confirmation_text: String(confirm.confirmation_text || '').trim()
+    };
+}
+
 function sanitizeLogPreview(text = '', limit = 500) {
     const compact = String(text || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
     if (!compact) return '';
@@ -4124,6 +4197,67 @@ const server = http.createServer(async (req, res) => {
                 workspace: normalizedWorkspace.path
             });
             return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwReviewPayload(result));
+        }
+
+        if (req.url === '/proxy/abw/approve-draft') {
+            const body = await getBody(req);
+            const normalizedWorkspace = normalizeAbwBridgeWorkspace(body.workspace);
+            if (!normalizedWorkspace.ok) {
+                return sendJSON(res, getAbwBridgeHttpStatus(normalizedWorkspace.status), {
+                    ok: false,
+                    status: normalizedWorkspace.status,
+                    error: normalizedWorkspace.error,
+                    abw: null
+                });
+            }
+            if (!isWorkspaceTrusted()) {
+                return sendJSON(res, getAbwBridgeHttpStatus(ABW_CLI_STATUS.TRUST_REQUIRED), {
+                    ok: false,
+                    status: ABW_CLI_STATUS.TRUST_REQUIRED,
+                    error: 'Workspace chua trusted hoac chua dung. Hay trust workspace hien tai truoc khi approve mot draft.',
+                    abw: null
+                });
+            }
+            const normalizedDraftPath = extractSingleDraftPath(body);
+            if (!normalizedDraftPath.ok) {
+                return sendJSON(res, 400, {
+                    ok: false,
+                    status: ABW_CLI_STATUS.INVALID_JSON,
+                    error: normalizedDraftPath.error,
+                    approved: false,
+                    promotionPerformed: false,
+                    manualReviewRequired: true,
+                    abw: null
+                });
+            }
+            const dryRun = normalizeApproveDryRun(body.dry_run ?? body.dryRun);
+            const confirm = normalizeApproveConfirmation(body);
+            if (!dryRun) {
+                if (!confirm || confirm.user_confirmed !== true || !confirm.confirmation_token || !confirm.confirmation_text) {
+                    return sendJSON(res, 400, {
+                        ok: false,
+                        status: ABW_CLI_STATUS.INVALID_JSON,
+                        error: 'Apply approve requires an explicit confirm object with user_confirmed, confirmation_token, and confirmation_text.',
+                        approved: false,
+                        promotionPerformed: false,
+                        manualReviewRequired: true,
+                        abw: null
+                    });
+                }
+            }
+
+            // Stage 2 only: bounded infrastructure for one selected draft, not a bulk/non-tech approval UX.
+            const result = await abwCliIngestRunner.approveDraft({
+                workspace: normalizedWorkspace.path,
+                draftPath: normalizedDraftPath.draftPath,
+                dryRun,
+                draftId: body.draft_id ?? body.draftId ?? '',
+                expectedDraftHash: body.expected_draft_hash ?? body.expectedDraftHash ?? '',
+                expectedQueueStatus: body.expected_queue_status ?? body.expectedQueueStatus ?? 'review_needed',
+                confirm,
+                operatorNote: body.operator_note ?? body.operatorNote ?? ''
+            });
+            return sendJSON(res, getAbwBridgeHttpStatus(result.status), buildAbwApprovePayload(result));
         }
 
         if (req.url === '/proxy/abw/promote') {
