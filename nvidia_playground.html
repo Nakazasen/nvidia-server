@@ -816,6 +816,69 @@
             background: rgba(var(--primary-rgb), 0.12);
         }
 
+        .abw-secondary-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .abw-preview-panel {
+            margin-top: 16px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.03);
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .abw-preview-panel.blocked {
+            border-color: rgba(255, 99, 71, 0.35);
+            background: rgba(255, 99, 71, 0.08);
+        }
+
+        .abw-preview-panel.loading {
+            border-color: rgba(118, 185, 0, 0.28);
+        }
+
+        .abw-preview-title {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .abw-preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 10px;
+        }
+
+        .abw-preview-field {
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.18);
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .abw-preview-label {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            opacity: 0.68;
+        }
+
+        .abw-preview-value {
+            font-size: 0.84rem;
+            line-height: 1.45;
+            color: #f0f0f0;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
         .abw-warning-list,
         .abw-source-list {
             display: flex;
@@ -2920,6 +2983,14 @@
                             <div id="abw-triage-recent" class="abw-triage-list"></div>
                         </section>
                     </div>
+                    <section id="abw-triage-preview" class="abw-preview-panel">
+                        <div class="abw-preview-title">
+                            <strong>Preview trusted-source review</strong>
+                            <span class="abw-pill weak">Preview only</span>
+                        </div>
+                        <div class="abw-note">Preview a selected draft candidate to inspect what would happen. No approval happens here.</div>
+                        <div class="abw-note">Nothing was changed. Approving one source will not approve the whole folder.</div>
+                    </section>
                 </section>
             </div>
             <div id="chat-box" class="chat-container"></div>
@@ -4534,7 +4605,7 @@
                     <div class="abw-candidate-copy">Review candidate only - not trusted yet.</div>
                     <div class="abw-candidate-actions" id="abw-candidate-actions-${messageIndex}">
                         ${marked
-                            ? `<button class="abw-secondary-btn" type="button" onclick="removeAbwAnswerCandidateFromMessage(${messageIndex})">Remove candidate</button>`
+                            ? `<button class="abw-secondary-btn" type="button" onclick="previewAbwReviewCandidate('${escapeHtml(getAbwCandidateKey(state))}')">Preview review</button><button class="abw-secondary-btn" type="button" onclick="removeAbwAnswerCandidateFromMessage(${messageIndex})">Remove candidate</button>`
                             : `<button class="abw-secondary-btn" type="button" onclick="addAbwAnswerCandidate(${messageIndex})">Mark as candidate</button>`
                         }
                         <span class="abw-pill weak">Not trusted yet</span>
@@ -4816,6 +4887,7 @@
             const session = sessions[currentSessionId];
             if (!Array.isArray(session.messages)) session.messages = [];
             if (!Array.isArray(session.abwReviewCandidates)) session.abwReviewCandidates = [];
+            if (!session.abwApprovePreview || typeof session.abwApprovePreview !== 'object') session.abwApprovePreview = null;
             return session;
         }
 
@@ -4959,6 +5031,36 @@
             return normalizeAbwPath(`${candidate.sourcePath || 'draft-source'}|${candidate.question || 'recent-question'}`);
         }
 
+        function getAbwActiveWorkspacePath() {
+            return String(document.getElementById('current-workspace-path')?.innerText || '').trim();
+        }
+
+        function getAbwApprovePreviewState() {
+            return getCurrentAbwSession()?.abwApprovePreview || null;
+        }
+
+        function setAbwApprovePreviewState(state = null, rerender = true) {
+            const session = getCurrentAbwSession();
+            if (!session) return null;
+            session.abwApprovePreview = state && typeof state === 'object'
+                ? { ...state, updatedAt: new Date().toISOString() }
+                : null;
+            saveSessions();
+            if (rerender) renderAbwTriageDashboard();
+            return session.abwApprovePreview;
+        }
+
+        function clearAbwApprovePreview() {
+            setAbwApprovePreviewState(null);
+        }
+
+        function findAbwReviewCandidateByKey(key = '') {
+            const normalizedKey = normalizeAbwPath(key);
+            const session = getCurrentAbwSession();
+            if (!session || !normalizedKey) return null;
+            return session.abwReviewCandidates.find((item) => item?.key === normalizedKey) || null;
+        }
+
         function isAbwAnswerMarkedCandidate(payload = {}) {
             const session = getCurrentAbwSession();
             if (!session) return false;
@@ -4984,6 +5086,228 @@
                 });
             }
             return entries.slice(-limit).reverse();
+        }
+
+        function renderAbwPreviewPanel() {
+            const container = document.getElementById('abw-triage-preview');
+            if (!container) return;
+            const state = getAbwApprovePreviewState();
+            if (!state) {
+                container.className = 'abw-preview-panel';
+                container.innerHTML = `
+                    <div class="abw-preview-title">
+                        <strong>Preview trusted-source review</strong>
+                        <span class="abw-pill weak">Preview only</span>
+                    </div>
+                    <div class="abw-note">Preview a selected draft candidate to inspect what would happen. No approval happens here.</div>
+                    <div class="abw-note">Nothing was changed. Approving this source will be added in a later step.</div>
+                    <div class="abw-note">Approving one source will not approve the whole folder.</div>
+                `;
+                return;
+            }
+
+            const summary = state.previewSummary && typeof state.previewSummary === 'object' ? state.previewSummary : {};
+            const warnings = Array.isArray(state.warnings) ? state.warnings.filter(Boolean) : [];
+            const blockingErrors = Array.isArray(state.blockingErrors) ? state.blockingErrors.filter(Boolean) : [];
+            const errors = Array.isArray(state.errors) ? state.errors.filter(Boolean) : [];
+            const requiredConfirmation = state.requiredConfirmation && typeof state.requiredConfirmation === 'object'
+                ? state.requiredConfirmation
+                : null;
+            const previewText = [
+                summary?.title ? `Title: ${summary.title}` : '',
+                summary?.summary || summary?.text || summary?.preview || ''
+            ].filter(Boolean).join('\n');
+            const warningMarkup = warnings.length
+                ? warnings.map((item) => `<div class="abw-warning-item">${escapeHtml(String(item))}</div>`).join('')
+                : '<div class="abw-note">No warnings returned.</div>';
+            const errorMarkup = [...blockingErrors, ...errors].length
+                ? [...blockingErrors, ...errors].map((item) => {
+                    const label = typeof item === 'string'
+                        ? item
+                        : [item?.code, item?.message].filter(Boolean).join(': ');
+                    return `<div class="abw-warning-item">${escapeHtml(String(label || 'Blocked'))}</div>`;
+                }).join('')
+                : '<div class="abw-note">No blocking errors returned.</div>';
+            const statusClass = state.mode === 'blocked' ? 'blocked' : (state.mode === 'loading' ? 'loading' : '');
+            const statusCopy = state.mode === 'blocked'
+                ? 'Preview was blocked. Nothing was changed.'
+                : (state.mode === 'loading'
+                    ? 'Previewing this candidate. Nothing is being approved.'
+                    : 'Preview only - no approval happens here.');
+            const detailCopy = state.mode === 'blocked'
+                ? String(state.message || 'The preview could not proceed from this state.')
+                : 'Nothing was changed. Approving this source will be added in a later step.';
+
+            container.className = `abw-preview-panel ${statusClass}`.trim();
+            container.innerHTML = `
+                <div class="abw-preview-title">
+                    <strong>Preview trusted-source review</strong>
+                    <div class="abw-candidate-actions">
+                        <span class="abw-pill weak">Not trusted yet</span>
+                        <span class="abw-pill weak">Preview only</span>
+                        <button class="abw-secondary-btn" type="button" onclick="clearAbwApprovePreview()">Close preview</button>
+                    </div>
+                </div>
+                <div class="abw-candidate-copy">${escapeHtml(statusCopy)}</div>
+                <div class="abw-note">${escapeHtml(detailCopy)}</div>
+                <div class="abw-note">Approving one source will not approve the whole folder.</div>
+                <div class="abw-preview-grid">
+                    <div class="abw-preview-field">
+                        <div class="abw-preview-label">Draft source</div>
+                        <div class="abw-preview-value">${escapeHtml(state.sourcePath || state.sourceTitle || 'Draft source')}</div>
+                    </div>
+                    <div class="abw-preview-field">
+                        <div class="abw-preview-label">Current status</div>
+                        <div class="abw-preview-value">Not trusted yet</div>
+                    </div>
+                    <div class="abw-preview-field">
+                        <div class="abw-preview-label">Target trusted source path</div>
+                        <div class="abw-preview-value">${escapeHtml(state.targetWikiPath || 'Not available')}</div>
+                    </div>
+                    <div class="abw-preview-field">
+                        <div class="abw-preview-label">Recent question</div>
+                        <div class="abw-preview-value">${escapeHtml(state.question || 'Recent question')}</div>
+                    </div>
+                </div>
+                <div class="abw-section">
+                    <div class="abw-section-label">Preview summary</div>
+                    <div class="abw-preview-value">${escapeHtml(previewText || String(state.message || 'No preview summary returned.'))}</div>
+                </div>
+                <div class="abw-section">
+                    <div class="abw-section-label">Warnings</div>
+                    <div class="abw-warning-list">${warningMarkup}</div>
+                </div>
+                <div class="abw-section">
+                    <div class="abw-section-label">Blocking errors</div>
+                    <div class="abw-warning-list">${errorMarkup}</div>
+                </div>
+                <div class="abw-preview-grid">
+                    <div class="abw-preview-field">
+                        <div class="abw-preview-label">Required confirmation token</div>
+                        <div class="abw-preview-value">${escapeHtml(requiredConfirmation?.confirmation_token || 'Not returned')}</div>
+                    </div>
+                    <div class="abw-preview-field">
+                        <div class="abw-preview-label">Required confirmation text</div>
+                        <div class="abw-preview-value">${escapeHtml(requiredConfirmation?.confirmation_text || 'Not returned')}</div>
+                    </div>
+                </div>
+                <div class="abw-note">A later step may allow you to approve this one source after confirmation.</div>
+                <div class="abw-note">No apply button exists in this step. No approval happens here.</div>
+            `;
+        }
+
+        async function requestAbwApprovePreview(body = {}) {
+            const response = await fetch('/proxy/abw/approve-draft', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await response.json().catch(() => ({}));
+            return { ok: response.ok, status: response.status, data };
+        }
+
+        async function previewAbwCandidateCore(candidate = {}) {
+            const workspace = getAbwActiveWorkspacePath();
+            if (!candidate?.sourcePath) return false;
+
+            if (!abwWorkspaceTrusted) {
+                setAbwApprovePreviewState({
+                    mode: 'blocked',
+                    sourcePath: candidate.sourcePath,
+                    sourceTitle: candidate.sourceTitle,
+                    question: candidate.question,
+                    targetWikiPath: '',
+                    message: 'Preview requires a trusted workspace.',
+                    warnings: [],
+                    blockingErrors: ['Preview requires a trusted workspace before review can continue.'],
+                    errors: [],
+                    requiredConfirmation: null
+                });
+                return false;
+            }
+            if (!workspace) {
+                setAbwApprovePreviewState({
+                    mode: 'blocked',
+                    sourcePath: candidate.sourcePath,
+                    sourceTitle: candidate.sourceTitle,
+                    question: candidate.question,
+                    targetWikiPath: '',
+                    message: 'Preview was blocked because the active workspace is missing.',
+                    warnings: [],
+                    blockingErrors: ['No active workspace was available for this preview request.'],
+                    errors: [],
+                    requiredConfirmation: null
+                });
+                return false;
+            }
+
+            setAbwApprovePreviewState({
+                mode: 'loading',
+                sourcePath: candidate.sourcePath,
+                sourceTitle: candidate.sourceTitle,
+                question: candidate.question,
+                targetWikiPath: '',
+                message: 'Loading preview...',
+                warnings: Array.isArray(candidate.warnings) ? candidate.warnings : [],
+                blockingErrors: [],
+                errors: [],
+                requiredConfirmation: null
+            });
+
+            try {
+                const preview = await requestAbwApprovePreview({
+                    workspace,
+                    draft_path: candidate.sourcePath,
+                    dry_run: true
+                });
+                const payload = preview.data && typeof preview.data === 'object' ? preview.data : {};
+                const blocked = !preview.ok || String(payload.status || '').trim().toUpperCase() === 'ABW_CLI_BLOCKED' || !!payload.error;
+                setAbwApprovePreviewState({
+                    mode: blocked ? 'blocked' : 'ready',
+                    sourcePath: String(payload.draftPath || candidate.sourcePath || '').trim() || candidate.sourcePath,
+                    sourceTitle: candidate.sourceTitle,
+                    question: candidate.question,
+                    targetWikiPath: String(payload.targetWikiPath || payload.approvedWikiPath || '').trim(),
+                    message: String(payload.message || payload.error || '').trim(),
+                    previewSummary: payload.previewSummary,
+                    warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
+                    blockingErrors: Array.isArray(payload.blockingErrors) ? payload.blockingErrors : [],
+                    errors: Array.isArray(payload.errors) ? payload.errors : [],
+                    requiredConfirmation: payload.requiredConfirmation
+                });
+                return !blocked;
+            } catch (error) {
+                setAbwApprovePreviewState({
+                    mode: 'blocked',
+                    sourcePath: candidate.sourcePath,
+                    sourceTitle: candidate.sourceTitle,
+                    question: candidate.question,
+                    targetWikiPath: '',
+                    message: 'Preview was blocked. Nothing was changed.',
+                    warnings: [],
+                    blockingErrors: [String(error?.message || 'Unknown preview error')],
+                    errors: [],
+                    requiredConfirmation: null
+                });
+                return false;
+            }
+        }
+
+        async function previewAbwReviewCandidate(key = '') {
+            const candidate = findAbwReviewCandidateByKey(key);
+            if (!candidate) return false;
+            return previewAbwCandidateCore(candidate);
+        }
+
+        async function previewAbwReviewSuggestion(draftPath = '') {
+            const normalizedPath = normalizeAbwPath(draftPath);
+            if (!normalizedPath) return false;
+            return previewAbwCandidateCore({
+                sourcePath: normalizedPath,
+                sourceTitle: normalizedPath,
+                question: 'Review suggestion',
+                warnings: []
+            });
         }
 
         function addAbwAnswerCandidate(messageIndex) {
@@ -5019,6 +5343,9 @@
             const normalizedKey = normalizeAbwPath(key);
             const before = session.abwReviewCandidates.length;
             session.abwReviewCandidates = session.abwReviewCandidates.filter((item) => item?.key !== normalizedKey);
+            if (session.abwApprovePreview?.sourcePath && normalizeAbwPath(`${session.abwApprovePreview.sourcePath}|${session.abwApprovePreview.question || 'recent-question'}`) === normalizedKey) {
+                session.abwApprovePreview = null;
+            }
             if (session.abwReviewCandidates.length !== before) {
                 saveSessions();
                 session.messages.forEach((message, index) => {
@@ -5063,7 +5390,9 @@
                     <div class="abw-triage-item-title">${escapeHtml(item.title || 'Item')}</div>
                     ${item.meta ? `<div class="abw-triage-item-meta">${escapeHtml(item.meta)}</div>` : ''}
                     ${item.detail ? `<div class="abw-triage-item-detail">${escapeHtml(item.detail)}</div>` : ''}
-                    ${item.actionLabel && item.actionOnClick ? `<div class="abw-candidate-actions"><button class="abw-secondary-btn" type="button" onclick="${item.actionOnClick}">${escapeHtml(item.actionLabel)}</button></div>` : ''}
+                    ${Array.isArray(item.actions) && item.actions.length
+                        ? `<div class="abw-candidate-actions">${item.actions.map((action) => `<button class="abw-secondary-btn" type="button" onclick="${action.onClick || ''}" ${action.disabled ? 'disabled' : ''}>${escapeHtml(action.label || 'Action')}</button>`).join('')}</div>`
+                        : (item.actionLabel && item.actionOnClick ? `<div class="abw-candidate-actions"><button class="abw-secondary-btn" type="button" onclick="${item.actionOnClick}">${escapeHtml(item.actionLabel)}</button></div>` : '')}
                 </div>
             `).join('');
         }
@@ -5106,8 +5435,10 @@
                         meta: `Marked from answer: ${candidate.question || 'Recent question'}`,
                         detail: `Review candidate only - not trusted yet. ${candidate.evidenceTier || 'unknown'} | trust ${Number.isFinite(candidate.trustScore) ? candidate.trustScore : 'n/a'} | ${candidate.whySuggested || 'Marked from a weak but sourceful answer.'}${warningText}`,
                         tone: 'weak',
-                        actionLabel: 'Remove',
-                        actionOnClick: `removeAbwReviewCandidate('${escapeHtml(candidate.key)}')`
+                        actions: [
+                            { label: 'Preview review', onClick: `previewAbwReviewCandidate('${escapeHtml(candidate.key)}')` },
+                            { label: 'Remove', onClick: `removeAbwReviewCandidate('${escapeHtml(candidate.key)}')` }
+                        ]
                     };
                 }),
                 ...(Array.isArray(review.actions) ? review.actions : [])
@@ -5122,7 +5453,10 @@
                             title: draftPath,
                             meta: String(action?.label || action?.status || 'Review suggestion'),
                             detail: 'Read-only suggestion only. No approval action is available here yet.',
-                            tone: 'weak'
+                            tone: 'weak',
+                            actions: [
+                                { label: 'Preview review', onClick: `previewAbwReviewSuggestion('${escapeHtml(draftPath)}')` }
+                            ]
                         };
                     })
             ]);
@@ -5221,6 +5555,7 @@
             renderAbwTriageItems('abw-triage-unreadable', 'abw-triage-unreadable-count', unreadableItems, 'No unsupported or broken files were reported.');
             renderAbwTriageItems('abw-triage-trusted', 'abw-triage-trusted-count', trustedItems, 'No trusted sources yet.');
             renderAbwTriageItems('abw-triage-recent', 'abw-triage-recent-count', recentItems, 'No recent answers in this session yet.');
+            renderAbwPreviewPanel();
         }
 
         async function handleAbwAskCommand(rawText) {

@@ -787,6 +787,13 @@ async function runRealBrowserSmoke(url) {
       let abwMissingSourceNoCandidateOk = false;
       let abwUnsupportedNoCandidateOk = false;
       let abwAmbiguousNoCandidateOk = false;
+      let abwPreviewButtonVisibleOk = false;
+      let abwPreviewPanelVisibleOk = false;
+      let abwPreviewDryRunRequestOk = false;
+      let abwPreviewBlockedHonestyOk = false;
+      let abwPreviewCandidateStillUntrustedOk = false;
+      let abwPreviewNoPromoteCallOk = false;
+      let abwPreviewNoApplyUiOk = false;
       let abwTriageNoBulkCopyOk = false;
       let untrustedWorkspaceWarningVisibleOk = false;
       let trustWorkspaceButtonVisibleOk = false;
@@ -1263,6 +1270,9 @@ async function runRealBrowserSmoke(url) {
               window.renderAbwTriageDashboard();
               await sleep(80);
             }
+            if (typeof abwWorkspaceTrusted !== 'undefined') {
+              abwWorkspaceTrusted = true;
+            }
             const candidateBeforeText = document.querySelector('#abw-triage-candidates')?.textContent || '';
             const weakCandidateButton = [...document.querySelectorAll('button')].find((btn) => /Mark as candidate/i.test(btn.textContent || ''));
             const fetchCalls = [];
@@ -1306,6 +1316,93 @@ async function runRealBrowserSmoke(url) {
             abwCandidateNoApproveCallOk =
               fetchCalls.every((url) => !/\/proxy\/abw\/approve-draft|\/proxy\/abw\/promote/i.test(url));
 
+            const previewFetchCalls = [];
+            window.fetch = (input, init = {}) => {
+              const url = String(input || '');
+              if (/\/proxy\/abw\/approve-draft/i.test(url)) {
+                let body = {};
+                try {
+                  body = init?.body ? JSON.parse(String(init.body)) : {};
+                } catch {}
+                previewFetchCalls.push({ url, body });
+                const responsePayload = previewFetchCalls.length === 1
+                  ? {
+                    status: 'ABW_CLI_OK',
+                    approved: false,
+                    promotionPerformed: false,
+                    manualReviewRequired: true,
+                    draftPath: 'drafts/restart-guide.md',
+                    targetWikiPath: 'wiki/restart-guide.md',
+                    previewSummary: {
+                      title: 'Restart guide',
+                      summary: 'Restart the AGV from the safe stop panel.'
+                    },
+                    warnings: ['Approval affects only this selected draft.'],
+                    blockingErrors: [],
+                    requiredConfirmation: {
+                      confirmation_token: 'approve:restart-guide:sha256:preview',
+                      confirmation_text: 'Approve this draft as trusted wiki'
+                    },
+                    noMutationConfirmed: true
+                  }
+                  : {
+                    status: 'ABW_CLI_BLOCKED',
+                    approved: false,
+                    promotionPerformed: false,
+                    manualReviewRequired: true,
+                    draftPath: 'drafts/restart-guide.md',
+                    message: 'Explicit confirmation is required before approval.',
+                    warnings: [],
+                    blockingErrors: [{ code: 'CONFIRMATION_REQUIRED', message: 'Explicit confirmation is required before approval.' }],
+                    requiredConfirmation: {
+                      confirmation_token: 'approve:restart-guide:sha256:preview',
+                      confirmation_text: 'Approve this draft as trusted wiki'
+                    },
+                    noMutationConfirmed: true
+                  };
+                return Promise.resolve(new Response(JSON.stringify(responsePayload), {
+                  status: 200,
+                  headers: { 'Content-Type': 'application/json' }
+                }));
+              }
+              if (/\/proxy\/abw\/promote/i.test(url)) {
+                previewFetchCalls.push({ url, body: null });
+              }
+              return originalFetch(input, init);
+            };
+            const previewButton = [...document.querySelectorAll('button')].find((btn) => /Preview review/i.test(btn.textContent || ''));
+            if (previewButton && typeof previewButton.click === 'function') {
+              previewButton.click();
+              await sleep(120);
+              const secondPreviewButton = [...document.querySelectorAll('button')].find((btn) => /Preview review/i.test(btn.textContent || ''));
+              if (secondPreviewButton && typeof secondPreviewButton.click === 'function') {
+                secondPreviewButton.click();
+                await sleep(120);
+              }
+            }
+            window.fetch = originalFetch;
+            const previewPanelText = document.querySelector('#abw-triage-preview')?.textContent || '';
+            abwPreviewButtonVisibleOk = !!previewButton;
+            abwPreviewPanelVisibleOk =
+              /Preview trusted-source review/i.test(previewPanelText) &&
+              /Preview only/i.test(previewPanelText) &&
+              /No approval happens here/i.test(previewPanelText) &&
+              !/\[object Object\]/i.test(previewPanelText);
+            abwPreviewDryRunRequestOk =
+              previewFetchCalls.some((call) => /\/proxy\/abw\/approve-draft/i.test(call.url) && call.body?.dry_run === true) &&
+              previewFetchCalls.every((call) => !/\/proxy\/abw\/approve-draft/i.test(call.url) || call.body?.dry_run !== false);
+            abwPreviewBlockedHonestyOk =
+              /Preview was blocked\. Nothing was changed\./i.test(previewPanelText) &&
+              /Explicit confirmation is required before approval\./i.test(previewPanelText);
+            abwPreviewCandidateStillUntrustedOk =
+              /Not trusted yet/i.test(previewPanelText) &&
+              !/Approved as trusted/i.test(previewPanelText);
+            abwPreviewNoPromoteCallOk =
+              previewFetchCalls.every((call) => !/\/proxy\/abw\/promote/i.test(call.url));
+            abwPreviewNoApplyUiOk =
+              !/Approve as trusted source/i.test(previewPanelText) &&
+              !/approve all|batch approval|corpus approval/i.test(previewPanelText);
+
             const missingHtml = window.renderAbwResultCard({
               retrievalStatus: 'no_match',
               evidenceTier: 'E0_unknown',
@@ -1338,13 +1435,13 @@ async function runRealBrowserSmoke(url) {
             const tempCaseButtons = tempCases.querySelectorAll('button');
             abwMissingSourceNoCandidateOk =
               /No trusted source was found for this answer yet\./i.test(tempCasesText) &&
-              !/Mark as candidate/i.test(tempCases.children[0]?.textContent || '');
+              !/Mark as candidate|Preview review/i.test(tempCases.children[0]?.textContent || '');
             abwAmbiguousNoCandidateOk =
               /Clarify the question before reviewing any source\./i.test(tempCases.children[1]?.textContent || '') &&
-              !/Mark as candidate/i.test(tempCases.children[1]?.textContent || '');
+              !/Mark as candidate|Preview review/i.test(tempCases.children[1]?.textContent || '');
             abwUnsupportedNoCandidateOk =
               /unsupported or broken file path/i.test(tempCases.children[2]?.textContent || '') &&
-              !/Mark as candidate/i.test(tempCases.children[2]?.textContent || '') &&
+              !/Mark as candidate|Preview review/i.test(tempCases.children[2]?.textContent || '') &&
               tempCaseButtons.length === 0;
             tempCases.remove();
           }
@@ -1496,7 +1593,14 @@ async function runRealBrowserSmoke(url) {
       add('ABW triage recent answers group shows session answer history', abwTriageRecentAnswersOk, 'recent answer entries render with readable labels', true);
       add('ABW triage candidate safety excludes missing-source and ambiguous items', abwTriageCandidateSafetyOk, 'candidate group stays read-only and source-bounded', true);
       add('ABW candidate mark flow adds local review candidate', abwCandidateMarkFlowOk, 'marking a weak answer source adds a not-trusted candidate to the dashboard', true);
-      add('ABW candidate flow never calls approve or promote endpoints', abwCandidateNoApproveCallOk, 'candidate action stays local/session-only', true);
+      add('ABW candidate mark flow never calls approve or promote endpoints', abwCandidateNoApproveCallOk, 'mark action stays local/session-only', true);
+      add('ABW candidate preview entry is visible', abwPreviewButtonVisibleOk, 'eligible candidate exposes Preview review', true);
+      add('ABW preview panel renders as preview-only UI', abwPreviewPanelVisibleOk, 'preview panel explains that no approval happens here', true);
+      add('ABW preview request always uses dry_run=true', abwPreviewDryRunRequestOk, 'preview request hits approve-draft without any dry_run=false payload', true);
+      add('ABW blocked preview is shown honestly', abwPreviewBlockedHonestyOk, 'blocked preview says nothing was changed and keeps the human-readable reason', true);
+      add('ABW preview keeps candidate not trusted', abwPreviewCandidateStillUntrustedOk, 'preview panel keeps Not trusted yet status', true);
+      add('ABW preview does not call promote', abwPreviewNoPromoteCallOk, 'preview flow does not hit the promote endpoint', true);
+      add('ABW preview exposes no apply UI', abwPreviewNoApplyUiOk, 'no approve/apply/bulk wording is shown in preview', true);
       add('ABW missing-source answer does not offer candidate action', abwMissingSourceNoCandidateOk, 'missing-source result shows no review-candidate action', true);
       add('ABW unsupported/parse result does not offer candidate action', abwUnsupportedNoCandidateOk, 'unsupported/parse result stays non-candidate', true);
       add('ABW ambiguous result asks for clarification instead of candidate action', abwAmbiguousNoCandidateOk, 'ambiguous result avoids review suggestion', true);
